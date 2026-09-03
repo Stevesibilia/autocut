@@ -59,12 +59,35 @@ min_height_m = 5.0
 
 [selection]
 min_segment_seconds = 1.5
-target_duration_seconds = 3.0
+target_duration_seconds = 3.0   # fallback only: used by --duration and by a class with no base
 max_clips = 40
 diversity_lambda = 0.6      # the diversity slider: 0 ranks by score alone
 max_clips_per_cluster = 2
 min_temporal_gap_seconds = 60.0
 cluster_threshold = 0.75    # combined similarity above which two clips are one cluster
+
+# Clip length. Forty identical durations read as a slideshow, so each clip gets its own
+# length from its class, its score and its neighbours. Run `autocut select --duration 3.0`
+# for one length everywhere.
+duration_min_seconds = 1.5
+duration_max_seconds = 6.0
+score_duration_range = [0.8, 1.2]   # multiplier at score 0 and at score 1
+hero_share = 0.1            # top share by score that gets the bonus
+hero_multiplier = 1.5
+alternate_durations = true  # break runs of three clips in the same bucket
+# target_total_seconds = 90.0   # scale every duration so the edit lands near this length
+snap_to_motion = true       # start the cut where movement begins
+snap_window_seconds = 0.5   # how far the start may move to reach a motion minimum
+snap_max_score_loss = 0.05  # mean score a snap may give up, as a share
+
+# Base seconds per class, before the score scales them. An aerial needs longer to be read
+# than an action shot. A class set to 0 falls back to target_duration_seconds.
+[selection.duration_by_class]
+drone = 4.0
+actioncam = 2.0
+phone = 2.5
+reflex = 3.0
+generic = 3.0
 
 [selection.max_clips_per_file]
 drone = 1

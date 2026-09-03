@@ -170,3 +170,46 @@ def test_selection_fields_roundtrip(tmp_path: Path) -> None:
     assert back.selection.diversity_lambda == 0.6
     assert back.selection.clusters == 7
     assert back.selection.ran_at is not None
+
+
+def test_duration_fields_roundtrip(tmp_path: Path) -> None:
+    now = datetime.now(UTC)
+    m = Manifest(created_at=now, updated_at=now, sources=[Path("/footage")], output_dir=tmp_path)
+    m.segments["k:0"] = Segment(
+        id="k:0",
+        file_id="k",
+        start_s=0.0,
+        end_s=20.0,
+        best_center_s=8.5,
+        target_duration_s=4.8,
+        duration_reason="hero",
+        snapped=True,
+        outcome="selected",
+        order=1,
+    )
+    m.selection = SelectionRun(selected=1, total_duration_s=118.4)
+
+    out = tmp_path / "manifest.json"
+    m.save(out)
+    back = Manifest.load(out)
+
+    clip = back.segments["k:0"]
+    assert clip.target_duration_s == 4.8
+    assert clip.duration_reason == "hero"
+    assert clip.snapped is True
+    assert back.selection.total_duration_s == 118.4
+
+
+def test_duration_fields_default_to_unset(tmp_path: Path) -> None:
+    """An M2 manifest loads unchanged: the new fields are additive with defaults."""
+    now = datetime.now(UTC)
+    m = Manifest(created_at=now, updated_at=now, sources=[Path("/footage")], output_dir=tmp_path)
+    m.segments["k:0"] = Segment(id="k:0", file_id="k", start_s=0.0, end_s=20.0)
+
+    out = tmp_path / "manifest.json"
+    m.save(out)
+    back = Manifest.load(out)
+
+    assert back.segments["k:0"].duration_reason is None
+    assert back.segments["k:0"].snapped is False
+    assert back.selection.total_duration_s is None

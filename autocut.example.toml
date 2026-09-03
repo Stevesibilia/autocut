@@ -108,6 +108,7 @@ max_width = 3840
 max_height = 2160
 pix_fmt = "yuv420p"
 vertical_strategy = "exclude"   # exclude | blur_pad | center_crop
+keep_rejects = false  # also export rejected segments into _rejects/
 
 [export.remove_audio]
 drone = true
@@ -115,6 +116,27 @@ actioncam = true
 phone = false
 reflex = false
 generic = true
+
+# Half speed when the source runs at twice the target or more, by a whole ratio only,
+# so every output frame is a frame the camera took. Slow motion always drops audio.
+[export.slow_motion_auto]
+drone = false
+actioncam = true
+phone = false
+reflex = false
+generic = false
+
+# A .cube file per class, applied with lut3d. Off until log profiles are in use, and
+# left commented out because TOML has no null: an empty string is a path, not "unset".
+# [export.lut]
+# drone = "/luts/dji-dlog.cube"
+
+[export.lens_correction]
+drone = false
+actioncam = false
+phone = false
+reflex = false
+generic = false
 
 [providers]
 cloud = true          # uses OPENROUTER_API_KEY from env or keychain when present

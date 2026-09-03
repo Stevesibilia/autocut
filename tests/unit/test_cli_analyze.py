@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pytest
@@ -543,3 +544,68 @@ def test_select_prints_the_total_and_the_buckets(synthetic_dir: Path, tmp_path: 
     assert uniform.exit_code == 0, uniform.stdout
     assert "one length for every clip" in uniform.stdout
     assert "hero" not in uniform.stdout
+
+
+@pytest.mark.ffmpeg
+def test_select_prints_places_and_visits(synthetic_dir: Path, tmp_path: Path) -> None:
+    """The summary line scenario in specs/place-grouping."""
+    out, toml = analyzed_and_selected(synthetic_dir, tmp_path)
+
+    result = runner.invoke(app, ["select", str(out), "--config", str(toml)])
+    assert result.exit_code == 0, result.stdout
+    assert "places" in result.stdout
+    assert "visits" in result.stdout
+
+    # The telemetry fixture carries a GPS fix, so it forms one place on its own while
+    # every other synthetic clip has no position at all.
+    manifest = Manifest.load(out / "manifest.json")
+    assert manifest.selection.places == 1
+    assert manifest.selection.visits == 1
+    placed = [s for s in manifest.segments.values() if s.place_id is not None]
+    assert placed
+    for segment in placed:
+        assert manifest.files[segment.file_id].path.name == "drone_embedded_srt.mp4"
+
+
+@pytest.mark.ffmpeg
+def test_the_candidate_share_ceiling_is_announced(synthetic_dir: Path, tmp_path: Path) -> None:
+    """A user expecting 40 clips has to be told why fewer came out."""
+    out = tmp_path / "edit"
+    toml = config_file(tmp_path)
+    assert (
+        runner.invoke(
+            app,
+            [
+                "analyze",
+                str(synthetic_dir),
+                "--out",
+                str(out),
+                "--workers",
+                "2",
+                "--config",
+                str(toml),
+            ],
+        ).exit_code
+        == 0
+    )
+
+    result = runner.invoke(app, ["select", str(out), "--config", str(toml)])
+    assert result.exit_code == 0, result.stdout
+    assert "candidate share ceiling" in result.stdout
+    assert "--max-clips" in result.stdout
+
+    manifest = Manifest.load(out / "manifest.json")
+    selected = sum(1 for s in manifest.segments.values() if s.outcome == "selected")
+    candidates = sum(
+        1 for s in manifest.segments.values() if s.outcome in ("candidate", "selected")
+    )
+    assert selected <= math.ceil(0.5 * candidates)
+
+
+@pytest.mark.ffmpeg
+def test_an_explicit_max_clips_silences_the_ceiling(synthetic_dir: Path, tmp_path: Path) -> None:
+    out, toml = analyzed_and_selected(synthetic_dir, tmp_path)
+
+    result = runner.invoke(app, ["select", str(out), "--max-clips", "40", "--config", str(toml)])
+    assert result.exit_code == 0, result.stdout
+    assert "candidate share ceiling" not in result.stdout

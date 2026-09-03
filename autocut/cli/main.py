@@ -230,6 +230,18 @@ def select(
         f"Selected [bold]{result.count}[/bold] of {result.max_clips} clips "
         f"from {result.clusters} clusters, diversity {result.diversity_lambda:g}"
     )
+    console.print(f"  {result.places} places, {result.visits} visits")
+    if result.held_by_place:
+        console.print(
+            f"  {result.held_by_place} candidates held back by the place cap "
+            f"of {cfg.selection.max_clips_per_place} per visit"
+        )
+    if result.ceiling_applied:
+        console.print(
+            f"[yellow]The candidate share ceiling applied[/yellow]: at most "
+            f"{cfg.selection.max_candidate_share:g} of the eligible candidates, so "
+            f"{result.max_clips} slots. Pass --max-clips to override it."
+        )
     for name, count in sorted(per_class.items()):
         console.print(f"  {name}: {count}")
     if result.varied_durations:

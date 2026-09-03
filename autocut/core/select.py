@@ -22,6 +22,7 @@ from autocut.core.cache import CacheEntry, read_entry
 from autocut.core.config import SOURCE_CLASSES, AutocutConfig, SourceClass
 from autocut.core.durations import assign_durations, buckets, shortfall, total_duration
 from autocut.core.manifest import Manifest, Segment, SelectionRun, SourceFile
+from autocut.core.places import PlaceIndex, build_index, candidate_position
 from autocut.core.rules import EXCLUSIONS
 from autocut.core.similarity import (
     CandidateFeatures,
@@ -59,6 +60,10 @@ class SelectionResult:
     diversity_lambda: float = 0.0
     relaxed_gap: bool = False
     total_duration_s: float = 0.0
+    places: int = 0
+    visits: int = 0
+    held_by_place: int = 0
+    ceiling_applied: bool = False
     varied_durations: bool = True
     long_clips: int = 0
     short_clips: int = 0
@@ -95,7 +100,13 @@ def select_clips(
     _reset(manifest)
     _mark_excluded(manifest, config)
     candidates = [s for s in manifest.segments.values() if s.outcome == "candidate"]
-    result = SelectionResult(max_clips=max_clips, target_duration_s=target, diversity_lambda=lam)
+    eligible = [segment for segment in candidates if not _excluded(segment)]
+    capped, ceiling_applied = _apply_share_ceiling(
+        max_clips, len(eligible), config, explicit=overrides.max_clips is not None
+    )
+    result = SelectionResult(max_clips=capped, target_duration_s=target, diversity_lambda=lam)
+    result.ceiling_applied = ceiling_applied
+    max_clips = capped
     if not candidates:
         _record(manifest, result)
         return result
@@ -106,6 +117,11 @@ def select_clips(
     # need a time for every candidate and the per-clip lengths are not known until the
     # picks are made. The selected clips get their windows placed again below.
     _place_windows(manifest, candidates, entries, scores, target)
+    # Places need a window centre, because a drone's GPS tag is its takeoff point and
+    # the telemetry fix that matters is the one under the shot.
+    index = _assign_places(manifest, config, candidates, entries)
+    result.places = index.place_count
+    result.visits = index.visit_count
     features = _build_features(manifest, candidates, entries)
     matrix = SimilarityMatrix(features, config)
 
@@ -123,6 +139,11 @@ def select_clips(
     # its clip was given, and nudged onto a motion boundary.
     assign_durations(chosen, manifest, config, overrides.target_duration_s)
     _place_windows(manifest, chosen, entries, scores, target, per_clip=True, config=config)
+    result.held_by_place = sum(
+        1
+        for segment in candidates
+        if segment.reason == "place_cap" and segment.outcome != "selected"
+    )
     _record_durations(manifest, config, chosen, result)
     result.selected = [segment.id for segment in chosen]
     _record(manifest, result)
@@ -168,6 +189,9 @@ def _reset(manifest: Manifest) -> None:
         segment.lost_to = None
         segment.similarity_to_selected = None
         segment.cluster_id = None
+        segment.place_id = None
+        segment.visit_id = None
+        segment.held_by = []
 
 
 def _load_entries(config: AutocutConfig, candidates: list[Segment]) -> dict[str, CacheEntry]:
@@ -392,15 +416,20 @@ def _best_pick(
     lam: float,
     result: SelectionResult,
 ) -> Segment | None:
-    """The eligible candidate with the highest penalized score, gap relaxed as a last resort."""
+    """The eligible candidate with the highest penalized score.
+
+    Two passes. The first honours every cap; the second lifts the two that exist to
+    spread the edit out, the minimum temporal gap and the place cap, because an edit
+    short of clips is worse than an edit with two shots from one spot.
+    """
     chosen_ids = [segment.id for segment in chosen]
     taken = set(chosen_ids)
-    for relax_gap in (False, True):
+    for relaxed in (False, True):
         eligible = [
             segment
             for segment in pool
             if segment.id not in taken
-            and _eligible(manifest, config, segment, chosen, relax_gap=relax_gap)
+            and _eligible(manifest, config, segment, chosen, relaxed=relaxed)
         ]
         if not eligible:
             continue
@@ -411,10 +440,60 @@ def _best_pick(
             value = (segment.score or 0.0) - lam * penalty
             if value > best_value:
                 best_value, best = value, segment
-        if relax_gap:
+        if relaxed:
             result.relaxed_gap = True
         return best
     return None
+
+
+def _apply_share_ceiling(
+    max_clips: int, eligible: int, config: AutocutConfig, *, explicit: bool
+) -> tuple[int, bool]:
+    """Bound ``max_clips`` to a share of the eligible candidates, unless asked otherwise.
+
+    Forty slots for sixty candidates is not a selection, it is a rejection list: the
+    diversity penalty can only reorder what it is forced to take anyway. Tying the
+    slot count to the folder makes a small shoot produce a short edit without the user
+    having to work out the number, and a large one still hits ``max_clips`` first.
+
+    An explicit ``--max-clips`` is the user overruling exactly this, so it wins.
+    """
+    share = config.selection.max_candidate_share
+    if explicit or share <= 0 or eligible <= 0:
+        return max_clips, False
+    ceiling = math.ceil(share * eligible)
+    if ceiling >= max_clips:
+        return max_clips, False
+    return ceiling, True
+
+
+def _assign_places(
+    manifest: Manifest,
+    config: AutocutConfig,
+    candidates: list[Segment],
+    entries: dict[str, CacheEntry],
+) -> PlaceIndex:
+    """Group the candidates by where and when they were shot, and record it on each."""
+    positions = {}
+    order: dict[str, datetime | None] = {}
+    for segment in candidates:
+        source = manifest.files.get(segment.file_id)
+        entry = entries.get(segment.file_id)
+        position = candidate_position(segment, source, entry.telemetry if entry else None)
+        if position is not None:
+            positions[segment.id] = position
+        order[segment.id] = absolute_time(source, segment)
+
+    index = build_index(
+        positions,
+        order,
+        config.selection.place_radius_m,
+        config.selection.place_visit_gap_seconds,
+    )
+    for segment in candidates:
+        segment.place_id = index.place_of.get(segment.id)
+        segment.visit_id = index.visit_of.get(segment.id)
+    return index
 
 
 def _mark_excluded(manifest: Manifest, config: AutocutConfig) -> None:
@@ -445,7 +524,7 @@ def _eligible(
     segment: Segment,
     chosen: list[Segment],
     *,
-    relax_gap: bool,
+    relaxed: bool,
 ) -> bool:
     if segment.outcome != "candidate" or _excluded(segment):
         return False
@@ -460,8 +539,16 @@ def _eligible(
         if same_cluster >= config.selection.max_clips_per_cluster:
             return False
 
-    if relax_gap:
+    if relaxed:
         return True
+
+    # One spot on one outing gives a few clips, however different the pixels look.
+    # A candidate with no GPS has no visit and is never held back by this.
+    if segment.visit_id is not None:
+        same_visit = sum(1 for s in chosen if s.visit_id == segment.visit_id)
+        if same_visit >= config.selection.max_clips_per_place:
+            return False
+
     gap = config.selection.min_temporal_gap_seconds
     if gap <= 0:
         return True
@@ -496,6 +583,7 @@ def _finish(
     for order, segment in enumerate(sorted(chosen, key=when), start=1):
         segment.order = order
 
+    filled = _filled_visits(chosen, config)
     for segment in candidates:
         if segment.outcome == "selected":
             continue
@@ -503,6 +591,28 @@ def _finish(
         segment.similarity_to_selected = similarity
         if winner is not None and similarity >= config.selection.cluster_threshold:
             segment.lost_to = winner
+        holders = filled.get(segment.visit_id) if segment.visit_id is not None else None
+        if holders:
+            # The cap is why this one is not in the edit, whatever else is also true
+            # of it, and the card should name the three clips that took the slots.
+            segment.reason = "place_cap"
+            segment.held_by = holders
+
+
+def _filled_visits(chosen: list[Segment], config: AutocutConfig) -> dict[int, list[str]]:
+    """For each visit the cap actually bound, the ids of the clips that filled it.
+
+    A visit holding more than the cap is one where the cap was lifted, because
+    nothing outside it was eligible and slots remained. Nothing in such a visit was
+    held back by the cap: the candidates that missed out lost on score like any
+    other, and saying otherwise would put the wrong word on their card.
+    """
+    by_visit: dict[int, list[str]] = {}
+    for segment in sorted(chosen, key=lambda s: (s.order if s.order is not None else 0, s.id)):
+        if segment.visit_id is not None:
+            by_visit.setdefault(segment.visit_id, []).append(segment.id)
+    cap = config.selection.max_clips_per_place
+    return {visit: ids for visit, ids in by_visit.items() if len(ids) == cap}
 
 
 def _record(manifest: Manifest, result: SelectionResult) -> None:
@@ -511,6 +621,8 @@ def _record(manifest: Manifest, result: SelectionResult) -> None:
         diversity_lambda=result.diversity_lambda,
         max_clips=result.max_clips,
         target_duration_s=result.target_duration_s,
+        places=result.places,
+        visits=result.visits,
         total_duration_s=round(result.total_duration_s, 3),
         selected=result.count,
         clusters=result.clusters,

@@ -22,7 +22,9 @@
 
 **Signal interface.** `SimilaritySignal` protocol with `name`, `available(a, b) -> bool` and `value(a, b) -> float`. Combination is the weighted mean over available signals. Alternatives: a fixed formula, rejected because M3 must add a signal without touching selection; product of signals, rejected because one missing signal would zero the pair.
 
-**Visual fallback.** `imagehash.phash` Hamming distance on the cached thumbnail, mapped to 0 to 1 over 64 bits, averaged with a chi-square distance between 8x8x8 RGB histograms. Cheap, no decoding, good at "same scene", bad at "same subject from another angle", which is exactly the gap CLIP fills in M3.
+**Visual fallback.** A 64 bit perceptual hash Hamming distance on the cached thumbnail, mapped to 0 to 1 over 64 bits, averaged with a chi-square distance between 8x8x8 RGB histograms. Cheap, no decoding, good at "same scene", bad at "same subject from another angle", which is exactly the gap CLIP fills in M3.
+
+The hash is an average hash computed on the thumbnail array, not `imagehash.phash` as this design first said. Measured on the 60 candidates of the Sardinia set, the average hash separates pairs that are near in time or from the same file (mean 0.601) from pairs more than an hour apart (mean 0.521) by 0.080, while `imagehash.phash` separates the same two groups by 0.036: on 320 px landscape thumbnails the DCT coefficients are dominated by sampling noise. The average hash also stays on the NumPy array already in memory instead of building a Pillow image per candidate. `imagehash` is still declared in `pyproject.toml` and is now unused; removing it is a dependency change and belongs in its own commit.
 
 **Cluster assignment.** Single linkage over combined similarity at `cluster_threshold` (default 0.75). Alternatives: k-means needs k; DBSCAN needs a density parameter that is footage dependent. Single linkage over a threshold is one number the user can move.
 

@@ -432,6 +432,7 @@
 
   .tag.klass { border-color: var(--accent); color: var(--accent); }
   .tag.cluster { border-style: dashed; }
+  .tag.place { border-style: dotted; }
   .tag.reason { border-color: var(--reject); color: var(--reject); background: var(--reject-wash); }
   .tag.policy { border-color: var(--ink-muted); color: var(--ink-muted); background: transparent; }
   .tag.length { font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -583,6 +584,21 @@
       </p>
     </div>
 
+    {% if summary.places %}
+    <div class="panel">
+      <h2>Places</h2>
+      <p class="totals"><b>{{ summary.places|length }}</b><span>places</span></p>
+      <dl class="tally">
+        {% for place in summary.places %}
+        <div>
+          <dt>{{ place.label }}</dt>
+          <dd>{{ place.selected }} of {{ place.segments }}, {{ place.visits }} visits</dd>
+        </div>
+        {% endfor %}
+      </dl>
+    </div>
+    {% endif %}
+
     <div class="panel">
       <h2>Files per class</h2>
       <dl class="tally">
@@ -632,6 +648,17 @@
         {% for name in summary.classes %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
       </select>
     </div>
+    {% if summary.places %}
+    <div class="field">
+      <label for="place">Place</label>
+      <select id="place">
+        <option value="">All</option>
+        {% for place in summary.places %}
+        <option value="{{ place.place_id }}">{{ place.label }} ({{ place.selected }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
     <div class="field">
       <label for="outcome">Outcome</label>
       <select id="outcome">
@@ -656,6 +683,7 @@
              data-class="{{ card.source_class }}"
              data-outcome="{{ card.outcome }}"
              data-reason="{{ card.reason or '' }}"
+             data-place="{{ card.place_id if card.place_id is not none else '' }}"
              data-order="{{ card.order }}"
              data-score="{{ card.score if card.score is not none else -1 }}">
       <div class="shot">
@@ -692,6 +720,9 @@
         {% if card.snapped %}
         <span class="tag" title="Window start moved onto a motion boundary">snapped</span>
         {% endif %}
+        {% if card.place_label %}
+        <span class="tag place" title="Visit {{ card.visit_id }}">{{ card.place_label }}</span>
+        {% endif %}
         {% if card.cluster_id is not none %}
         <span class="tag cluster">cluster {{ card.cluster_id }}</span>
         {% endif %}
@@ -712,6 +743,11 @@
       </p>
       {% elif card.export_error %}
       <p class="lost">Export failed: {{ card.export_error }}</p>
+      {% endif %}
+      {% if card.held_by_label %}
+      <p class="lost">
+        Its place was filled by <b>{{ card.held_by_label }}</b>.
+      </p>
       {% endif %}
       {% if card.lost_to %}
       <p class="lost">
@@ -748,19 +784,24 @@
     outcome: document.getElementById("outcome"),
     reason: document.getElementById("reason")
   };
+  // The place filter only exists when the footage carried GPS.
+  var placeControl = document.getElementById("place");
+  if (placeControl) { controls.place = placeControl; }
 
   function apply() {
     var wanted = {
       klass: controls.klass.value,
       outcome: controls.outcome.value,
-      reason: controls.reason.value
+      reason: controls.reason.value,
+      place: controls.place ? controls.place.value : ""
     };
     var shown = 0;
     cards.forEach(function (card) {
       var keep =
         (!wanted.klass || card.dataset.class === wanted.klass) &&
         (!wanted.outcome || card.dataset.outcome === wanted.outcome) &&
-        (!wanted.reason || card.dataset.reason === wanted.reason);
+        (!wanted.reason || card.dataset.reason === wanted.reason) &&
+        (!wanted.place || card.dataset.place === wanted.place);
       card.hidden = !keep;
       if (keep) { shown += 1; }
     });
@@ -786,6 +827,7 @@
     controls.klass.value = "";
     controls.outcome.value = "";
     controls.reason.value = "";
+    if (controls.place) { controls.place.value = ""; }
     apply();
   });
 

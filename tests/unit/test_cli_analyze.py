@@ -175,3 +175,152 @@ def test_report_command_rerenders_from_an_existing_manifest(
     assert result.exit_code == 0, result.stdout
     assert (out / "report.html").exists()
     assert "Report written to" in result.stdout
+
+
+def test_select_without_a_manifest_exits_non_zero(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["select", str(tmp_path)])
+    assert result.exit_code != 0
+    assert "No manifest found" in result.stdout
+
+
+def test_select_help_lists_the_overrides() -> None:
+    result = runner.invoke(app, ["select", "--help"])
+    assert result.exit_code == 0
+    for flag in ("--max-clips", "--duration", "--diversity"):
+        assert flag in result.stdout
+
+
+@pytest.mark.ffmpeg
+def test_select_after_analyze_stays_within_the_caps(synthetic_dir: Path, tmp_path: Path) -> None:
+    out = tmp_path / "edit"
+    assert (
+        runner.invoke(
+            app,
+            [
+                "analyze",
+                str(synthetic_dir),
+                "--out",
+                str(out),
+                "--workers",
+                "2",
+                "--config",
+                str(config_file(tmp_path)),
+            ],
+        ).exit_code
+        == 0
+    )
+
+    result = runner.invoke(
+        app, ["select", str(out), "--max-clips", "3", "--config", str(config_file(tmp_path))]
+    )
+    assert result.exit_code == 0, result.stdout
+
+    manifest = Manifest.load(out / "manifest.json")
+    selected = [s for s in manifest.segments.values() if s.outcome == "selected"]
+    assert 0 < len(selected) <= 3
+    assert manifest.selection.max_clips == 3
+    assert sorted(s.order for s in selected) == list(range(1, len(selected) + 1))
+    for segment in selected:
+        assert segment.best_center_s is not None
+        assert segment.target_duration_s is not None
+
+
+@pytest.mark.ffmpeg
+def test_a_second_select_with_another_diversity_changes_the_set(
+    synthetic_dir: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "edit"
+    toml = config_file(tmp_path)
+    assert (
+        runner.invoke(
+            app,
+            [
+                "analyze",
+                str(synthetic_dir),
+                "--out",
+                str(out),
+                "--workers",
+                "2",
+                "--config",
+                str(toml),
+            ],
+        ).exit_code
+        == 0
+    )
+
+    runner.invoke(app, ["select", str(out), "--diversity", "0", "--config", str(toml)])
+    first = Manifest.load(out / "manifest.json")
+    greedy = {s.id for s in first.segments.values() if s.outcome == "selected"}
+    rejected_before = {s.id for s in first.segments.values() if s.outcome == "rejected"}
+
+    runner.invoke(app, ["select", str(out), "--diversity", "1", "--config", str(toml)])
+    second = Manifest.load(out / "manifest.json")
+    diverse = {s.id for s in second.segments.values() if s.outcome == "selected"}
+    rejected_after = {s.id for s in second.segments.values() if s.outcome == "rejected"}
+
+    assert second.selection.diversity_lambda == 1.0
+    # Rejections are not selection's business and must survive both runs untouched.
+    assert rejected_before == rejected_after
+    assert greedy and diverse
+
+
+@pytest.mark.ffmpeg
+def test_select_never_spawns_ffmpeg(
+    synthetic_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Selection is a cache read; a decode here would defeat the tuning loop."""
+    import subprocess
+
+    out = tmp_path / "edit"
+    toml = config_file(tmp_path)
+    assert (
+        runner.invoke(
+            app,
+            [
+                "analyze",
+                str(synthetic_dir),
+                "--out",
+                str(out),
+                "--workers",
+                "2",
+                "--config",
+                str(toml),
+            ],
+        ).exit_code
+        == 0
+    )
+
+    def explode(*args: object, **kwargs: object) -> None:
+        raise AssertionError("select must not start ffmpeg")
+
+    monkeypatch.setattr(subprocess, "Popen", explode)
+    result = runner.invoke(app, ["select", str(out), "--config", str(toml)])
+    assert result.exit_code == 0, result.stdout
+
+
+@pytest.mark.ffmpeg
+def test_run_chains_analyze_select_and_report(synthetic_dir: Path, tmp_path: Path) -> None:
+    out = tmp_path / "edit"
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            str(synthetic_dir),
+            "--out",
+            str(out),
+            "--workers",
+            "2",
+            "--max-clips",
+            "4",
+            "--config",
+            str(config_file(tmp_path)),
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert (out / "manifest.json").exists()
+    assert (out / "report.html").exists()
+
+    manifest = Manifest.load(out / "manifest.json")
+    selected = [s for s in manifest.segments.values() if s.outcome == "selected"]
+    assert selected
+    assert len(selected) <= 4

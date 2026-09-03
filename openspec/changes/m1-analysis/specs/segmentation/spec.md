@@ -18,6 +18,30 @@ The system SHALL split a file into segments at content changes detected on the s
 - **WHEN** a file is one continuous pan
 - **THEN** exactly one segment spanning the trimmed file is produced
 
+### Requirement: Telemetry driven split
+
+The system SHALL split each detected shot at the points where telemetry height crosses `rules.drone.min_height_m`, before head and tail trimming, for files whose telemetry carries height. Boundaries SHALL be taken from telemetry sample times snapped to the frame sampling grid. Portions that stay below the threshold SHALL become their own segments and portions above SHALL be left as they are, at both ends of the shot and in the middle. Segments produced by a split SHALL record the reason they were cut out of their shot. Files without height telemetry MUST NOT be affected.
+
+#### Scenario: Takeoff inside a continuous shot
+
+- **WHEN** a six second drone file is one continuous shot with per-second heights 0.5, 1.0, 3.0, 25, 30 and 2.0 and the threshold is 5
+- **THEN** three segments are produced, spanning 0.0 to 3.0, 3.0 to 5.0 and 5.0 to 6.0, each recording `altitude` as its split reason
+
+#### Scenario: Flight that never goes low
+
+- **WHEN** every height sample of a shot is above the threshold
+- **THEN** the shot yields exactly one segment with no split reason
+
+#### Scenario: Dip in the middle of a flight
+
+- **WHEN** a shot climbs, descends below the threshold and climbs again
+- **THEN** three segments are produced and the middle one covers the low portion
+
+#### Scenario: File without height telemetry
+
+- **WHEN** a file has no telemetry or telemetry without height
+- **THEN** its shots are not split and no segment records a split reason
+
 ### Requirement: Head and tail trim per class
 
 The system SHALL trim the first and last seconds of each file according to the class specific `analysis.head_trim_seconds` and `analysis.tail_trim_seconds`, and SHALL record the trimmed bounds on the segments touching the file edges.

@@ -28,12 +28,28 @@ def test_analyze_on_an_empty_folder_exits_non_zero(tmp_path: Path) -> None:
     assert "No video files found" in result.stdout
 
 
+def config_file(tmp_path: Path) -> Path:
+    """A config that keeps the analysis cache inside the test's own directory."""
+    toml = tmp_path / "autocut.toml"
+    toml.write_text(f'[cache]\ndir = "{tmp_path / "cache"}"\n', encoding="utf-8")
+    return toml
+
+
 @pytest.mark.ffmpeg
 def test_analyze_writes_a_valid_manifest(synthetic_dir: Path, tmp_path: Path) -> None:
     out = tmp_path / "edit"
     result = runner.invoke(
         app,
-        ["analyze", str(synthetic_dir), "--out", str(out), "--workers", "2"],
+        [
+            "analyze",
+            str(synthetic_dir),
+            "--out",
+            str(out),
+            "--workers",
+            "2",
+            "--config",
+            str(config_file(tmp_path)),
+        ],
     )
     assert result.exit_code == 0, result.stdout
 
@@ -48,11 +64,51 @@ def test_analyze_writes_a_valid_manifest(synthetic_dir: Path, tmp_path: Path) ->
         assert source.source_class
         assert source.class_signal
 
+    assert manifest.segments
+    scored_files = {segment.file_id for segment in manifest.segments.values()}
+    assert scored_files == set(manifest.files)
+    for segment in manifest.segments.values():
+        assert segment.score is not None
+        assert segment.metrics is not None
+        assert segment.thumbnail is not None and segment.thumbnail.exists()
+
+
+@pytest.mark.ffmpeg
+def test_second_analyze_run_reports_cache_hits(synthetic_dir: Path, tmp_path: Path) -> None:
+    out = tmp_path / "edit"
+    args = [
+        "analyze",
+        str(synthetic_dir),
+        "--out",
+        str(out),
+        "--workers",
+        "2",
+        "--config",
+        str(config_file(tmp_path)),
+    ]
+    first = runner.invoke(app, args)
+    assert first.exit_code == 0, first.stdout
+    assert "(0 files from cache)" in first.stdout
+
+    count = len(list(synthetic_dir.glob("*.mp4")))
+    second = runner.invoke(app, args)
+    assert second.exit_code == 0, second.stdout
+    assert f"({count} files from cache)" in second.stdout
+
 
 @pytest.mark.ffmpeg
 def test_analyze_updates_an_existing_manifest(synthetic_dir: Path, tmp_path: Path) -> None:
     out = tmp_path / "edit"
-    args = ["analyze", str(synthetic_dir), "--out", str(out), "--workers", "1"]
+    args = [
+        "analyze",
+        str(synthetic_dir),
+        "--out",
+        str(out),
+        "--workers",
+        "1",
+        "--config",
+        str(config_file(tmp_path)),
+    ]
     assert runner.invoke(app, args).exit_code == 0
     created_at = Manifest.load(out / "manifest.json").created_at
 

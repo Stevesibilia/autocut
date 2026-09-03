@@ -60,7 +60,11 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "B", "SIM", "N"]
 
 [tool.mypy]
-python_version = "3.11"
+# Type checking targets 3.12 while the runtime floor stays 3.11: the numpy stubs
+# use PEP 695 "type" statements, which mypy only parses at 3.12 and above. Code
+# that is not valid on 3.11 is still caught by ruff (target-version py311) and by
+# the 3.11 test job in CI.
+python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
 ignore_missing_imports = true

@@ -28,3 +28,15 @@ jobs:
         run: python scripts/make_fixtures.py
       - name: Tests
         run: pytest -q
+
+  # The embedding tests need torch, which the matrix job deliberately does not
+  # install: the ai extra is optional and the default job stays light. This job
+  # builds the second Docker target and runs only the tests marked "ai".
+  ai:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the ai image
+        run: docker compose build dev-ai
+      - name: Fixtures and ai tests
+        run: docker compose run --rm dev-ai sh -c "python scripts/make_fixtures.py && pytest -q -m ai"

@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
+      target: dev
     volumes:
       - .:/app
       - ${AUTOCUT_REAL_FOOTAGE:-/dev/null}:/footage:ro
@@ -11,3 +12,22 @@ services:
     devices:
       - /dev/dri:/dev/dri
     command: pytest -q
+
+  # The ai extra, for the tests marked "ai". The model cache is a named volume so
+  # the checkpoint is downloaded once rather than on every run. No /dev/dri: this
+  # target runs torch on the CPU and never asks for the GPU.
+  dev-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      target: ai
+    volumes:
+      - .:/app
+      - autocut-models:/root/.cache/autocut
+      - ${AUTOCUT_REAL_FOOTAGE:-/dev/null}:/footage:ro
+    environment:
+      AUTOCUT_REAL_FOOTAGE: ${AUTOCUT_REAL_FOOTAGE:+/footage}
+    command: pytest -q -m ai
+
+volumes:
+  autocut-models:

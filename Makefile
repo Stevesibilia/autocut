@@ -1,4 +1,4 @@
-.PHONY: venv test lint fixtures docker-test dmg
+.PHONY: venv test lint fixtures docker-test docker-test-ai dmg
 
 VENV ?= .venv
 PY := $(VENV)/bin/python
@@ -18,6 +18,11 @@ test: fixtures
 
 docker-test:
 	docker compose run --rm dev sh -c "python scripts/make_fixtures.py && pytest -q"
+
+# The tests marked "ai" only. Builds a second image with the ai extra and keeps the
+# model weights in a named volume, so the checkpoint is downloaded once.
+docker-test-ai:
+	docker compose run --rm dev-ai sh -c "python scripts/make_fixtures.py && pytest -q -m ai"
 
 # macOS only. Requires the build extra and ffmpeg on PATH. See ADR 7.
 dmg:

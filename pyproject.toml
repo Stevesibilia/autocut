@@ -27,9 +27,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# torch and torchvision move in lockstep: every torchvision release pins one exact
+# torch version, so the two upper bounds have to be raised together. torch 2.13.0 and
+# torchvision 0.28.0 (both 2026-07-08) publish wheels for cp311 through cp314 on
+# manylinux_2_28_x86_64 and macosx_14_0_arm64, which are the two platforms this project
+# targets. torch 2.14.0 exists but is one day old, which the dependency safety rule in
+# AGENTS.md rules out. open_clip_torch is a pure Python wheel and pulls torchvision and
+# timm itself; it is pinned here so the lockstep is visible in one place.
 ai = [
-  "torch>=2.4",
-  "open_clip_torch>=2.26",
+  "torch>=2.13,<2.14",
+  "torchvision>=0.28,<0.29",
+  "open_clip_torch>=3.3,<3.4",
 ]
 gui = [
   "PySide6>=6.7",
@@ -80,4 +88,5 @@ markers = [
   "private: needs clips in tests/fixtures/private",
   "real_footage: needs AUTOCUT_REAL_FOOTAGE",
   "ffmpeg: runs the ffmpeg binary",
+  "ai: needs the ai extra, runs a real vision model",
 ]

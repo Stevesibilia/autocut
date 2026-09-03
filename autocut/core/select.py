@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 
 import numpy as np
 
-from autocut.core.cache import CacheEntry, read_entry
+from autocut.core.cache import CacheEntry, read_entry, thumb_index
 from autocut.core.config import SOURCE_CLASSES, AutocutConfig, SourceClass
 from autocut.core.durations import assign_durations, buckets, shortfall, total_duration
 from autocut.core.manifest import Manifest, Segment, SelectionRun, SourceFile
@@ -291,6 +291,7 @@ def _build_features(
             source_class=_class_of(manifest, segment.file_id),
             phash=perceptual_hash(frame) if frame is not None else None,
             histogram=color_histogram(frame) if frame is not None else None,
+            embedding=_embedding(segment, entry),
             lat=source.gps.lat if source is not None and source.gps is not None else None,
             lon=source.gps.lon if source is not None and source.gps is not None else None,
             timestamp=absolute_time(source, segment),
@@ -302,19 +303,26 @@ def _build_features(
 def _thumb_frame(segment: Segment, entry: CacheEntry | None) -> np.ndarray | None:
     if entry is None or entry.thumb_frames is None or entry.thumb_frames.size == 0:
         return None
-    index = _shot_index(segment)
-    if index >= entry.thumb_frames.shape[0]:
-        index = entry.thumb_frames.shape[0] - 1
+    index = thumb_index(segment.id, int(entry.thumb_frames.shape[0]))
+    if index < 0:
+        return None
     frame: np.ndarray = entry.thumb_frames[index]
     return frame
 
 
-def _shot_index(segment: Segment) -> int:
-    _, _, suffix = segment.id.rpartition(":")
-    try:
-        return max(int(suffix), 0)
-    except ValueError:
-        return 0
+def _embedding(segment: Segment, entry: CacheEntry | None) -> np.ndarray | None:
+    """The segment's vector, or ``None`` when this project has no embeddings.
+
+    Indexed exactly like the thumbnail frame, because the vector describes that frame.
+    A cache entry embedded with another model arrives here already emptied.
+    """
+    if entry is None or entry.embeddings is None or entry.embeddings.size == 0:
+        return None
+    index = thumb_index(segment.id, int(entry.embeddings.shape[0]))
+    if index < 0:
+        return None
+    vector: np.ndarray = entry.embeddings[index]
+    return vector
 
 
 def _window_motion(segment: Segment, entry: CacheEntry | None) -> np.ndarray:

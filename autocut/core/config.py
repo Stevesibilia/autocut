@@ -200,6 +200,10 @@ class SimilarityWeights(BaseModel):
     """Relative weight of each similarity signal. Placeholders until tuned on footage."""
 
     visual: float = 0.5
+    # The semantic signal replaces the visual one for a pair rather than joining it, so
+    # it carries the same weight: the two answer the same question and only one of them
+    # answers it well.
+    semantic: float = 0.5
     spatial: float = 0.2
     temporal: float = 0.2
     motion: float = 0.1
@@ -217,6 +221,12 @@ class SimilarityConfig(BaseModel):
     )
     temporal_radius_s: float = Field(
         default=600.0, description="Time distance at which the temporal signal reaches 0."
+    )
+    semantic_floor: float = Field(
+        default=0.5,
+        description="Cosine similarity mapped to 0. CLIP vectors of two unrelated "
+        "holiday shots still sit around 0.5, so the useful range is the half above "
+        "it and stretching that half is what makes the signal discriminate.",
     )
 
 
@@ -278,7 +288,16 @@ class ProvidersConfig(BaseModel):
     vision_model: str = "google/gemini-2.5-flash"
     llm_model: str = "google/gemini-2.5-flash"
     local_embeddings: bool = True
-    embedding_model: str = "ViT-B-32/laion2b_s34b_b79k"
+    embedding_model: str = Field(
+        default="ViT-B-32/laion2b_s34b_b79k",
+        description="Vision model as architecture/pretrained. 512 dimensions and about "
+        "350 MB; a larger tower costs several times the CPU time for a marginal gain at "
+        "a few hundred segments. Changing this recomputes embeddings from cached frames "
+        "and leaves the metric arrays alone.",
+    )
+    embedding_batch_size: int = Field(
+        default=16, description="Frames per forward pass. They are already in memory."
+    )
     aesthetic: bool = False
     faces: bool = False
 

@@ -111,9 +111,17 @@ def test_analysis_run_defaults_and_roundtrip(tmp_path: Path) -> None:
     m = Manifest(created_at=now, updated_at=now, sources=[Path("/footage")], output_dir=tmp_path)
     assert m.analysis == AnalysisRun()
     assert m.analysis.hwaccel == "none"
+    assert m.analysis.embedding_model == "none"
+    assert m.analysis.embedding_device == "none"
 
     m.analysis = AnalysisRun(
-        files_analyzed=72, files_from_cache=70, files_failed=1, completed=False, hwaccel="vaapi"
+        files_analyzed=72,
+        files_from_cache=70,
+        files_failed=1,
+        completed=False,
+        hwaccel="vaapi",
+        embedding_model="ViT-B-32/laion2b_s34b_b79k",
+        embedding_device="mps",
     )
     out = tmp_path / "manifest.json"
     m.save(out)
@@ -121,6 +129,8 @@ def test_analysis_run_defaults_and_roundtrip(tmp_path: Path) -> None:
     assert back.analysis.hwaccel == "vaapi"
     assert back.analysis.files_analyzed == 72
     assert not back.analysis.completed
+    assert back.analysis.embedding_model == "ViT-B-32/laion2b_s34b_b79k"
+    assert back.analysis.embedding_device == "mps"
 
 
 def test_selection_fields_roundtrip(tmp_path: Path) -> None:

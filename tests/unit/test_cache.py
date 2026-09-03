@@ -18,6 +18,7 @@ from autocut.core.cache import (
     entry_path,
     prune,
     read_entry,
+    thumb_index,
     write_entry,
 )
 from autocut.core.config import AutocutConfig
@@ -132,6 +133,57 @@ def test_sprites_survive_the_round_trip(tmp_path: Path) -> None:
     loaded = read_entry("abc123", config)
     assert loaded is not None
     assert [sprite.shape for sprite in loaded.sprites] == [(4, 16, 3), (4, 8, 3)]
+
+
+def test_embeddings_survive_the_round_trip(tmp_path: Path) -> None:
+    config = config_in(tmp_path)
+    entry = sample_entry()
+    entry.embeddings = np.array([[0.6, 0.8], [0.0, 1.0]], dtype=np.float32)
+    entry.embedding_model = config.providers.embedding_model
+    write_entry(entry, config)
+
+    loaded = read_entry("abc123", config)
+    assert loaded is not None
+    assert loaded.embedding_model == config.providers.embedding_model
+    assert loaded.embeddings is not None
+    assert np.allclose(loaded.embeddings, entry.embeddings)
+
+
+def test_another_model_drops_the_vectors_and_keeps_the_metrics(tmp_path: Path) -> None:
+    """A model change costs one forward pass per shot, never a decode."""
+    config = config_in(tmp_path)
+    entry = sample_entry()
+    entry.embeddings = np.array([[0.6, 0.8], [0.0, 1.0]], dtype=np.float32)
+    entry.embedding_model = config.providers.embedding_model
+    write_entry(entry, config)
+
+    config.providers.embedding_model = "ViT-L-14/laion2b_s32b_b82k"
+    loaded = read_entry("abc123", config)
+    assert loaded is not None
+    assert loaded.embeddings is None
+    assert loaded.embedding_model is None
+    assert np.allclose(loaded.arrays["sharpness"], entry.arrays["sharpness"])
+    assert loaded.thumb_frames is not None
+    assert loaded.thumb_frames.shape == (2, 4, 4, 3)
+
+
+def test_an_entry_without_embeddings_reads_as_having_none(tmp_path: Path) -> None:
+    config = config_in(tmp_path)
+    write_entry(sample_entry(), config)
+    loaded = read_entry("abc123", config)
+    assert loaded is not None
+    assert loaded.embeddings is None
+    assert loaded.embedding_model is None
+
+
+def test_the_thumbnail_index_of_a_segment() -> None:
+    # Two segments split out of one shot both describe the frame that was cached.
+    assert thumb_index("aaa:0", 3) == 0
+    assert thumb_index("aaa:2", 3) == 2
+    assert thumb_index("aaa:7", 3) == 2
+    assert thumb_index("aaa:0", 0) == -1
+    assert thumb_index("no-colon", 3) == 0
+    assert thumb_index("aaa:not-a-number", 3) == 0
 
 
 def test_stats_and_prune(tmp_path: Path) -> None:

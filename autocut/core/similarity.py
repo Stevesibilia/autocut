@@ -5,11 +5,16 @@ holiday folder returns ten versions of the same beach. This module estimates how
 alike two candidates are without any model, from the thumbnail frame, the GPS fix,
 the timestamp and the motion profile.
 
-Signals are a list behind one interface on purpose. Milestone M3 adds CLIP
-embeddings as one more signal and nothing in selection changes. A signal that
-cannot be computed for a pair, because one of the two has no GPS or no telemetry,
-is left out of that pair's mean rather than counted as zero; counting it as zero
-would make a missing fix look like evidence of difference.
+Signals are a list behind one interface on purpose, which is what made the CLIP
+embedding of M3 one more entry here and no change at all in selection. A signal that
+cannot be computed for a pair, because one of the two has no GPS, no telemetry or no
+embedding, is left out of that pair's mean rather than counted as zero; counting it as
+zero would make a missing fix look like evidence of difference.
+
+The one interaction between signals is that the semantic signal and the perceptual
+hash answer the same question. When both candidates carry an embedding the hash is
+dropped for that pair, so the mean holds one visual opinion rather than two, and a pair
+where one embedding is missing falls back to the hash on its own.
 """
 
 from __future__ import annotations
@@ -40,6 +45,7 @@ class CandidateFeatures:
     lon: float | None = None
     timestamp: datetime | None = None
     motion: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    embedding: np.ndarray | None = None
 
 
 def perceptual_hash(frame: np.ndarray) -> int:
@@ -148,6 +154,38 @@ class VisualSignal:
         )
 
 
+class SemanticSignal:
+    """The same thing filmed twice, from the segments' CLIP embeddings.
+
+    The vectors are already normalized, so the cosine is a dot product. It is then
+    stretched from ``similarity.semantic_floor`` to 1 onto 0 to 1, because two
+    unrelated holiday shots still score around 0.5 against each other and a raw cosine
+    would call everything similar.
+    """
+
+    name = "semantic"
+
+    def enabled(self, config: AutocutConfig) -> bool:
+        return config.similarity.visual_semantic
+
+    def available(self, a: CandidateFeatures, b: CandidateFeatures) -> bool:
+        return (
+            a.embedding is not None
+            and b.embedding is not None
+            and a.embedding.size > 0
+            and a.embedding.size == b.embedding.size
+        )
+
+    def value(self, a: CandidateFeatures, b: CandidateFeatures, config: AutocutConfig) -> float:
+        assert a.embedding is not None and b.embedding is not None
+        cosine = float(np.dot(a.embedding, b.embedding))
+        floor = config.similarity.semantic_floor
+        span = 1.0 - floor
+        if span <= 0:
+            return float(np.clip(cosine, 0.0, 1.0))
+        return float(np.clip((cosine - floor) / span, 0.0, 1.0))
+
+
 class SpatialSignal:
     """Shots taken from the same spot, from the GPS fix."""
 
@@ -224,10 +262,14 @@ def _resample(values: np.ndarray, length: int) -> np.ndarray:
 
 SIGNALS: tuple[SimilaritySignal, ...] = (
     VisualSignal(),
+    SemanticSignal(),
     SpatialSignal(),
     TemporalSignal(),
     MotionSignal(),
 )
+
+VISUAL_SIGNAL_NAME = "visual"
+SEMANTIC_SIGNAL_NAME = "semantic"
 
 
 def combined_similarity(
@@ -239,7 +281,10 @@ def combined_similarity(
     """Weighted mean of the signals that are both enabled and computable for this pair."""
     total_weight = 0.0
     accumulated = 0.0
+    excluded = _excluded_for_pair(a, b, config, signals)
     for signal in signals:
+        if signal.name in excluded:
+            continue
         if not signal.enabled(config) or not signal.available(a, b):
             continue
         weight = float(getattr(config.similarity.weights, signal.name, 0.0))
@@ -250,6 +295,27 @@ def combined_similarity(
     if total_weight <= 0:
         return 0.0
     return accumulated / total_weight
+
+
+def _excluded_for_pair(
+    a: CandidateFeatures,
+    b: CandidateFeatures,
+    config: AutocutConfig,
+    signals: tuple[SimilaritySignal, ...],
+) -> frozenset[str]:
+    """Which signals another signal speaks for on this pair.
+
+    Only one rule so far: a usable semantic signal speaks for the perceptual hash. Both
+    judge the picture, and averaging them would count the visual opinion twice and dilute
+    the GPS and time evidence that the hash is bad at.
+    """
+    for signal in signals:
+        if signal.name != SEMANTIC_SIGNAL_NAME:
+            continue
+        weight = float(getattr(config.similarity.weights, signal.name, 0.0))
+        if signal.enabled(config) and signal.available(a, b) and weight > 0:
+            return frozenset({VISUAL_SIGNAL_NAME})
+    return frozenset()
 
 
 class SimilarityMatrix:

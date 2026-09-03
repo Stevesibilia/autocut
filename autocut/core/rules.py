@@ -17,6 +17,14 @@ if TYPE_CHECKING:
 
 REASONS = ("too_short", "low_altitude", "clipped", "no_motion", "shaky")
 
+# Not rejections: a segment carrying one of these is fine and was held back by a
+# policy the user set, so it keeps outcome "candidate" and the report says which
+# policy rather than styling it as a quality failure. Selection sets them.
+EXCLUSIONS = ("vertical",)
+
+# What the report builds its reason filter from.
+ALL_REASONS = REASONS + EXCLUSIONS
+
 
 def segment_heights(segment: Segment, telemetry: list[TelemetrySample] | None) -> list[float]:
     """Heights recorded inside the segment's trimmed span.

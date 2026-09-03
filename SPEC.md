@@ -211,6 +211,22 @@ Additional constraints: max clips per visual cluster (default 2 to 3), minimum t
 
 The no-model fallback (hash, histograms, GPS, time) must work acceptably. Models improve the result but are never a prerequisite.
 
+#### Places and visits
+
+The similarity penalty was not enough on the first real edit. Five drone files shot at one spot inside eleven minutes came through as five near identical clips: the spatial and temporal signals both fired, but the perceptual hash split those files across three visual clusters, so the per-cluster cap never applied. Pixels disagreed with the map and the pixels won.
+
+So the map gets a cap of its own, asking the question the editor was actually asking. Not "do these look alike" but "were these shot at the same spot on the same outing":
+
+- **Places.** Candidates carrying a position are grouped by single linkage within `selection.place_radius_m` (150 m). Single linkage rather than a grid, because a walk along a beach is a chain of positions and a grid cell would split it at an arbitrary line. The radius is smaller than the 200 m spatial signal on purpose: that signal is a soft penalty and this is a hard cap.
+- **Visits.** Inside a place, a gap longer than `selection.place_visit_gap_seconds` (two hours) starts a new visit. The same beach the next morning is a new outing and gets its own clips.
+- **Position.** The telemetry fix nearest the window centre when the file has telemetry, otherwise the file's GPS tag. A drone's tag is written at takeoff and the shot can be three hundred metres away, which is two places at this radius.
+- **The cap.** At most `selection.max_clips_per_place` (3) clips from one visit, as an eligibility filter like the cluster cap, lifted in the same last-resort pass as the minimum temporal gap when nothing else is eligible and slots remain. Three keeps a wide, a medium and a detail, which is how a montage covers a location.
+- **No position, no cap.** Action cam files carry no GPS, so they belong to no place and are never held back by this. Absence of GPS is absence of evidence, not evidence of difference; embeddings cover those clips.
+
+A candidate the cap held back stays a candidate with reason `place_cap` and records the clips that filled its visit, which the report shows by their edit order.
+
+**Candidate share ceiling.** `selection.max_clips` is itself bounded to `selection.max_candidate_share` (half) of the eligible candidates, rounded up, unless `--max-clips` was passed. Forty slots for sixty candidates is not a selection but a rejection list: the diversity penalty can only reorder what it is forced to take anyway. Tying the slot count to the folder makes a small shoot produce a short edit without the user computing the number, while a large one still hits `max_clips` first. The ceiling is printed when it applies, because a user expecting forty clips has to be told why fewer came out.
+
 ### 7.5 Soundtrack prompt
 
 After selection, AutoCut analyzes the chosen clips and writes a prompt for the music generator. Music is built around the video, not the other way round.
@@ -285,7 +301,7 @@ ffmpeg cut, two modes:
 
 Transformations:
 
-- **Audio removal** (`-an`) by default. Drone audio is rotor noise. Switchable off per class, family clips keep ambient audio when wanted. Slow motion always removes it: the video is stretched by an integer ratio and the audio is not, so keeping it would leave sound that stops partway through the clip.
+- **Audio removal** (`-an`) by default, for every class. A default export is silent and the soundtrack carries the sound, which is what the first CapCut review asked for: two phone clips with ambience among thirty-eight silent ones is noise, not atmosphere. A class opts back in by setting `export.remove_audio.<class>` to false. Slow motion always removes it regardless: the video is stretched by an integer ratio and the audio is not, so keeping it would leave sound that stops partway through the clip.
 - **Frame rate normalization.** `export.fps = "auto"` chooses, among the frame rates present in the selection, the one that the most selected clips reach by whole-number division, taking the lowest rate on a tie. It is recorded in the manifest export block, so deselecting one clip cannot move the target and invalidate every output already written. Clips converted from a non-multiple fps are flagged in the report. Explicit `--fps` overrides.
 
   The rule counts reach rather than clips, because the mode of the frame rates is the wrong answer on mixed footage. On the Sardinia set the selection is 24 clips at 50 fps, 14 at 25 and 2 at 30.033, so the mode is 50: analysis reads the Action 4 through its 25 fps `.LRF` proxy while export reads the 50 fps original, and the rate that dominates by count is one the analysis stage never saw. At a 50 fps target the Action 4 clips can never reach the two to one ratio slow motion needs, so that feature never fires, and every drone clip is upsampled for nothing. Counting reach gives 25, which 38 of the 40 clips arrive at by dropping whole frames, and with it 24 slow motion clips against 0 and 2 resampled against 16.

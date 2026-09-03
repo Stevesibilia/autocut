@@ -7,14 +7,19 @@ report that the stage is not implemented.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeElapsedColumn
 
 from autocut import __version__
 from autocut.core.config import AutocutConfig
+from autocut.core.events import ProgressEvent
+from autocut.core.ingest import ingest
+from autocut.core.manifest import Manifest
 
 app = typer.Typer(
     name="autocut",
@@ -57,10 +62,73 @@ def analyze(
     out: Annotated[Path, typer.Option("--out", "-o", help="Output folder.")],
     config: ConfigOpt = None,
     no_cloud: Annotated[bool, typer.Option("--no-cloud", help="Disable cloud providers.")] = False,
+    no_proxies: Annotated[
+        bool, typer.Option("--no-proxies", help="Ignore .lrv and .lrf proxy files.")
+    ] = False,
+    workers: Annotated[
+        int | None, typer.Option("--workers", help="Parallel files. Defaults to physical cores.")
+    ] = None,
 ) -> None:
     """Scan, probe and analyze footage. Writes manifest.json and report.html."""
-    _load_config(config)
-    _not_implemented("analyze")
+    cfg = _load_config(config)
+    if no_cloud:
+        cfg.providers.cloud = False
+    if no_proxies:
+        cfg.analysis.use_proxies = False
+    if workers is not None:
+        cfg.analysis.workers = workers
+
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Probing", total=None)
+
+        def on_event(event: ProgressEvent) -> None:
+            if event.stage == "scan":
+                progress.update(task, total=event.total or None)
+                return
+            name = event.path.name if event.path else ""
+            progress.update(task, completed=event.current, total=event.total, description=name)
+
+        files = ingest(list(sources), cfg, on_event)
+
+    if not files:
+        console.print("[red]No video files found[/red] in the given source folders.")
+        raise typer.Exit(code=1)
+
+    manifest = _open_manifest(out, sources, cfg)
+    manifest.files = {source.id: source for source in files}
+    manifest.updated_at = datetime.now(UTC)
+    manifest.save(out / "manifest.json")
+
+    failed = [source for source in files if source.error]
+    console.print(f"Probed [bold]{len(files)}[/bold] files into {out / 'manifest.json'}")
+    for source in failed:
+        console.print(f"[yellow]unreadable[/yellow] {source.path}: {source.error}")
+
+
+def _open_manifest(out: Path, sources: list[Path], cfg: AutocutConfig) -> Manifest:
+    """Load the manifest in ``out`` when it exists, otherwise start a new one."""
+    path = out / "manifest.json"
+    now = datetime.now(UTC)
+    resolved = [source.resolve() for source in sources]
+    if path.exists():
+        manifest = Manifest.load(path)
+        manifest.sources = resolved
+        manifest.output_dir = out
+        manifest.config_snapshot = cfg.model_dump(mode="json")
+        return manifest
+    return Manifest(
+        created_at=now,
+        updated_at=now,
+        sources=resolved,
+        output_dir=out,
+        config_snapshot=cfg.model_dump(mode="json"),
+    )
 
 
 @app.command()

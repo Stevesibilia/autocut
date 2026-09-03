@@ -269,18 +269,25 @@ ffmpeg cut, two modes:
 
 Transformations:
 
-- **Audio removal** (`-an`) by default. Drone audio is rotor noise. Switchable off per class, family clips keep ambient audio when wanted.
-- **Frame rate normalization.** `export.fps = "auto"` picks the dominant fps among selected clips (25 on the current footage). Clips converted from a non-multiple fps are flagged in the report. Explicit `--fps` overrides.
-- **Resolution normalization.** Downscale to `export.max_resolution` (default 3840x2160), never upscale.
+- **Audio removal** (`-an`) by default. Drone audio is rotor noise. Switchable off per class, family clips keep ambient audio when wanted. Slow motion always removes it: the video is stretched by an integer ratio and the audio is not, so keeping it would leave sound that stops partway through the clip.
+- **Frame rate normalization.** `export.fps = "auto"` chooses, among the frame rates present in the selection, the one that the most selected clips reach by whole-number division, taking the lowest rate on a tie. It is recorded in the manifest export block, so deselecting one clip cannot move the target and invalidate every output already written. Clips converted from a non-multiple fps are flagged in the report. Explicit `--fps` overrides.
+
+  The rule counts reach rather than clips, because the mode of the frame rates is the wrong answer on mixed footage. On the Sardinia set the selection is 24 clips at 50 fps, 14 at 25 and 2 at 30.033, so the mode is 50: analysis reads the Action 4 through its 25 fps `.LRF` proxy while export reads the 50 fps original, and the rate that dominates by count is one the analysis stage never saw. At a 50 fps target the Action 4 clips can never reach the two to one ratio slow motion needs, so that feature never fires, and every drone clip is upsampled for nothing. Counting reach gives 25, which 38 of the 40 clips arrive at by dropping whole frames, and with it 24 slow motion clips against 0 and 2 resampled against 16.
+
+- **Resolution normalization.** Downscale to `export.max_resolution` (default 3840x2160), never upscale. The aspect of that maximum is the project aspect, which is what the vertical strategies pad or crop to.
 - **Pixel format normalization** to 8-bit `yuv420p`. 10-bit passthrough is an option.
-- **Slow motion.** Automatic when the source fps is at least twice the target and the class is `actioncam` (Action 4 at 50 fps to 25 fps target gives clean 2x). Off for other classes unless forced.
-- **Vertical clips.** Three strategies: exclude from selection (default), blur padded sides, center crop. The choice is explicit and visible in the report. Silent mixing of vertical and horizontal is the kind of error found only in CapCut.
+- **Slow motion.** Automatic when the source fps is at least twice the target and the class is `actioncam` (Action 4 at 50 fps to 25 fps target gives clean 2x). Off for other classes unless forced. Only whole ratios are used, so every output frame is a frame the camera took and nothing is interpolated.
+- **Vertical clips.** Three strategies: exclude from selection (default), blur padded sides, center crop. Under `exclude` a vertical clip stays a candidate carrying the reason `vertical`, so the report shows it as held back by a policy rather than rejected on quality. Silent mixing of vertical and horizontal is the kind of error found only in CapCut.
 - **LUT per class** through `lut3d`, with a class to `.cube` mapping in config. A hook only until log profiles are used.
 - **Lens correction** for actioncam through `lenscorrection`, optional.
 
+**Cutting exactly.** Precise mode seeks on the input, which ffmpeg does accurately, and trims with a frame count rather than `-t`. A window rarely starts on a source frame boundary, and `-t` then measures against the `fps` filter's own grid and can stop a frame early. Fast mode keeps `-t`, because a stream copy has no filter grid to align to and its bounds are approximate by definition.
+
+**Resumable.** Every clip records a digest of everything its output depends on: the source, the window, the target frame rate and size, the mode, the codec and the filters. A clip whose file is on disk with a matching digest is skipped, so a re-export after a settings change re-encodes only what the change touched. Clips run in a process pool half the size of the core count, because libx264 is already threaded.
+
 ### 7.8 Output naming
 
-CapCut imports in alphabetical order, so the filename carries chronology:
+CapCut imports in alphabetical order, so the filename carries chronology. The date is the local date of the clip, which is how the user reads it back against the days of a holiday:
 
 ```text
 {index:03d}_{date}_{class}_{tag}_{duration}s.mp4
@@ -296,13 +303,16 @@ Output folder:
 ```text
 output/
 ├── _selects/         # chosen clips, numbered
-├── _rejects/         # rejected clips, optional
+│   └── _stale/       # outputs of clips a later select dropped
+├── _rejects/         # rejected clips, optional, reason in place of the tag
 ├── thumbs/           # per segment thumbnails and sprite strips
 ├── report.html       # visual review
 ├── manifest.json     # full analysis state, project file
 ├── suno-prompt.md    # prompt for the music generator
 └── beatmap.txt       # beat positions, for reference in CapCut
 ```
+
+An output in `_selects/` that no longer belongs to a selected clip is moved to `_selects/_stale/`, never deleted. A mistaken `select` run should cost a re-encode, not the previous edit.
 
 ### 7.9 Review report
 

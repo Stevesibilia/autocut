@@ -505,3 +505,106 @@ def test_generous_shares_never_overrun_the_total(
 
     assert result.count == 10
     assert len(selected_ids(manifest)) == 10
+
+
+def vertical_file(manifest: Manifest, file_id: str, minutes: float = 0.0) -> None:
+    """A phone clip stored landscape with rotation side data, like the Xiaomi files."""
+    add_file(manifest, file_id, "phone", minutes=minutes)
+    source = manifest.files[file_id]
+    source.width, source.height, source.rotation = 1920, 1080, -90
+    assert source.is_vertical
+
+
+def test_a_vertical_candidate_is_excluded_by_policy_not_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The vertical-excluded scenario in specs/clip-selection.
+
+    Selecting a clip the export strategy cannot cut would leave a hole in the edit,
+    and dropping it silently is the kind of thing that is only found in CapCut.
+    """
+    no_similarity(monkeypatch)
+    manifest = project(tmp_path)
+    vertical_file(manifest, "v")
+    add_segment(manifest, "v:0", "v", 0.99)
+    add_file(manifest, "d", "drone", minutes=30)
+    add_segment(manifest, "d:0", "d", 0.40)
+
+    config = open_config()
+    config.export.vertical_strategy = "exclude"
+    select_clips(manifest, config)
+
+    assert selected_ids(manifest) == ["d:0"]
+    excluded = manifest.segments["v:0"]
+    assert excluded.outcome == "candidate"
+    assert excluded.reason == "vertical"
+    assert excluded.order is None
+
+
+def test_another_vertical_strategy_lets_the_clip_compete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    no_similarity(monkeypatch)
+    manifest = project(tmp_path)
+    vertical_file(manifest, "v")
+    add_segment(manifest, "v:0", "v", 0.99)
+
+    config = open_config()
+    config.export.vertical_strategy = "blur_pad"
+    select_clips(manifest, config)
+
+    assert selected_ids(manifest) == ["v:0"]
+    assert manifest.segments["v:0"].reason is None
+
+
+def test_the_exclusion_is_cleared_when_the_strategy_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The mark says what the current strategy does, so a re-run has to re-decide it."""
+    no_similarity(monkeypatch)
+    manifest = project(tmp_path)
+    vertical_file(manifest, "v")
+    add_segment(manifest, "v:0", "v", 0.99)
+
+    config = open_config()
+    config.export.vertical_strategy = "exclude"
+    select_clips(manifest, config)
+    assert manifest.segments["v:0"].reason == "vertical"
+
+    config.export.vertical_strategy = "center_crop"
+    select_clips(manifest, config)
+    assert manifest.segments["v:0"].reason is None
+    assert manifest.segments["v:0"].outcome == "selected"
+
+
+def test_a_rejection_reason_survives_the_exclusion_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only policy marks are disposable; a quality rejection is not."""
+    no_similarity(monkeypatch)
+    manifest = project(tmp_path)
+    vertical_file(manifest, "v")
+    add_segment(manifest, "v:0", "v", 0.1, outcome="rejected", reason="shaky")
+
+    config = open_config()
+    config.export.vertical_strategy = "exclude"
+    select_clips(manifest, config)
+
+    assert manifest.segments["v:0"].outcome == "rejected"
+    assert manifest.segments["v:0"].reason == "shaky"
+
+
+def test_a_horizontal_clip_is_never_excluded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    no_similarity(monkeypatch)
+    manifest = project(tmp_path)
+    add_file(manifest, "p", "phone")
+    add_segment(manifest, "p:0", "p", 0.9)
+
+    config = open_config()
+    config.export.vertical_strategy = "exclude"
+    select_clips(manifest, config)
+
+    assert selected_ids(manifest) == ["p:0"]
+    assert manifest.segments["p:0"].reason is None

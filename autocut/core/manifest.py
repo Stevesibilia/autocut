@@ -13,7 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from autocut.core.config import SourceClass
+from autocut.core.config import CutMode, SourceClass
 
 MANIFEST_SCHEMA_VERSION = 1
 ANALYSIS_SCHEMA_VERSION = 1
@@ -151,6 +151,22 @@ class Segment(BaseModel):
     final_start_s: float | None = None
     final_end_s: float | None = None
     exported_path: Path | None = None
+    export_mode: CutMode | None = Field(
+        default=None,
+        description="How this clip was cut. 'fast' means the bounds are keyframe "
+        "aligned and the duration is approximate.",
+    )
+    export_fingerprint: str | None = Field(
+        default=None,
+        description="Digest of everything the output depends on. A re-run skips the "
+        "clip when this still matches, which is what makes export resumable.",
+    )
+    export_error: str | None = None
+    fps_converted: bool = Field(
+        default=False,
+        description="True when the source frame rate is neither the export target nor "
+        "a whole multiple of it, so frames had to be resampled.",
+    )
 
 
 class AnalysisRun(BaseModel):
@@ -181,6 +197,29 @@ class SelectionRun(BaseModel):
     clusters: int = 0
 
 
+class ExportRun(BaseModel):
+    """What the last export produced, and the settings every clip in it shares.
+
+    ``target_fps`` is recorded rather than recomputed because it is the mode of the
+    selected clips' frame rates: deselecting one clip could otherwise flip the target
+    and silently invalidate every output that was already written.
+    """
+
+    ran_at: datetime | None = None
+    target_fps: float | None = None
+    max_width: int | None = None
+    max_height: int | None = None
+    mode: CutMode | None = None
+    codec: str | None = None
+    exported: int = 0
+    skipped: int = 0
+    failed: int = 0
+    slow_motion: int = 0
+    fps_converted: int = 0
+    stale_moved: int = 0
+    warnings: list[str] = Field(default_factory=list)
+
+
 class Soundtrack(BaseModel):
     proposed_bpm: float | None = None
     measured_bpm: float | None = None
@@ -203,6 +242,7 @@ class Manifest(BaseModel):
     segments: dict[str, Segment] = Field(default_factory=dict)
     analysis: AnalysisRun = AnalysisRun()
     selection: SelectionRun = SelectionRun()
+    export: ExportRun = ExportRun()
     soundtrack: Soundtrack = Soundtrack()
     config_snapshot: dict[str, object] = Field(default_factory=dict)
 

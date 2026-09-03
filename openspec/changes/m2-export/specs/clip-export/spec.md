@@ -20,12 +20,27 @@ In `precise` mode the system SHALL re-encode the clip with the configured codec 
 
 ### Requirement: Frame rate normalization
 
-The target frame rate SHALL be `export.fps` when numeric, otherwise the most common frame rate among the selected clips. Every output SHALL have the target frame rate. A clip converted from a frame rate that is not the target or a whole multiple of it SHALL be flagged `fps_converted` on the segment.
+The target frame rate SHALL be `export.fps` when numeric. Otherwise it SHALL be chosen from the frame rates present among the selected clips, taking the one that the most selected clips reach by whole-number division, where a clip reaches a target when its frame rate divided by the target is a whole number including 1. On a tie the lowest rate SHALL win. Every output SHALL have the target frame rate. A clip converted from a frame rate that is not the target or a whole multiple of it SHALL be flagged `fps_converted` on the segment.
 
-#### Scenario: Auto picks dominant
+#### Scenario: Auto picks the rate most clips divide into
 
-- **WHEN** selected clips are 20 at 25 fps, 15 at 50 fps and 5 at 30 fps
-- **THEN** the target is 25 and only the 30 fps clips are flagged
+- **WHEN** selected clips are 24 at 50 fps, 14 at 25 fps and 2 at 30 fps
+- **THEN** the target is 25, because 38 clips reach it against 24 that reach 50, and only the 30 fps clips are flagged
+
+#### Scenario: One frame rate everywhere
+
+- **WHEN** every selected clip is 30 fps
+- **THEN** the target is 30 and nothing is flagged
+
+#### Scenario: Two rates that do not divide into each other
+
+- **WHEN** selected clips are 12 at 24 fps and 8 at 30 fps
+- **THEN** the target is 24, the rate the larger group reaches, and the 30 fps clips are flagged
+
+#### Scenario: Tie
+
+- **WHEN** selected clips are 10 at 24 fps and 10 at 30 fps
+- **THEN** the target is 24, because a tie goes to the lower rate
 
 ### Requirement: Resolution and pixel format
 

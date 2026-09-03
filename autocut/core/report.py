@@ -21,7 +21,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from autocut.core.config import SOURCE_CLASSES
 from autocut.core.manifest import Manifest, Segment, SourceFile
-from autocut.core.rules import REASONS
+from autocut.core.rules import ALL_REASONS, EXCLUSIONS
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 TEMPLATE_NAME = "report.html.j2"
@@ -78,6 +78,12 @@ class Card:
     cluster_id: int | None
     lost_to: str | None
     similarity_label: str | None
+    excluded: bool
+    exported_name: str | None
+    exported_link: str | None
+    export_mode: str | None
+    fps_converted: bool
+    export_error: str | None
     thumbnail: str | None
     sprite: str | None
     metrics: list[CardMetric] = field(default_factory=list)
@@ -103,6 +109,11 @@ class Summary:
     diversity_lambda: float | None
     selected_seconds: float
     selected_label: str
+    exported_count: int
+    export_mode: str | None
+    export_fps: float | None
+    export_failed: int
+    fps_converted_count: int
     classes: list[str]
     outcomes: list[str]
     reasons: list[str]
@@ -208,6 +219,12 @@ def _card(segment: Segment, source: SourceFile | None, index: int, out_dir: Path
         cluster_id=segment.cluster_id,
         lost_to=segment.lost_to,
         similarity_label=similarity,
+        excluded=segment.reason in EXCLUSIONS,
+        exported_name=segment.exported_path.name if segment.exported_path else None,
+        exported_link=relative_asset(segment.exported_path, out_dir),
+        export_mode=segment.export_mode,
+        fps_converted=segment.fps_converted,
+        export_error=segment.export_error,
         thumbnail=relative_asset(segment.thumbnail, out_dir),
         sprite=relative_asset(segment.sprite, out_dir),
         metrics=metrics,
@@ -237,7 +254,7 @@ def build_summary(manifest: Manifest, cards: list[Card]) -> Summary:
             for name in ("candidate", "selected", "rejected")
             if per_outcome[name]
         ],
-        segments_per_reason=[(name, per_reason[name]) for name in REASONS if per_reason[name]],
+        segments_per_reason=[(name, per_reason[name]) for name in ALL_REASONS if per_reason[name]],
         analyzed_seconds=analyzed,
         analyzed_label=duration_label(analyzed),
         files_from_cache=manifest.analysis.files_from_cache,
@@ -248,9 +265,14 @@ def build_summary(manifest: Manifest, cards: list[Card]) -> Summary:
         diversity_lambda=manifest.selection.diversity_lambda,
         selected_seconds=selected_seconds,
         selected_label=duration_label(selected_seconds),
+        exported_count=sum(1 for card in cards if card.exported_name),
+        export_mode=manifest.export.mode,
+        export_fps=manifest.export.target_fps,
+        export_failed=manifest.export.failed,
+        fps_converted_count=sum(1 for card in cards if card.fps_converted),
         classes=[name for name in SOURCE_CLASSES if per_class[name]],
         outcomes=[name for name in ("candidate", "selected", "rejected") if per_outcome[name]],
-        reasons=[name for name in REASONS if per_reason[name]],
+        reasons=[name for name in ALL_REASONS if per_reason[name]],
     )
 
 

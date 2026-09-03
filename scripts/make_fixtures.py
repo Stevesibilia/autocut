@@ -94,6 +94,28 @@ def main() -> int:
         str(OUT / "vertical_rot90.mp4"),
     )
     landscape.unlink()
+    # Export has to prove it removes audio for the classes configured for it and keeps
+    # it for the others, and every other fixture is silent, so one clip carries a tone.
+    ff(
+        *src(),
+        "-f",
+        "lavfi",
+        "-i",
+        f"sine=frequency=440:sample_rate=48000:duration={DUR}",
+        "-map",
+        "0:v",
+        "-map",
+        "1:a",
+        *x264,
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        str(OUT / "with_audio.mp4"),
+    )
+    # The Action 4 shoots 50 fps, which is the case slow motion export exists for: at a
+    # 25 fps target the ratio is an exact 2 and no frame has to be invented.
+    ff(*src(fps=50), *x264, str(OUT / "fifty_fps.mp4"))
     ff(
         *src(),
         "-c:v",

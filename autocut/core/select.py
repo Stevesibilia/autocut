@@ -21,6 +21,7 @@ import numpy as np
 from autocut.core.cache import CacheEntry, read_entry
 from autocut.core.config import SOURCE_CLASSES, AutocutConfig, SourceClass
 from autocut.core.manifest import Manifest, Segment, SelectionRun, SourceFile
+from autocut.core.rules import EXCLUSIONS
 from autocut.core.similarity import (
     CandidateFeatures,
     SimilarityMatrix,
@@ -79,6 +80,7 @@ def select_clips(
     )
 
     _reset(manifest)
+    _mark_excluded(manifest, config)
     candidates = [s for s in manifest.segments.values() if s.outcome == "candidate"]
     result = SelectionResult(max_clips=max_clips, target_duration_s=target, diversity_lambda=lam)
     if not candidates:
@@ -105,10 +107,17 @@ def select_clips(
 
 
 def _reset(manifest: Manifest) -> None:
-    """Selections are disposable; rejections are not."""
+    """Selections are disposable; rejections are not.
+
+    A policy exclusion such as ``vertical`` is disposable too: it says what the
+    current export strategy does with the clip, not that anything is wrong with it,
+    so it is cleared and set again from the configuration this run was given.
+    """
     for segment in manifest.segments.values():
         if segment.outcome == "selected":
             segment.outcome = "candidate"
+        if segment.reason in EXCLUSIONS:
+            segment.reason = None
         segment.order = None
         segment.lost_to = None
         segment.similarity_to_selected = None
@@ -339,6 +348,28 @@ def _best_pick(
     return None
 
 
+def _mark_excluded(manifest: Manifest, config: AutocutConfig) -> None:
+    """Record which candidates a policy holds back, before anything competes.
+
+    A vertical clip under the ``exclude`` strategy cannot be exported, so selecting
+    it would put a hole in the edit. It stays a candidate with reason ``vertical``:
+    the user chose this, and silently dropping the clip is the kind of decision that
+    is only discovered in CapCut.
+    """
+    if config.export.vertical_strategy != "exclude":
+        return
+    for segment in manifest.segments.values():
+        if segment.outcome != "candidate":
+            continue
+        source = manifest.files.get(segment.file_id)
+        if source is not None and source.is_vertical:
+            segment.reason = "vertical"
+
+
+def _excluded(segment: Segment) -> bool:
+    return segment.reason in EXCLUSIONS
+
+
 def _eligible(
     manifest: Manifest,
     config: AutocutConfig,
@@ -347,7 +378,7 @@ def _eligible(
     *,
     relax_gap: bool,
 ) -> bool:
-    if segment.outcome != "candidate":
+    if segment.outcome != "candidate" or _excluded(segment):
         return False
 
     source_class = _class_of(manifest, segment.file_id)

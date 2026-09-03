@@ -5,7 +5,17 @@
 sample_fps = 2.0
 sample_long_side = 320
 use_proxies = true
-hwaccel = "auto"      # "off" forces software decoding
+# auto | off | vaapi | videotoolbox. The decoder is chosen once per run, verified by
+# decoding one frame of the first file, and demoted to software for the whole run with
+# a single warning if that fails.
+# "auto" selects videotoolbox on macOS and software everywhere else. It never selects
+# vaapi: vaapi decodes correctly on Linux but measured slower than software for 2 fps
+# sampling (one 4K clip: 3.9 s software, 9.0 s vaapi, 5.7 s with a full GPU filter
+# chain), because most of the work is skipping frames and every decoded surface is
+# copied back to system memory. Set "vaapi" explicitly if you measure a win on your
+# own hardware. It never selects cuda, which is what ffmpeg's own -hwaccel auto chose
+# on an AMD host before failing on every file.
+hwaccel = "auto"
 sprites = false       # thumbnail strips for GUI scrubbing
 
 [analysis.head_trim_seconds]

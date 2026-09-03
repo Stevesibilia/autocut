@@ -21,6 +21,9 @@ import numpy as np
 from autocut.core.cache import CacheEntry, read_entry, write_entry
 from autocut.core.config import AutocutConfig
 from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
+from autocut.core.hwaccel import SOFTWARE, Hwaccel
+from autocut.core.hwaccel import select as select_hwaccel
+from autocut.core.hwaccel import verify as verify_hwaccel
 from autocut.core.ingest import physical_cores
 from autocut.core.manifest import AnalysisRun, Manifest, Metrics, Segment, SourceFile
 from autocut.core.metrics import frame_metrics
@@ -53,7 +56,9 @@ class FileAnalysis:
     warnings: list[str] = field(default_factory=list)
 
 
-def analyze_file(source: SourceFile, config: AutocutConfig) -> FileAnalysis:
+def analyze_file(
+    source: SourceFile, config: AutocutConfig, hwaccel: Hwaccel = SOFTWARE
+) -> FileAnalysis:
     """Decode, detect shots and measure one file. Runs inside a pool worker."""
     cached = read_entry(source.id, config)
     if cached is not None:
@@ -63,7 +68,7 @@ def analyze_file(source: SourceFile, config: AutocutConfig) -> FileAnalysis:
     if not probe.ok:
         return FileAnalysis(file_id=source.id, error=probe.error)
 
-    sampled = sample_frames(source.path, probe, config, source.proxy_path)
+    sampled = sample_frames(source.path, probe, config, source.proxy_path, hwaccel)
     if sampled.count == 0:
         return FileAnalysis(
             file_id=source.id,
@@ -180,10 +185,11 @@ def analyze_files(
     results: dict[str, FileAnalysis] = {}
     workers = max(1, config.analysis.workers or physical_cores())
     cancelled: AnalysisCancelled | None = None
+    hwaccel, hwaccel_warnings = choose_hwaccel(config, pending)
 
     if workers == 1 or total == 1:
         for index, source in enumerate(pending, start=1):
-            results[source.id] = analyze_file(source, config)
+            results[source.id] = analyze_file(source, config, hwaccel)
             try:
                 progress(_event(index, total, source, results[source.id]))
             except AnalysisCancelled as exc:
@@ -193,7 +199,7 @@ def analyze_files(
         context = multiprocessing.get_context("spawn")
         with ProcessPoolExecutor(max_workers=min(workers, total), mp_context=context) as pool:
             futures: dict[Future[FileAnalysis], SourceFile] = {
-                pool.submit(analyze_file, source, config): source for source in pending
+                pool.submit(analyze_file, source, config, hwaccel): source for source in pending
             }
             for done, future in enumerate(as_completed(futures), start=1):
                 source = futures[future]
@@ -212,9 +218,46 @@ def analyze_files(
         files_from_cache=sum(1 for result in results.values() if result.cached),
         files_failed=sum(1 for result in results.values() if result.error),
         completed=cancelled is None,
+        hwaccel=hwaccel.method,
+        # Run level warnings go on the manifest, not through the progress channel:
+        # that channel is one event per file, and a front end may cancel from it.
+        warnings=hwaccel_warnings,
     )
     if cancelled is not None:
         raise cancelled
+
+
+def choose_hwaccel(config: AutocutConfig, pending: list[SourceFile]) -> tuple[Hwaccel, list[str]]:
+    """Decide the run's decoder once, and prove it works before handing it to the pool.
+
+    ``ffmpeg -hwaccels`` lists what was compiled in, not what the machine can
+    actually run, so the choice is verified against the first file that has one.
+    A failure demotes the whole run to software with a single warning rather than
+    one per file.
+    """
+    hwaccel = select_hwaccel(config.analysis.hwaccel)
+    warnings: list[str] = []
+    if not hwaccel.enabled:
+        return hwaccel, warnings
+
+    probe_target = next(
+        (
+            source.proxy_path
+            if source.proxy_path is not None and config.analysis.use_proxies
+            else source.path
+            for source in pending
+            if source.path.exists()
+        ),
+        None,
+    )
+    if probe_target is None:
+        return hwaccel, warnings
+
+    works, why = verify_hwaccel(hwaccel, probe_target)
+    if works:
+        return hwaccel, warnings
+    warnings.append(f"{hwaccel.label()} decoding unavailable, using software: {why}")
+    return SOFTWARE, warnings
 
 
 def _event(index: int, total: int, source: SourceFile, result: FileAnalysis) -> ProgressEvent:

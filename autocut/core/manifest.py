@@ -149,13 +149,17 @@ class AnalysisRun(BaseModel):
     """What the last analysis pass did.
 
     The report header reports how many files were served from the cache, and that
-    is a property of the run rather than of any file, so it is recorded here.
+    is a property of the run rather than of any file, so it is recorded here. So
+    is the decoder: it is chosen once per run, and recording it is what makes
+    timings comparable between machines.
     """
 
     files_analyzed: int = 0
     files_from_cache: int = 0
     files_failed: int = 0
     completed: bool = True
+    hwaccel: str = "none"
+    warnings: list[str] = Field(default_factory=list)
 
 
 class Soundtrack(BaseModel):

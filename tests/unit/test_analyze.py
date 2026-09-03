@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from autocut.core.analyze import AnalysisCancelled, analyze_files
+from autocut.core.analyze import AnalysisCancelled, analyze_files, choose_hwaccel
 from autocut.core.config import AutocutConfig
 from autocut.core.events import ProgressEvent
 from autocut.core.ingest import ingest
@@ -209,3 +209,163 @@ def _best_score(manifest: Manifest, name: str) -> float:
     ]
     assert scores
     return max(scores)
+
+
+def test_the_decoder_is_chosen_once_and_verified(
+    synthetic_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One probe and one verification for the whole run, not one per file."""
+    from autocut.core import analyze as analyze_module
+    from autocut.core.hwaccel import Hwaccel
+
+    verifications: list[Path] = []
+    monkeypatch.setattr(
+        analyze_module, "select_hwaccel", lambda setting: Hwaccel(method="vaapi", device="/dev/x")
+    )
+
+    def fake_verify(hwaccel: Hwaccel, path: Path, timeout_s: float = 20.0) -> tuple[bool, str]:
+        verifications.append(path)
+        return True, ""
+
+    monkeypatch.setattr(analyze_module, "verify_hwaccel", fake_verify)
+
+    config = AutocutConfig()
+    files = list(ingest([synthetic_dir], config))
+    chosen, warnings = choose_hwaccel(config, files)
+
+    assert chosen.method == "vaapi"
+    assert warnings == []
+    assert len(verifications) == 1
+
+
+def test_a_failed_verification_demotes_the_whole_run_once(
+    synthetic_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One warning for the run, not one per file, and no hardware attempt after it."""
+    from autocut.core import analyze as analyze_module
+    from autocut.core.hwaccel import Hwaccel
+
+    monkeypatch.setattr(
+        analyze_module, "select_hwaccel", lambda setting: Hwaccel(method="vaapi", device="/dev/x")
+    )
+    monkeypatch.setattr(
+        analyze_module,
+        "verify_hwaccel",
+        lambda hwaccel, path, timeout_s=20.0: (False, "Cannot load libcuda.so.1"),
+    )
+
+    config = AutocutConfig()
+    files = list(ingest([synthetic_dir], config))
+    chosen, warnings = choose_hwaccel(config, files)
+
+    assert chosen.method == "none"
+    assert len(warnings) == 1
+    assert "Cannot load libcuda.so.1" in warnings[0]
+
+
+def test_a_run_warning_never_reaches_the_progress_channel(
+    synthetic_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One event per file, whatever the decoder did: a front end may cancel from it."""
+    from autocut.core import analyze as analyze_module
+    from autocut.core.hwaccel import Hwaccel
+
+    monkeypatch.setattr(
+        analyze_module, "select_hwaccel", lambda setting: Hwaccel(method="vaapi", device="/dev/x")
+    )
+    monkeypatch.setattr(
+        analyze_module,
+        "verify_hwaccel",
+        lambda hwaccel, path, timeout_s=20.0: (False, "no device"),
+    )
+
+    settings = AutocutConfig()
+    settings.analysis.workers = 1
+    settings.cache.dir = tmp_path / "cache"
+    manifest = project(tmp_path, [synthetic_dir])
+    manifest.files = {source.id: source for source in ingest([synthetic_dir], settings)}
+
+    events: list[ProgressEvent] = []
+    analyze_files(manifest, settings, events.append)
+
+    assert len(events) == len(manifest.files)
+    assert manifest.analysis.hwaccel == "none"
+    assert len(manifest.analysis.warnings) == 1
+    assert "no device" in manifest.analysis.warnings[0]
+
+
+def test_software_configuration_skips_verification(
+    synthetic_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autocut.core import analyze as analyze_module
+
+    def explode(*args: object, **kwargs: object) -> tuple[bool, str]:
+        raise AssertionError("software decoding must not be verified")
+
+    monkeypatch.setattr(analyze_module, "verify_hwaccel", explode)
+
+    config = AutocutConfig()
+    config.analysis.hwaccel = "off"
+    chosen, warnings = choose_hwaccel(config, list(ingest([synthetic_dir], config)))
+    assert chosen.method == "none"
+    assert warnings == []
+
+
+def test_verification_uses_the_proxy_when_analysis_will(
+    synthetic_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verifying the original would prove nothing about decoding the proxy."""
+    from autocut.core import analyze as analyze_module
+    from autocut.core.hwaccel import Hwaccel
+
+    video = tmp_path / "DJI_0001_D.MP4"
+    video.write_bytes((synthetic_dir / "sharp_pan.mp4").read_bytes())
+    proxy = tmp_path / "DJI_0001_D.LRF"
+    proxy.write_bytes((synthetic_dir / "static.mp4").read_bytes())
+
+    seen: list[Path] = []
+    monkeypatch.setattr(
+        analyze_module, "select_hwaccel", lambda setting: Hwaccel(method="vaapi", device="/dev/x")
+    )
+    monkeypatch.setattr(
+        analyze_module,
+        "verify_hwaccel",
+        lambda hwaccel, path, timeout_s=20.0: (seen.append(path), (True, ""))[1],
+    )
+
+    config = AutocutConfig()
+    choose_hwaccel(config, list(ingest([tmp_path], config)))
+    assert seen == [proxy]
+
+    seen.clear()
+    config.analysis.use_proxies = False
+    choose_hwaccel(config, list(ingest([tmp_path], config)))
+    assert seen == [video]
+
+
+def test_the_run_records_the_decoder_it_used(synthetic_dir: Path, tmp_path: Path) -> None:
+    """Recorded on the manifest so timings are comparable between machines."""
+    settings = AutocutConfig()
+    settings.analysis.workers = 1
+    settings.analysis.hwaccel = "off"
+    manifest, _ = analyzed(synthetic_dir, tmp_path, settings)
+    assert manifest.analysis.hwaccel == "none"
+    assert manifest.analysis.files_analyzed == len(manifest.files)
+    assert manifest.analysis.files_from_cache == 0
+    assert manifest.analysis.completed
+
+
+def test_a_cancelled_run_is_recorded_as_incomplete(synthetic_dir: Path, tmp_path: Path) -> None:
+    settings = AutocutConfig()
+    settings.analysis.workers = 1
+    settings.analysis.hwaccel = "off"
+    settings.cache.dir = tmp_path / "cache"
+    manifest = project(tmp_path, [synthetic_dir])
+    manifest.files = {source.id: source for source in ingest([synthetic_dir], settings)}
+
+    def cancel_at_once(event: ProgressEvent) -> None:
+        raise AnalysisCancelled
+
+    with pytest.raises(AnalysisCancelled):
+        analyze_files(manifest, settings, cancel_at_once)
+    assert not manifest.analysis.completed

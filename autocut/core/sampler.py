@@ -21,6 +21,7 @@ from typing import Literal
 import numpy as np
 
 from autocut.core.config import AutocutConfig
+from autocut.core.hwaccel import SOFTWARE, Hwaccel
 from autocut.core.probe import ProbeResult
 
 FrameSource = Literal["proxy", "original"]
@@ -37,7 +38,7 @@ class SampledFrames:
     frames: np.ndarray
     source: FrameSource
     path: Path
-    hwaccel_used: bool = False
+    hwaccel_used: str = "none"
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -68,13 +69,12 @@ def build_sample_command(
     fps: float,
     width: int,
     height: int,
-    hwaccel: bool,
+    hwaccel: Hwaccel = SOFTWARE,
 ) -> list[str]:
     """ffmpeg arguments that write sampled ``rgb24`` frames of ``width`` x ``height``."""
-    command = ["ffmpeg", "-v", "error", "-nostdin"]
-    if hwaccel:
-        # Must precede -i: it selects the decoder for the input that follows.
-        command += ["-hwaccel", "auto"]
+    # The decoder flags must precede -i: they select the decoder for the input
+    # that follows. The method itself was decided once for the whole run.
+    command = ["ffmpeg", "-v", "error", "-nostdin", *hwaccel.input_flags()]
     command += [
         "-i",
         str(path),
@@ -152,6 +152,7 @@ def sample_frames(
     probe: ProbeResult,
     config: AutocutConfig,
     proxy: Path | None = None,
+    hwaccel: Hwaccel = SOFTWARE,
 ) -> SampledFrames:
     """Sample ``path``, or its proxy when one is attached and proxies are enabled."""
     use_proxy = proxy is not None and config.analysis.use_proxies
@@ -170,18 +171,24 @@ def sample_frames(
 
     frame_bytes = width * height * 3
     warnings: list[str] = []
-    attempts: list[bool] = [True, False] if config.analysis.hwaccel == "auto" else [False]
+    # The run already chose and verified its decoder, so the hardware attempt is
+    # expected to work. The software retry stays as a per-file last resort for a
+    # single unreadable clip, not as the systematic second spawn it used to be.
+    attempts: list[Hwaccel] = [hwaccel] if not hwaccel.enabled else [hwaccel, SOFTWARE]
 
     raw: list[bytes] = []
-    hwaccel_used = False
-    for index, hwaccel in enumerate(attempts):
-        command = build_sample_command(target, config.analysis.sample_fps, width, height, hwaccel)
+    hwaccel_used = "none"
+    for index, attempt in enumerate(attempts):
+        command = build_sample_command(target, config.analysis.sample_fps, width, height, attempt)
         raw, returncode, stderr = read_frames(command, frame_bytes)
         if returncode == 0 and raw:
-            hwaccel_used = hwaccel
+            hwaccel_used = attempt.method
             break
         if index + 1 < len(attempts):
-            warnings.append(f"hardware decoding failed, retrying in software: {stderr.strip()}")
+            warnings.append(
+                f"{attempt.label()} decoding failed on this file, "
+                f"retrying in software: {stderr.strip()}"
+            )
             raw = []
 
     if not raw:

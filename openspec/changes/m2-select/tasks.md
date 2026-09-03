@@ -7,7 +7,7 @@
 ## 2. Similarity
 
 - [x] 2.1 Add `autocut/core/similarity.py` with the `SimilaritySignal` protocol, the four classic signals, `combined_similarity(a, b, config)` and a memoized `SimilarityMatrix`. Add `similarity.weights` and `similarity.spatial_radius_m`, `similarity.temporal_radius_s` to config. Verify with unit tests for every scenario in `specs/similarity-signals/spec.md`, using synthetic thumbnails (shifted crop of the same image versus a different image).
-  - The perceptual hash is an average hash over the thumbnail array, not `imagehash.phash`. Measured on the 60 candidates of the Sardinia set it separates pairs near in time from pairs over an hour apart by 0.080 against 0.036 for `imagehash.phash`, which the design note now records. `imagehash` stays declared in `pyproject.toml` and is unused; dropping it is a dependency change and belongs in its own commit.
+  - The perceptual hash is an average hash over the thumbnail array, not `imagehash.phash`. Measured on the 60 candidates of the Sardinia set it separates pairs near in time from pairs over an hour apart by 0.080 against 0.036 for `imagehash.phash`, which the design note now records. `imagehash` was declared for that hash and is now dropped from `pyproject.toml`, since nothing imports it.
 - [x] 2.2 Add `assign_clusters(matrix, threshold) -> dict[str, int]` by single linkage. Verify with the three-similar-shots scenario.
   - Signature is `assign_clusters(ids, matrix, threshold)`: the matrix memoizes pairs on demand and never holds the candidate list, so the ids have to be passed in.
 

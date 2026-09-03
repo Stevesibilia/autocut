@@ -97,20 +97,25 @@ class DroneRules(BaseModel):
 class RejectionRules(BaseModel):
     """Thresholds set from the measured distribution on the Sardinia set.
 
-    The percentiles each default corresponds to are recorded in the m2-scoring-tuning
-    task list. They are defaults, not constants: re-run ``scripts/metric_stats.py`` on
-    new footage before trusting them elsewhere.
+    Each description says what share of the 77 pooled Sardinia segments falls below the
+    value, which is not the same number as the value at that percentile: 0.015 leaves
+    7.8% of segments below it, while the value at the 7.8th percentile is 0.0190. The
+    full table is in the m2-scoring-tuning task list. They are defaults, not constants:
+    re-run ``scripts/metric_stats.py`` on new footage before trusting them elsewhere.
     """
 
     drone: DroneRules = DroneRules()
-    min_motion: float = Field(default=0.015, description="Pooled 8th percentile of segment motion.")
+    min_motion: float = Field(
+        default=0.015, description="Below it: 6 of the 77 Sardinia segments, a share of 7.8%."
+    )
     shaky_min_motion: float = Field(
         default=0.04,
-        description="Pooled 27th percentile. Below this a wobble is a still shot, "
-        "so the no_motion rule describes it better than shaky.",
+        description="Below it: 20 of the 77 Sardinia segments, a share of 26.0%. Below this "
+        "a wobble is a still shot, so the no_motion rule describes it better than shaky.",
     )
     min_stability: float = Field(
-        default=0.71, description="Pooled 10th percentile of segment stability."
+        default=0.71,
+        description="Below it: 8 of the 77 Sardinia segments, a share of 10.4%.",
     )
     max_clipped_fraction: float = 0.05
 

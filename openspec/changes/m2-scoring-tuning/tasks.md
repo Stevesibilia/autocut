@@ -27,11 +27,13 @@
 
 - [x] 1.2 Choose defaults from that table: `min_motion` near the 5th percentile of motion, `shaky_min_motion` between `min_motion` and the median, `min_stability` near the 10th percentile of stability. Record the chosen values and the percentiles they correspond to in this task.
 
-  | setting            | value | pooled percentile | note                                       |
-  | ------------------ | ----- | ----------------- | ------------------------------------------ |
-  | `min_motion`       | 0.015 | p7.8              | p5 is 0.0123, see below                    |
-  | `shaky_min_motion` | 0.04  | p27               | between `min_motion` and the median 0.0668 |
-  | `min_stability`    | 0.71  | p10.4             | pooled p10 is 0.7098                       |
+  The percentile column is the share of the 77 pooled segments that falls below the chosen value, not the value at a round percentile. Both readings were in use and they differ: 0.015 leaves 7.8% of segments below it, while the value at the 7.8th percentile is 0.0190.
+
+  | setting            | value | segments below | share | note                                       |
+  | ------------------ | ----- | -------------- | ----- | ------------------------------------------ |
+  | `min_motion`       | 0.015 | 6 of 77        | 7.8%  | the value at p5 is 0.0123, see below       |
+  | `shaky_min_motion` | 0.04  | 20 of 77       | 26.0% | between `min_motion` and the median 0.0668 |
+  | `min_stability`    | 0.71  | 8 of 77        | 10.4% | the value at p10 is 0.7098                 |
 
   `min_motion` is set slightly above the 5th percentile rather than at it. At 0.012 the only segment below the threshold is the one blown out clip, which the reordered rules now report as `clipped`, so `no_motion` would fire on nothing at all. That is the same defect this change exists to remove, so the value is the smallest round number above p5 at which the rule still fires on this footage. `max_clipped_fraction` is unchanged at 0.05: pooled p95 of clipping is 0.0012, so the rule stays rare by design and fires on exactly one segment.
 
@@ -69,7 +71,9 @@
   | `DJI_20250714103601_0225_D.MP4` | 0.0718 | 0.671     |
   | `DJI_20250714212032_0235_D.MP4` | 0.0501 | 0.217     |
 
-  `no_motion` drops from 3 to 1 and `clipped` rises from 0 to 1 because the blown out night clip is now reported as the exposure defect it is, and because two hovering drone shots at motion 0.0147 and 0.0193 sit above the new floor and survive.
+  `no_motion` drops from 3 to 1 and `clipped` rises from 0 to 1 for two reasons. The blown out night clip, `DJI_20250714212032_0235_D.MP4` at motion 0.0019 and clipping 0.548, is now reported as the exposure defect it is. And one hovering drone shot, `DJI_0756.MP4` at motion 0.0193, sits above the new floor and survives.
+
+  An earlier version of this note claimed that two hovering shots at 0.0147 and 0.0193 both survive. That is wrong: 0.015 is the floor, so `DJI_0779.MP4` at 0.0147 falls below it and is the single remaining `no_motion` rejection. Of the six segments under the floor, two are `too_short` before the motion rule runs, two more are `too_short` at 0.0000, one is the `clipped` night shot, and `DJI_0779.MP4` is the one the rule is actually there to catch.
 
   Top twelve by score, class of each: drone, drone, actioncam, actioncam, drone, actioncam, actioncam, actioncam, actioncam, phone, actioncam, actioncam. That is **3 drone, 8 actioncam, 1 phone**, so no class holds all twelve. Before this change the same list was ten proxy sourced action cam segments and two drone, with the best drone segment at rank 2; the drone now takes ranks 1 and 2 and the phone reaches rank 10 from a class of four candidates.
 

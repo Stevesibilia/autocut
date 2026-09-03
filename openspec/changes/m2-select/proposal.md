@@ -30,5 +30,5 @@ After analysis the manifest holds scored candidates but nothing chooses among th
 - New modules under `autocut/core/`: `window.py`, `similarity.py`, `select.py`.
 - `autocut/core/manifest.py`: `Segment` gains `similarity_to_selected: float | None` and `lost_to: str | None` (id of the selected near duplicate); `Manifest` gains a `selection` block with the parameters used.
 - `autocut/core/cache.py`: per-frame composite score is derived at select time from cached arrays; no schema change.
-- Dependencies already declared: `imagehash`, `pillow`, NumPy.
+- Dependencies already declared: `pillow`, NumPy. `imagehash` was declared for the perceptual hash and is dropped: the hash that measured better on the real thumbnails needs neither it nor Pillow.
 - Depends on `m2-scoring-tuning`.

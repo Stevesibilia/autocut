@@ -45,9 +45,9 @@ class CandidateFeatures:
 def perceptual_hash(frame: np.ndarray) -> int:
     """64 bit average hash of a frame, as an integer so distance is a popcount.
 
-    The DCT based hash from ``imagehash`` needs a Pillow image per call; this is the
-    same idea on the 320 px thumbnail already in memory and is enough to say "same
-    scene". Telling one beach from another beach is what CLIP is for in M3.
+    A DCT based hash needs a Pillow image per call and measured worse on the real
+    thumbnails, so this is the same idea on the 320 px array already in memory: enough
+    to say "same scene". Telling one beach from another beach is what CLIP is for in M3.
     """
     if frame.size == 0:
         return 0

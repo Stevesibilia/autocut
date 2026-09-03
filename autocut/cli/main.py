@@ -23,6 +23,7 @@ from autocut.core.config import AutocutConfig
 from autocut.core.events import ProgressEvent
 from autocut.core.ingest import ingest
 from autocut.core.manifest import Manifest
+from autocut.core.report import render_report
 
 app = typer.Typer(
     name="autocut",
@@ -144,6 +145,8 @@ def analyze(
     manifest.updated_at = datetime.now(UTC)
     manifest.save(manifest_path)
 
+    report_path = render_report(manifest, out)
+
     rejected = Counter(s.reason for s in manifest.segments.values() if s.reason)
     console.print(
         f"Analyzed [bold]{len(manifest.segments)}[/bold] segments "
@@ -151,6 +154,7 @@ def analyze(
     )
     for reason, count in sorted(rejected.items()):
         console.print(f"  {reason}: {count}")
+    console.print(f"Report written to {report_path}")
     if interrupted:
         console.print(
             "[yellow]Analysis was cancelled[/yellow]; the manifest holds partial results."
@@ -206,7 +210,12 @@ def soundtrack(
 def report(project: Annotated[Path, typer.Argument()], config: ConfigOpt = None) -> None:
     """Write report.html for visual review."""
     _load_config(config)
-    _not_implemented("report")
+    manifest_path = project / "manifest.json"
+    if not manifest_path.exists():
+        console.print(f"[red]No manifest found[/red] at {manifest_path}. Run analyze first.")
+        raise typer.Exit(code=1)
+    path = render_report(Manifest.load(manifest_path), project)
+    console.print(f"Report written to {path}")
 
 
 @app.command()

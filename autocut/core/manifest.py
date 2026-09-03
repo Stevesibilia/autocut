@@ -145,6 +145,19 @@ class Segment(BaseModel):
     exported_path: Path | None = None
 
 
+class AnalysisRun(BaseModel):
+    """What the last analysis pass did.
+
+    The report header reports how many files were served from the cache, and that
+    is a property of the run rather than of any file, so it is recorded here.
+    """
+
+    files_analyzed: int = 0
+    files_from_cache: int = 0
+    files_failed: int = 0
+    completed: bool = True
+
+
 class Soundtrack(BaseModel):
     proposed_bpm: float | None = None
     measured_bpm: float | None = None
@@ -165,6 +178,7 @@ class Manifest(BaseModel):
     output_dir: Path
     files: dict[str, SourceFile] = Field(default_factory=dict)
     segments: dict[str, Segment] = Field(default_factory=dict)
+    analysis: AnalysisRun = AnalysisRun()
     soundtrack: Soundtrack = Soundtrack()
     config_snapshot: dict[str, object] = Field(default_factory=dict)
 

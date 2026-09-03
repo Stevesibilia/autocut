@@ -22,7 +22,7 @@ from autocut.core.cache import CacheEntry, read_entry, write_entry
 from autocut.core.config import AutocutConfig
 from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
 from autocut.core.ingest import physical_cores
-from autocut.core.manifest import Manifest, Metrics, Segment, SourceFile
+from autocut.core.manifest import AnalysisRun, Manifest, Metrics, Segment, SourceFile
 from autocut.core.metrics import frame_metrics
 from autocut.core.probe import ProbeResult, probe_file
 from autocut.core.rules import apply_rules
@@ -207,6 +207,12 @@ def analyze_files(
                     break
 
     _build_segments(manifest, config, results)
+    manifest.analysis = AnalysisRun(
+        files_analyzed=len(results),
+        files_from_cache=sum(1 for result in results.values() if result.cached),
+        files_failed=sum(1 for result in results.values() if result.error),
+        completed=cancelled is None,
+    )
     if cancelled is not None:
         raise cancelled
 

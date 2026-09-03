@@ -442,3 +442,43 @@ def test_a_rejected_clip_is_still_styled_as_rejected(project: Manifest) -> None:
     cards = build_cards(project, out)
     rejected = next(card for card in cards if card.outcome == "rejected")
     assert rejected.excluded is False
+
+
+def test_a_selected_card_shows_its_duration_and_reason(project: Manifest) -> None:
+    """The duration reason scenario in specs/review-report."""
+    out = Path(project.output_dir)
+    chosen = project.segments["a:1"]
+    chosen.outcome = "selected"
+    chosen.order = 12
+    chosen.best_center_s = 8.0
+    chosen.target_duration_s = 4.8
+    chosen.duration_reason = "hero"
+
+    html = render_report(project, out).read_text(encoding="utf-8")
+    assert "4.8 s" in html
+    assert "hero" in html
+
+
+def test_a_snapped_card_says_so(project: Manifest) -> None:
+    out = Path(project.output_dir)
+    chosen = project.segments["a:1"]
+    chosen.outcome = "selected"
+    chosen.order = 1
+    chosen.target_duration_s = 3.0
+    chosen.duration_reason = "base"
+    chosen.snapped = True
+
+    summary = build_summary(project, build_cards(project, out))
+    assert summary.snapped_count == 1
+
+    html = render_report(project, out).read_text(encoding="utf-8")
+    assert "snapped" in html
+
+
+def test_a_card_without_a_duration_shows_neither(project: Manifest) -> None:
+    out = Path(project.output_dir)
+    cards = build_cards(project, out)
+    plain = next(card for card in cards if card.outcome == "candidate")
+    assert plain.duration_target_label is None
+    assert plain.duration_reason is None
+    assert plain.snapped is False

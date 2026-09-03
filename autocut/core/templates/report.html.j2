@@ -434,6 +434,8 @@
   .tag.cluster { border-style: dashed; }
   .tag.reason { border-color: var(--reject); color: var(--reject); background: var(--reject-wash); }
   .tag.policy { border-color: var(--ink-muted); color: var(--ink-muted); background: transparent; }
+  .tag.length { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .tag.reason-length { border-color: var(--accent); color: var(--accent); }
   .tag.warn { border-style: dashed; }
 
   .score {
@@ -569,6 +571,9 @@
         {% if summary.fps_converted_count %}
         {{ summary.fps_converted_count }} resampled from another frame rate.
         {% endif %}
+        {% if summary.snapped_count %}
+        {{ summary.snapped_count }} cut on a motion boundary.
+        {% endif %}
         {% if summary.export_failed %}
         <b>{{ summary.export_failed }} failed.</b>
         {% endif %}
@@ -678,6 +683,15 @@
         {% if card.analyzed_from == 'proxy' %}<span class="tag">proxy</span>{% endif %}
         {% if card.split_reason %}<span class="tag">split: {{ card.split_reason }}</span>{% endif %}
         {% if card.height_label %}<span class="tag">min {{ card.height_label }}</span>{% endif %}
+        {% if card.duration_target_label %}
+        <span class="tag length">{{ card.duration_target_label }}</span>
+        {% endif %}
+        {% if card.duration_reason %}
+        <span class="tag reason-length">{{ card.duration_reason }}</span>
+        {% endif %}
+        {% if card.snapped %}
+        <span class="tag" title="Window start moved onto a motion boundary">snapped</span>
+        {% endif %}
         {% if card.cluster_id is not none %}
         <span class="tag cluster">cluster {{ card.cluster_id }}</span>
         {% endif %}

@@ -75,6 +75,9 @@ class Card:
     order_label: str
     window_label: str | None
     window_seconds: float | None
+    duration_target_label: str | None
+    duration_reason: str | None
+    snapped: bool
     cluster_id: int | None
     lost_to: str | None
     similarity_label: str | None
@@ -110,6 +113,7 @@ class Summary:
     selected_seconds: float
     selected_label: str
     exported_count: int
+    snapped_count: int
     export_mode: str | None
     export_fps: float | None
     export_failed: int
@@ -216,6 +220,11 @@ def _card(segment: Segment, source: SourceFile | None, index: int, out_dir: Path
         order_label=f"{segment.order:03d}" if segment.order else "",
         window_label=window,
         window_seconds=segment.target_duration_s,
+        duration_target_label=(
+            f"{segment.target_duration_s:.1f} s" if segment.target_duration_s else None
+        ),
+        duration_reason=segment.duration_reason,
+        snapped=segment.snapped,
         cluster_id=segment.cluster_id,
         lost_to=segment.lost_to,
         similarity_label=similarity,
@@ -266,6 +275,7 @@ def build_summary(manifest: Manifest, cards: list[Card]) -> Summary:
         selected_seconds=selected_seconds,
         selected_label=duration_label(selected_seconds),
         exported_count=sum(1 for card in cards if card.exported_name),
+        snapped_count=sum(1 for card in cards if card.snapped),
         export_mode=manifest.export.mode,
         export_fps=manifest.export.target_fps,
         export_failed=manifest.export.failed,

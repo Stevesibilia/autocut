@@ -11,10 +11,12 @@ Sardinia set with the shipped defaults (`max_clips` 40, `diversity_lambda` 0.6,
 `cluster_threshold` 0.75):
 
     candidates                60 of 77 segments (actioncam 35, drone 21, phone 4)
-    selected                  40 (actioncam 23, drone 13, phone 4)
+      held back as vertical   2 phone candidates, under the exclude strategy
+    selected                  40 (actioncam 24, drone 14, phone 2)
     clusters                  45 over the 60 candidates
       sizes                   36 singletons, 7 pairs, one of 3, one of 7
-    lost to a near duplicate  10 candidates
+    lost to a near duplicate  9 candidates
+    total duration            112.3 s (22 long, 18 short, 4 hero)
     wall time                 0.46 s in process, 0.95 s through the CLI
 
     selection changes         lambda 0.0 to 0.6   4 of 40 clips differ
@@ -27,6 +29,11 @@ and the caps, not of the penalty. The same three runs with `--max-clips 15` chan
 6, 4 and 10 clips of 15, which is the control the GUI slider is meant to be. The
 numbers above are what the defaults do on this footage today, not a target to
 preserve.
+
+The class counts moved when export gained its vertical strategy: three of the five
+phone files are display-vertical, so two of their candidates are held back and the
+drone and action cam take the freed slots. The durations are per clip since
+m3-durations, so the edit no longer runs to a round 120 s.
 """
 
 from __future__ import annotations

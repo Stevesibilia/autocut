@@ -21,8 +21,12 @@ All notable changes to this project are documented in this file. The format foll
 - `autocut export` with `--no-audio`, `--fps`, `--fast` and `--rejects`, parallel over clips and resumable: a clip whose output matches its recorded settings is skipped.
 - Synthetic fixtures for a clip with an audio track and a 50 fps clip.
 
+- Per-clip durations: each selected clip gets its own length from its class, its score, a hero bonus for the best few and a pass that breaks up runs of the same length, within configured bounds and an optional total. `autocut select --duration <seconds>` sets one length for every clip.
+- Motion snap: the window start may move onto a nearby minimum of the motion series, so the cut lands where movement stops rather than partway through a pan.
+
 ### Changed
 
 - The review report lists selected segments first, with their edit order, best window bounds, visual cluster and the near duplicate a candidate lost to.
 - Selection holds back display-vertical candidates when `export.vertical_strategy` is `exclude`, marking them with the reason `vertical` while they stay candidates, so the report shows them as excluded by policy rather than rejected on quality.
 - The review report links each selected card to its exported file and marks fast cuts and clips resampled from another frame rate.
+- Selected cards show the clip's target duration, the rule that settled it and whether its window was snapped to a motion boundary.

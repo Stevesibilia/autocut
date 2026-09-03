@@ -132,3 +132,81 @@ def best_window(
             best_start = candidate_start
 
     return best_start + target_s / 2.0, target_s
+
+
+def motion_minima(motion: np.ndarray) -> np.ndarray:
+    """Indices where the motion series dips below both of its neighbours.
+
+    These are the moments the camera is between movements: the end of a pan, the
+    pause before a tilt. Cutting there reads as a deliberate edit, while cutting
+    partway through a movement reads as a mistake.
+
+    The dip has to be strict on at least one side. Allowing ties on both would make
+    every frame of a static shot a minimum, and a shot with no movement in it has no
+    boundary to snap to: there is nothing there the cut could land on better.
+    """
+    if motion.size < 3:
+        return np.zeros(0, dtype=np.int64)
+    inner, left, right = motion[1:-1], motion[:-2], motion[2:]
+    dips = (inner <= left) & (inner <= right) & ((inner < left) | (inner < right))
+    return np.flatnonzero(dips) + 1
+
+
+def snap_start(
+    start: float,
+    duration: float,
+    scores: np.ndarray,
+    timestamps: np.ndarray,
+    motion: np.ndarray,
+    trimmed_bounds: tuple[float, float],
+    snap_window_s: float,
+    max_score_loss: float,
+) -> tuple[float, bool]:
+    """Move the window start onto a nearby motion minimum, when it is nearly free.
+
+    The window search already found the frames worth keeping, so this is allowed to
+    change where the cut lands and almost nothing else: the candidate must sit within
+    ``snap_window_s`` of the current start, the window must still fit inside the
+    trimmed span, and the mean score may fall by no more than ``max_score_loss``.
+
+    Among the candidates that qualify the quietest one wins, because the deeper the
+    dip the more clearly the movement had stopped, with the nearest breaking a tie.
+    """
+    span_start, span_stop = trimmed_bounds
+    if (
+        snap_window_s <= 0
+        or duration <= 0
+        or motion.size != timestamps.size
+        or scores.size != timestamps.size
+        or timestamps.size == 0
+    ):
+        return start, False
+
+    current = _window_mean(scores, timestamps, start, duration)
+    if current is None or current <= 0:
+        return start, False
+
+    candidates: list[tuple[float, float, float]] = []
+    for index in motion_minima(motion):
+        moment = float(timestamps[index])
+        if abs(moment - start) > snap_window_s or moment == start:
+            continue
+        if moment < span_start or moment + duration > span_stop:
+            continue
+        mean = _window_mean(scores, timestamps, moment, duration)
+        if mean is None or (current - mean) / current > max_score_loss:
+            continue
+        candidates.append((float(motion[index]), abs(moment - start), moment))
+
+    if not candidates:
+        return start, False
+    return min(candidates)[2], True
+
+
+def _window_mean(
+    scores: np.ndarray, timestamps: np.ndarray, start: float, duration: float
+) -> float | None:
+    inside = np.flatnonzero((timestamps >= start) & (timestamps < start + duration))
+    if inside.size == 0:
+        return None
+    return float(scores[inside].mean())

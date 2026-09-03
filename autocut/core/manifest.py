@@ -28,6 +28,28 @@ class GpsPoint(BaseModel):
     alt_m: float | None = None
 
 
+class StreamInfo(BaseModel):
+    """A non-video stream seen by ffprobe, kept so adapters can find their data."""
+
+    index: int
+    codec_type: str
+    codec_name: str | None = None
+    codec_tag: str | None = None
+    handler_name: str | None = None
+    language: str | None = None
+
+
+class TelemetrySummary(BaseModel):
+    """Aggregate of a file's telemetry. Full samples live in the analysis cache."""
+
+    sample_count: int = 0
+    min_height_m: float | None = None
+    max_height_m: float | None = None
+    mean_speed_ms: float | None = None
+    first_gps: GpsPoint | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
 class SourceFile(BaseModel):
     """One raw video file and what ingest learned about it."""
 
@@ -35,20 +57,38 @@ class SourceFile(BaseModel):
     path: Path
     proxy_path: Path | None = None
     source_class: SourceClass = "generic"
+    class_signal: str = "default"
     class_overridden: bool = False
-    duration_s: float
-    width: int
-    height: int
+    duration_s: float = 0.0
+    width: int = 0
+    height: int = 0
     rotation: int = 0
-    fps: float
-    codec: str
-    pix_fmt: str
+    fps: float = 0.0
+    codec: str = ""
+    pix_fmt: str = ""
     bit_depth: int = 8
     creation_time: datetime | None = None
     make: str | None = None
     model: str | None = None
     gps: GpsPoint | None = None
     telemetry: TelemetryKind = "none"
+    telemetry_summary: TelemetrySummary | None = None
+    subtitle_streams: list[StreamInfo] = Field(default_factory=list)
+    data_streams: list[StreamInfo] = Field(default_factory=list)
+    error: str | None = None
+
+    @property
+    def display_width(self) -> int:
+        return self.height if self.rotation % 180 == 90 else self.width
+
+    @property
+    def display_height(self) -> int:
+        return self.width if self.rotation % 180 == 90 else self.height
+
+    @property
+    def is_vertical(self) -> bool:
+        """Orientation as the viewer sees it, rotation side data applied."""
+        return self.display_height > self.display_width
 
 
 class Metrics(BaseModel):

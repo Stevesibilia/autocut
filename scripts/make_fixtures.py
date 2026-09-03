@@ -79,13 +79,21 @@ def main() -> int:
         *x264,
         str(OUT / "multishot.mp4"),
     )
+    # Phones store vertical clips landscape with a rotation side data entry, so the
+    # fixture is 640x360 plus rotation -90, exactly like the Xiaomi files. The legacy
+    # "-metadata rotate" tag no longer produces a display matrix, hence -display_rotation.
+    landscape = OUT / "vertical_rot90.src.mp4"
+    ff(*src(), *x264, str(landscape))
     ff(
-        *src(size="360x640"),
-        *x264,
-        "-metadata:s:v:0",
-        "rotate=-90",
+        "-display_rotation",
+        "-90",
+        "-i",
+        str(landscape),
+        "-c",
+        "copy",
         str(OUT / "vertical_rot90.mp4"),
     )
+    landscape.unlink()
     ff(
         *src(),
         "-c:v",

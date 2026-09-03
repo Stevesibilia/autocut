@@ -353,3 +353,92 @@ def test_the_selected_total_is_the_edit_not_the_segments(project: Manifest) -> N
     assert summary.selected_count == 2
     assert summary.selected_seconds == pytest.approx(6.0)
     assert summary.selected_seconds < summary.analyzed_seconds
+
+
+def test_an_exported_card_links_to_its_file(project: Manifest) -> None:
+    out = Path(project.output_dir)
+    chosen = project.segments["a:1"]
+    chosen.outcome = "selected"
+    chosen.order = 1
+    chosen.exported_path = out / "_selects" / "001_20260812_drone_clip_3.0s.mp4"
+    chosen.export_mode = "precise"
+
+    html = render_report(project, out).read_text(encoding="utf-8")
+    assert "001_20260812_drone_clip_3.0s.mp4" in html
+    assert 'href="_selects/001_20260812_drone_clip_3.0s.mp4"' in html
+
+
+def test_the_fast_and_resampled_markers_show_on_the_card(project: Manifest) -> None:
+    out = Path(project.output_dir)
+    chosen = project.segments["a:1"]
+    chosen.outcome = "selected"
+    chosen.order = 1
+    chosen.exported_path = out / "_selects" / "001_x.mp4"
+    chosen.export_mode = "fast"
+    chosen.fps_converted = True
+
+    html = render_report(project, out).read_text(encoding="utf-8")
+    assert "fast cut" in html
+    assert "fps converted" in html
+
+
+def test_a_failed_export_says_why_on_the_card(project: Manifest) -> None:
+    out = Path(project.output_dir)
+    chosen = project.segments["a:1"]
+    chosen.outcome = "selected"
+    chosen.order = 1
+    chosen.export_error = "No such file or directory"
+
+    html = render_report(project, out).read_text(encoding="utf-8")
+    assert "Export failed" in html
+    assert "No such file or directory" in html
+
+
+def test_the_header_counts_the_export(project: Manifest) -> None:
+    out = Path(project.output_dir)
+    for index, segment_id in enumerate(("a:1", "b:0"), start=1):
+        chosen = project.segments[segment_id]
+        chosen.outcome = "selected"
+        chosen.order = index
+        chosen.exported_path = out / "_selects" / f"00{index}_x.mp4"
+    project.segments["b:0"].fps_converted = True
+    project.export.target_fps = 25.0
+    project.export.mode = "precise"
+
+    summary = build_summary(project, build_cards(project, out))
+    assert summary.exported_count == 2
+    assert summary.fps_converted_count == 1
+    assert summary.export_fps == pytest.approx(25.0)
+
+    html = render_report(project, out).read_text(encoding="utf-8")
+    assert "Exported" in html
+    assert "precise cut at" in html
+    assert "1 resampled from another frame rate" in html
+
+
+def test_a_project_without_an_export_says_so(project: Manifest) -> None:
+    html = render_report(project, Path(project.output_dir)).read_text(encoding="utf-8")
+    assert "Nothing exported yet" in html
+
+
+def test_a_clip_excluded_by_policy_is_not_styled_as_rejected(project: Manifest) -> None:
+    """A vertical clip under the exclude strategy is fine; the policy held it back."""
+    out = Path(project.output_dir)
+    excluded = project.segments["b:0"]
+    excluded.outcome = "candidate"
+    excluded.reason = "vertical"
+
+    cards = build_cards(project, out)
+    card = next(card for card in cards if card.id == "b:0")
+    assert card.excluded is True
+
+    html = render_report(project, out).read_text(encoding="utf-8")
+    assert "is-excluded" in html
+    assert "tag policy" in html
+
+
+def test_a_rejected_clip_is_still_styled_as_rejected(project: Manifest) -> None:
+    out = Path(project.output_dir)
+    cards = build_cards(project, out)
+    rejected = next(card for card in cards if card.outcome == "rejected")
+    assert rejected.excluded is False

@@ -294,6 +294,26 @@
     box-shadow: var(--shadow);
   }
 
+  .card.is-excluded {
+    border-left-color: var(--ink-muted);
+    opacity: 0.72;
+  }
+
+  .exported {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    padding: 0 0.75rem 0.5rem;
+    margin: 0;
+    font-size: 12px;
+  }
+
+  .exported a {
+    font-family: var(--mono);
+    color: var(--accent);
+    overflow-wrap: anywhere;
+  }
+
   .badge {
     position: absolute;
     top: 0.4rem;
@@ -413,6 +433,8 @@
   .tag.klass { border-color: var(--accent); color: var(--accent); }
   .tag.cluster { border-style: dashed; }
   .tag.reason { border-color: var(--reject); color: var(--reject); background: var(--reject-wash); }
+  .tag.policy { border-color: var(--ink-muted); color: var(--ink-muted); background: transparent; }
+  .tag.warn { border-style: dashed; }
 
   .score {
     display: flex;
@@ -538,6 +560,25 @@
     </div>
 
     <div class="panel">
+      <h2>Exported</h2>
+      <p class="totals"><b>{{ summary.exported_count }}</b><span>clips</span></p>
+      <p class="note">
+        {% if summary.exported_count %}
+        {{ summary.export_mode or "precise" }} cut at
+        {{ "%g"|format(summary.export_fps) if summary.export_fps else "?" }} fps.
+        {% if summary.fps_converted_count %}
+        {{ summary.fps_converted_count }} resampled from another frame rate.
+        {% endif %}
+        {% if summary.export_failed %}
+        <b>{{ summary.export_failed }} failed.</b>
+        {% endif %}
+        {% else %}
+        Nothing exported yet. Run <code>autocut export</code>.
+        {% endif %}
+      </p>
+    </div>
+
+    <div class="panel">
       <h2>Files per class</h2>
       <dl class="tally">
         {% for name, count in summary.files_per_class %}
@@ -606,7 +647,7 @@
 
   <section class="grid" id="grid">
     {% for card in cards %}
-    <article class="card{% if card.outcome == 'rejected' %} is-rejected{% elif card.outcome == 'selected' %} is-selected{% endif %}"
+    <article class="card{% if card.outcome == 'rejected' %} is-rejected{% elif card.excluded %} is-excluded{% elif card.outcome == 'selected' %} is-selected{% endif %}"
              data-class="{{ card.source_class }}"
              data-outcome="{{ card.outcome }}"
              data-reason="{{ card.reason or '' }}"
@@ -640,8 +681,24 @@
         {% if card.cluster_id is not none %}
         <span class="tag cluster">cluster {{ card.cluster_id }}</span>
         {% endif %}
-        {% if card.reason %}<span class="tag reason">{{ card.reason }}</span>{% endif %}
+        {% if card.reason %}
+        <span class="tag {{ 'policy' if card.excluded else 'reason' }}">{{ card.reason }}</span>
+        {% endif %}
+        {% if card.export_mode == 'fast' %}
+        <span class="tag warn" title="Keyframe aligned, duration approximate">fast cut</span>
+        {% endif %}
+        {% if card.fps_converted %}
+        <span class="tag warn" title="Resampled from a frame rate that is not a multiple of the target">fps converted</span>
+        {% endif %}
       </div>
+      {% if card.exported_name %}
+      <p class="exported">
+        <span>cut to</span>
+        <a href="{{ card.exported_link }}">{{ card.exported_name }}</a>
+      </p>
+      {% elif card.export_error %}
+      <p class="lost">Export failed: {{ card.export_error }}</p>
+      {% endif %}
       {% if card.lost_to %}
       <p class="lost">
         Lost to <b>{{ card.lost_to }}</b>{% if card.similarity_label %}, similarity

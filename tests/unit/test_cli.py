@@ -20,5 +20,10 @@ def test_help_lists_commands() -> None:
 
 
 def test_unimplemented_stage_exits_2(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    result = runner.invoke(app, ["select", str(tmp_path)])
-    assert result.exit_code == 2
+    """Stages that land in later milestones say so rather than failing obscurely."""
+    for stage in ("soundtrack", "sync", "export"):
+        args = [stage, str(tmp_path)]
+        if stage == "sync":
+            args += ["--audio", str(tmp_path / "track.mp3")]
+        result = runner.invoke(app, args)
+        assert result.exit_code == 2, stage

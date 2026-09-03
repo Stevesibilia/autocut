@@ -14,10 +14,17 @@ present but ``-hwaccel auto`` picking CUDA and falling back to software) on
     segments                 77 from 72 files
     analyzed from proxy      43 of 72 (every Action 4 clip)
 
-    rejections               13 of 77 segments
-      low_altitude            4   takeoff spans split out of continuous shots
+    rejections               17 of 77 segments
       too_short               6
-      no_motion               3
+      shaky                   5   handheld action cam, all five
+      low_altitude            4   takeoff spans split out of continuous shots
+      no_motion               1   one hovering drone shot at motion 0.0147
+      clipped                 1   the blown out night clip
+
+The rejection counts are the ones the m2-scoring-tuning thresholds produce. Before that
+change the same footage gave 13 rejections with ``no_motion`` at 3 and neither ``shaky``
+nor ``clipped`` firing at all; the reordered rules now name the blown out night clip as
+the exposure defect it is, and ``shaky`` fires for the first time.
 
 The four ``low_altitude`` rejections are the four clips that contain a takeoff
 (DJI_0741, DJI_0772, DJI_0793, DJI_0801, heights from 0.6 m). None of them is a

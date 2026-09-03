@@ -270,3 +270,86 @@ def test_metric_columns_stay_aligned() -> None:
     assert _number(128.4) == "128"
     assert _number(None) == "n/a"
     assert _number(3) == "3"
+
+
+def test_selected_card_shows_its_order_and_window(project: Manifest) -> None:
+    out = Path(project.output_dir)
+    chosen = project.segments["a:1"]
+    chosen.outcome = "selected"
+    chosen.order = 12
+    chosen.best_center_s = 8.0
+    chosen.target_duration_s = 3.0
+    chosen.cluster_id = 4
+
+    html = render_report(project, out).read_text(encoding="utf-8")
+    assert "is-selected" in html
+    assert ">012<" in html
+    assert "cut 0:06.5" in html
+    assert "cluster 4" in html
+
+
+def test_a_lost_duplicate_names_its_winner(project: Manifest) -> None:
+    out = Path(project.output_dir)
+    project.segments["a:1"].outcome = "selected"
+    project.segments["a:1"].order = 1
+    loser = project.segments["b:0"]
+    loser.lost_to = "a:1"
+    loser.similarity_to_selected = 0.88
+    loser.cluster_id = 2
+
+    html = render_report(project, out).read_text(encoding="utf-8")
+    assert "Lost to" in html
+    assert "a:1" in html
+    assert "0.88" in html
+
+
+def test_selected_cards_lead_the_grid(project: Manifest) -> None:
+    """Sorted chronologically, the edit comes first and the rest follows."""
+    out = Path(project.output_dir)
+    late = project.segments["c:0"]
+    late.outcome = "selected"
+    late.order = 1
+
+    cards = build_cards(project, out)
+    assert cards[0].id == "c:0"
+    assert cards[0].outcome == "selected"
+
+
+def test_summary_counts_the_selection(project: Manifest) -> None:
+    out = Path(project.output_dir)
+    project.segments["a:1"].outcome = "selected"
+    project.segments["a:1"].order = 1
+    project.segments["a:1"].cluster_id = 0
+    project.segments["b:0"].cluster_id = 1
+    project.selection.diversity_lambda = 0.6
+
+    summary = build_summary(project, build_cards(project, out))
+    assert summary.selected_count == 1
+    assert summary.cluster_count == 2
+    assert summary.diversity_lambda == pytest.approx(0.6)
+
+    html = render_report(project, out).read_text(encoding="utf-8")
+    assert "Selected" in html
+    assert "visual clusters" in html
+
+
+def test_a_project_without_a_selection_says_so(project: Manifest) -> None:
+    html = render_report(project, Path(project.output_dir)).read_text(encoding="utf-8")
+    assert "Nothing selected yet" in html
+
+
+def test_the_selected_total_is_the_edit_not_the_segments(project: Manifest) -> None:
+    """The header counts the windows that will be exported, not the spans they sit in."""
+    out = Path(project.output_dir)
+    for segment_id in ("a:1", "b:0"):
+        chosen = project.segments[segment_id]
+        chosen.outcome = "selected"
+        chosen.best_center_s = (chosen.start_s + chosen.end_s) / 2.0
+        chosen.target_duration_s = 3.0
+    project.segments["a:1"].order = 1
+    project.segments["b:0"].order = 2
+
+    summary = build_summary(project, build_cards(project, out))
+    assert summary.selected_count == 2
+    assert summary.selected_seconds == pytest.approx(6.0)
+    assert summary.selected_seconds < summary.analyzed_seconds

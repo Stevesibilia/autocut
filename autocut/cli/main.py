@@ -24,6 +24,7 @@ from autocut.core.events import ProgressEvent
 from autocut.core.ingest import ingest
 from autocut.core.manifest import Manifest
 from autocut.core.report import render_report
+from autocut.core.select import SelectionOverrides, select_clips
 
 app = typer.Typer(
     name="autocut",
@@ -185,6 +186,15 @@ def _open_manifest(out: Path, sources: list[Path], cfg: AutocutConfig) -> Manife
     )
 
 
+def _open_project(project: Path) -> Manifest:
+    """Load the manifest of an analyzed project, or exit with a clear message."""
+    manifest_path = project / "manifest.json"
+    if not manifest_path.exists():
+        console.print(f"[red]No manifest found[/red] at {manifest_path}. Run analyze first.")
+        raise typer.Exit(code=1)
+    return Manifest.load(manifest_path)
+
+
 @app.command()
 def select(
     project: Annotated[Path, typer.Argument(help="Output folder holding manifest.json.")],
@@ -194,8 +204,33 @@ def select(
     config: ConfigOpt = None,
 ) -> None:
     """Pick the best window per segment and the final diverse set of clips."""
-    _load_config(config)
-    _not_implemented("select")
+    cfg = _load_config(config)
+    manifest = _open_project(project)
+    result = select_clips(
+        manifest,
+        cfg,
+        SelectionOverrides(
+            max_clips=max_clips, target_duration_s=duration, diversity_lambda=diversity
+        ),
+    )
+    manifest.updated_at = datetime.now(UTC)
+    manifest.save(project / "manifest.json")
+
+    per_class = Counter(
+        manifest.files[s.file_id].source_class
+        for s in manifest.segments.values()
+        if s.outcome == "selected" and s.file_id in manifest.files
+    )
+    console.print(
+        f"Selected [bold]{result.count}[/bold] of {result.max_clips} clips "
+        f"from {result.clusters} clusters, diversity {result.diversity_lambda:g}"
+    )
+    for name, count in sorted(per_class.items()):
+        console.print(f"  {name}: {count}")
+    if result.relaxed_gap:
+        console.print(
+            "[yellow]The minimum temporal gap was relaxed[/yellow] to fill the remaining slots."
+        )
 
 
 @app.command()
@@ -250,10 +285,36 @@ def run(
     sources: Annotated[list[Path], typer.Argument()],
     out: Annotated[Path, typer.Option("--out", "-o")],
     config: ConfigOpt = None,
+    no_cloud: Annotated[bool, typer.Option("--no-cloud", help="Disable cloud providers.")] = False,
+    no_proxies: Annotated[
+        bool, typer.Option("--no-proxies", help="Ignore .lrv and .lrf proxy files.")
+    ] = False,
+    workers: Annotated[
+        int | None, typer.Option("--workers", help="Parallel files. Defaults to physical cores.")
+    ] = None,
+    max_clips: Annotated[int | None, typer.Option("--max-clips")] = None,
+    duration: Annotated[float | None, typer.Option("--duration", help="Target seconds.")] = None,
+    diversity: Annotated[float | None, typer.Option("--diversity", help="Lambda, 0 to 1.")] = None,
 ) -> None:
-    """First pass shortcut: analyze, select, soundtrack, report."""
-    _load_config(config)
-    _not_implemented("run")
+    """First pass shortcut: analyze, then select, then report."""
+    # Typer's decorator returns the function unchanged, so these are plain calls and
+    # each command's typer.Exit propagates with its own status.
+    analyze(
+        sources=sources,
+        out=out,
+        config=config,
+        no_cloud=no_cloud,
+        no_proxies=no_proxies,
+        workers=workers,
+    )
+    select(
+        project=out,
+        max_clips=max_clips,
+        duration=duration,
+        diversity=diversity,
+        config=config,
+    )
+    report(project=out, config=config)
 
 
 cache_app = typer.Typer(

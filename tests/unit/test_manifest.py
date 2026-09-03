@@ -7,6 +7,7 @@ from autocut.core.manifest import (
     Manifest,
     Metrics,
     Segment,
+    SelectionRun,
     SourceFile,
     TelemetrySummary,
 )
@@ -120,3 +121,52 @@ def test_analysis_run_defaults_and_roundtrip(tmp_path: Path) -> None:
     assert back.analysis.hwaccel == "vaapi"
     assert back.analysis.files_analyzed == 72
     assert not back.analysis.completed
+
+
+def test_selection_fields_roundtrip(tmp_path: Path) -> None:
+    now = datetime.now(UTC)
+    m = Manifest(created_at=now, updated_at=now, sources=[Path("/footage")], output_dir=tmp_path)
+    assert m.selection == SelectionRun()
+
+    m.segments["k:0"] = Segment(
+        id="k:0",
+        file_id="k",
+        start_s=0.0,
+        end_s=20.0,
+        trimmed_start_s=1.0,
+        trimmed_end_s=19.0,
+        best_center_s=8.5,
+        target_duration_s=3.0,
+        cluster_id=4,
+        similarity_to_selected=0.88,
+        lost_to="k:1",
+        outcome="candidate",
+    )
+    m.segments["k:1"] = Segment(
+        id="k:1", file_id="k", start_s=0.0, end_s=20.0, outcome="selected", order=12
+    )
+    m.selection = SelectionRun(
+        ran_at=now,
+        diversity_lambda=0.6,
+        max_clips=40,
+        target_duration_s=3.0,
+        selected=1,
+        clusters=7,
+    )
+
+    out = tmp_path / "manifest.json"
+    m.save(out)
+    back = Manifest.load(out)
+
+    loser = back.segments["k:0"]
+    assert loser.best_center_s == 8.5
+    assert loser.target_duration_s == 3.0
+    assert loser.cluster_id == 4
+    assert loser.similarity_to_selected == 0.88
+    assert loser.lost_to == "k:1"
+
+    assert back.segments["k:1"].outcome == "selected"
+    assert back.segments["k:1"].order == 12
+    assert back.selection.diversity_lambda == 0.6
+    assert back.selection.clusters == 7
+    assert back.selection.ran_at is not None

@@ -35,12 +35,23 @@ generic = 0.5
 
 [weights]
 sharpness = 1.0
-exposure = 1.0
+# 0 by default: on well exposed footage clipping is the same on every segment, so
+# weighting it ranks on noise. It stays a rejection rule.
+exposure = 0.0
 motion = 1.0
 stability = 1.0
 colorfulness = 0.5
 aesthetic = 0.0
 faces = 0.0
+
+# Thresholds are defaults taken from the measured distribution of real footage, not
+# guesses. Run scripts/metric_stats.py on a manifest to re-derive them for your own
+# material; the percentiles these correspond to are in the m2-scoring-tuning tasks.
+[rules]
+min_motion = 0.015        # pooled 8th percentile of segment motion
+shaky_min_motion = 0.04   # pooled 27th; below this a wobble is reported as no_motion
+min_stability = 0.71      # pooled 10th percentile of segment stability
+max_clipped_fraction = 0.05
 
 [rules.drone]
 min_height_m = 5.0

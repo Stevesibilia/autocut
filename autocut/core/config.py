@@ -80,7 +80,9 @@ class AnalysisConfig(BaseModel):
 
 class ScoringWeights(BaseModel):
     sharpness: float = 1.0
-    exposure: float = 1.0
+    # Zero by default: on well exposed SDR footage clipping is effectively zero on
+    # every segment, so ranking on it sorts noise. It stays a rejection rule.
+    exposure: float = 0.0
     motion: float = 1.0
     stability: float = 1.0
     colorfulness: float = 0.5
@@ -93,10 +95,23 @@ class DroneRules(BaseModel):
 
 
 class RejectionRules(BaseModel):
+    """Thresholds set from the measured distribution on the Sardinia set.
+
+    The percentiles each default corresponds to are recorded in the m2-scoring-tuning
+    task list. They are defaults, not constants: re-run ``scripts/metric_stats.py`` on
+    new footage before trusting them elsewhere.
+    """
+
     drone: DroneRules = DroneRules()
-    min_motion: float = 0.02
-    max_motion: float = 0.6
-    min_stability: float = 0.3
+    min_motion: float = Field(default=0.015, description="Pooled 8th percentile of segment motion.")
+    shaky_min_motion: float = Field(
+        default=0.04,
+        description="Pooled 27th percentile. Below this a wobble is a still shot, "
+        "so the no_motion rule describes it better than shaky.",
+    )
+    min_stability: float = Field(
+        default=0.71, description="Pooled 10th percentile of segment stability."
+    )
     max_clipped_fraction: float = 0.05
 
 

@@ -71,6 +71,13 @@ class Card:
     score_percent: float
     outcome: str
     reason: str | None
+    edit_order: int | None
+    order_label: str
+    window_label: str | None
+    window_seconds: float | None
+    cluster_id: int | None
+    lost_to: str | None
+    similarity_label: str | None
     thumbnail: str | None
     sprite: str | None
     metrics: list[CardMetric] = field(default_factory=list)
@@ -91,6 +98,11 @@ class Summary:
     files_from_cache: int
     files_failed: int
     completed: bool
+    selected_count: int
+    cluster_count: int
+    diversity_lambda: float | None
+    selected_seconds: float
+    selected_label: str
     classes: list[str]
     outcomes: list[str]
     reasons: list[str]
@@ -126,7 +138,13 @@ def build_cards(manifest: Manifest, out_dir: Path) -> list[Card]:
     file_order = {file_id: position for position, file_id in enumerate(manifest.files)}
     ordered = sorted(
         manifest.segments.values(),
-        key=lambda segment: (file_order.get(segment.file_id, 0), segment.start_s),
+        key=lambda segment: (
+            # Selected clips lead, in edit order; the rest follow in capture order.
+            0 if segment.outcome == "selected" else 1,
+            segment.order if segment.order is not None else 0,
+            file_order.get(segment.file_id, 0),
+            segment.start_s,
+        ),
     )
     cards: list[Card] = []
     for index, segment in enumerate(ordered, start=1):
@@ -149,6 +167,18 @@ def _card(segment: Segment, source: SourceFile | None, index: int, out_dir: Path
     height = None
     if segment.metrics is not None and segment.metrics.min_height_m is not None:
         height = f"{segment.metrics.min_height_m:.1f} m"
+    window = None
+    if segment.best_center_s is not None and segment.target_duration_s:
+        half = segment.target_duration_s / 2.0
+        window = (
+            f"{timecode(segment.best_center_s - half)}"
+            f"\u2013{timecode(segment.best_center_s + half)}"
+        )
+    similarity = (
+        f"{segment.similarity_to_selected:.2f}"
+        if segment.similarity_to_selected is not None
+        else None
+    )
     return Card(
         id=segment.id,
         index=index,
@@ -171,6 +201,13 @@ def _card(segment: Segment, source: SourceFile | None, index: int, out_dir: Path
         score_percent=round((score or 0.0) * 100, 1),
         outcome=segment.outcome,
         reason=segment.reason,
+        edit_order=segment.order,
+        order_label=f"{segment.order:03d}" if segment.order else "",
+        window_label=window,
+        window_seconds=segment.target_duration_s,
+        cluster_id=segment.cluster_id,
+        lost_to=segment.lost_to,
+        similarity_label=similarity,
         thumbnail=relative_asset(segment.thumbnail, out_dir),
         sprite=relative_asset(segment.sprite, out_dir),
         metrics=metrics,
@@ -184,6 +221,13 @@ def build_summary(manifest: Manifest, cards: list[Card]) -> Summary:
     per_outcome = Counter(card.outcome for card in cards)
     per_reason = Counter(card.reason for card in cards if card.reason)
     analyzed = sum(card.duration_s for card in cards)
+    selected = [card for card in cards if card.outcome == "selected"]
+    # The edit is as long as the windows that will be exported, not as long as the
+    # segments they sit in; a segment with no window yet counts as its whole span.
+    selected_seconds = sum(
+        card.window_seconds if card.window_seconds is not None else card.duration_s
+        for card in selected
+    )
     return Summary(
         file_count=len(manifest.files),
         segment_count=len(cards),
@@ -199,6 +243,11 @@ def build_summary(manifest: Manifest, cards: list[Card]) -> Summary:
         files_from_cache=manifest.analysis.files_from_cache,
         files_failed=manifest.analysis.files_failed,
         completed=manifest.analysis.completed,
+        selected_count=len(selected),
+        cluster_count=len({card.cluster_id for card in cards if card.cluster_id is not None}),
+        diversity_lambda=manifest.selection.diversity_lambda,
+        selected_seconds=selected_seconds,
+        selected_label=duration_label(selected_seconds),
         classes=[name for name in SOURCE_CLASSES if per_class[name]],
         outcomes=[name for name in ("candidate", "selected", "rejected") if per_outcome[name]],
         reasons=[name for name in REASONS if per_reason[name]],

@@ -477,3 +477,69 @@ def test_export_refreshes_the_report_with_the_links(synthetic_dir: Path, tmp_pat
     html = (out / "report.html").read_text(encoding="utf-8")
     assert "_selects/001_" in html
     assert "Exported" in html
+
+
+@pytest.mark.ffmpeg
+def test_select_gives_clips_different_durations(synthetic_dir: Path, tmp_path: Path) -> None:
+    """Uniform lengths read as a slideshow, which is the whole point of the change."""
+    out, toml = analyzed_and_selected(synthetic_dir, tmp_path)
+
+    manifest = Manifest.load(out / "manifest.json")
+    selected = [s for s in manifest.segments.values() if s.outcome == "selected"]
+    assert selected
+    for segment in selected:
+        assert segment.target_duration_s is not None
+        assert segment.duration_reason is not None
+    assert manifest.selection.total_duration_s == pytest.approx(
+        sum(s.target_duration_s or 0.0 for s in selected), abs=0.01
+    )
+
+
+@pytest.mark.ffmpeg
+def test_the_duration_flag_gives_one_length_everywhere(synthetic_dir: Path, tmp_path: Path) -> None:
+    """The milestone 2 behaviour stays reachable through --duration."""
+    out, toml = analyzed_and_selected(synthetic_dir, tmp_path, "--duration", "3.0")
+
+    manifest = Manifest.load(out / "manifest.json")
+    selected = [s for s in manifest.segments.values() if s.outcome == "selected"]
+    assert selected
+    for segment in selected:
+        span = (segment.trimmed_end_s or segment.end_s) - (
+            segment.trimmed_start_s or segment.start_s
+        )
+        assert segment.duration_reason == "override"
+        assert segment.target_duration_s == pytest.approx(min(3.0, span))
+
+
+@pytest.mark.ffmpeg
+def test_select_prints_the_total_and_the_buckets(synthetic_dir: Path, tmp_path: Path) -> None:
+    out = tmp_path / "edit"
+    toml = config_file(tmp_path)
+    assert (
+        runner.invoke(
+            app,
+            [
+                "analyze",
+                str(synthetic_dir),
+                "--out",
+                str(out),
+                "--workers",
+                "2",
+                "--config",
+                str(toml),
+            ],
+        ).exit_code
+        == 0
+    )
+
+    result = runner.invoke(app, ["select", str(out), "--config", str(toml)])
+    assert result.exit_code == 0, result.stdout
+    assert "Total" in result.stdout
+    for bucket in ("long", "short", "hero"):
+        assert bucket in result.stdout
+
+    # Under the override the buckets describe nothing, so they are not printed.
+    uniform = runner.invoke(app, ["select", str(out), "--duration", "3.0", "--config", str(toml)])
+    assert uniform.exit_code == 0, uniform.stdout
+    assert "one length for every clip" in uniform.stdout
+    assert "hero" not in uniform.stdout

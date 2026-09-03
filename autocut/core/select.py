@@ -20,6 +20,7 @@ import numpy as np
 
 from autocut.core.cache import CacheEntry, read_entry
 from autocut.core.config import SOURCE_CLASSES, AutocutConfig, SourceClass
+from autocut.core.durations import assign_durations, buckets, shortfall, total_duration
 from autocut.core.manifest import Manifest, Segment, SelectionRun, SourceFile
 from autocut.core.rules import EXCLUSIONS
 from autocut.core.similarity import (
@@ -29,7 +30,13 @@ from autocut.core.similarity import (
     color_histogram,
     perceptual_hash,
 )
-from autocut.core.window import ClassNorms, best_window, build_class_norms, frame_scores
+from autocut.core.window import (
+    ClassNorms,
+    best_window,
+    build_class_norms,
+    frame_scores,
+    snap_start,
+)
 
 
 @dataclass(slots=True)
@@ -51,6 +58,12 @@ class SelectionResult:
     target_duration_s: float = 0.0
     diversity_lambda: float = 0.0
     relaxed_gap: bool = False
+    total_duration_s: float = 0.0
+    varied_durations: bool = True
+    long_clips: int = 0
+    short_clips: int = 0
+    hero_clips: int = 0
+    total_shortfall_s: float = 0.0
 
     @property
     def count(self) -> int:
@@ -88,7 +101,11 @@ def select_clips(
         return result
 
     entries = _load_entries(config, candidates)
-    _place_windows(manifest, config, candidates, entries, target)
+    scores = _frame_scores(manifest, config, entries)
+    # A first pass at the fallback length, because similarity and the temporal gap both
+    # need a time for every candidate and the per-clip lengths are not known until the
+    # picks are made. The selected clips get their windows placed again below.
+    _place_windows(manifest, candidates, entries, scores, target)
     features = _build_features(manifest, candidates, entries)
     matrix = SimilarityMatrix(features, config)
 
@@ -101,9 +118,38 @@ def select_clips(
     chosen = _greedy(manifest, config, candidates, matrix, max_clips, lam, result)
 
     _finish(manifest, candidates, chosen, matrix, config)
+    # Lengths need the final set: the hero share is a share of it and the alternation
+    # pass walks it in order. Then the windows are searched again, each at the length
+    # its clip was given, and nudged onto a motion boundary.
+    assign_durations(chosen, manifest, config, overrides.target_duration_s)
+    _place_windows(manifest, chosen, entries, scores, target, per_clip=True, config=config)
+    _record_durations(manifest, config, chosen, result)
     result.selected = [segment.id for segment in chosen]
     _record(manifest, result)
     return result
+
+
+def _record_durations(
+    manifest: Manifest,
+    config: AutocutConfig,
+    chosen: list[Segment],
+    result: SelectionResult,
+) -> None:
+    """The rhythm of the edit, as numbers the CLI and the manifest can both print.
+
+    Under ``--duration`` every clip is the same length, so the buckets describe
+    nothing: they would still sort clips against their class base and still name the
+    top scorers heroes, neither of which had any effect on a single duration.
+    """
+    result.total_duration_s = total_duration(chosen)
+    result.total_shortfall_s = shortfall(chosen, config)
+    result.varied_durations = not any(s.duration_reason == "override" for s in chosen)
+    if not result.varied_durations:
+        return
+    counts = buckets(chosen, manifest, config)
+    result.long_clips = counts["long"]
+    result.short_clips = counts["short"]
+    result.hero_clips = counts["hero"]
 
 
 def _reset(manifest: Manifest) -> None:
@@ -141,42 +187,65 @@ def _class_of(manifest: Manifest, file_id: str) -> SourceClass:
     return source.source_class if source is not None else "generic"
 
 
-def _place_windows(
-    manifest: Manifest,
-    config: AutocutConfig,
-    candidates: list[Segment],
-    entries: dict[str, CacheEntry],
-    target: float,
-) -> None:
-    """Store where the good part of each candidate is (ADR 5)."""
+def _frame_scores(
+    manifest: Manifest, config: AutocutConfig, entries: dict[str, CacheEntry]
+) -> dict[str, np.ndarray]:
+    """One composite score per sampled frame, per file. Computed once for the run."""
     frames_by_class: dict[str, list[dict[str, np.ndarray]]] = {}
     for file_id, entry in entries.items():
         frames_by_class.setdefault(_class_of(manifest, file_id), []).append(entry.arrays)
     norms = build_class_norms(frames_by_class)
-
-    scores_by_file: dict[str, np.ndarray] = {}
-    for file_id, entry in entries.items():
-        scores_by_file[file_id] = frame_scores(
+    return {
+        file_id: frame_scores(
             entry.arrays,
             norms.get(_class_of(manifest, file_id), ClassNorms()),
             config.weights,
         )
+        for file_id, entry in entries.items()
+    }
 
-    for segment in candidates:
+
+def _place_windows(
+    manifest: Manifest,
+    segments: list[Segment],
+    entries: dict[str, CacheEntry],
+    scores: dict[str, np.ndarray],
+    target: float,
+    *,
+    per_clip: bool = False,
+    config: AutocutConfig | None = None,
+) -> None:
+    """Store where the good part of each segment is (ADR 5).
+
+    ``per_clip`` searches at each segment's own assigned duration and, when the
+    configuration asks for it, nudges the window start onto a motion minimum so the
+    cut lands where movement begins rather than partway through it.
+    """
+    for segment in segments:
         cached = entries.get(segment.file_id)
         bounds = _bounds(segment)
+        wanted = (segment.target_duration_s or target) if per_clip else target
         if cached is None:
             segment.best_center_s = (bounds[0] + bounds[1]) / 2.0
-            segment.target_duration_s = min(target, bounds[1] - bounds[0])
+            segment.target_duration_s = min(wanted, bounds[1] - bounds[0])
             continue
-        center, duration = best_window(
-            scores_by_file[segment.file_id],
-            cached.arrays.get("timestamps", np.zeros(0)),
-            bounds,
-            target,
-        )
+        timestamps = cached.arrays.get("timestamps", np.zeros(0))
+        center, duration = best_window(scores[segment.file_id], timestamps, bounds, wanted)
         segment.best_center_s = center
         segment.target_duration_s = duration
+        if per_clip and config is not None and config.selection.snap_to_motion:
+            start, snapped = snap_start(
+                center - duration / 2.0,
+                duration,
+                scores[segment.file_id],
+                timestamps,
+                cached.arrays.get("motion", np.zeros(0)),
+                bounds,
+                config.selection.snap_window_seconds,
+                config.selection.snap_max_score_loss,
+            )
+            segment.best_center_s = start + duration / 2.0
+            segment.snapped = snapped
 
 
 def _bounds(segment: Segment) -> tuple[float, float]:
@@ -442,6 +511,7 @@ def _record(manifest: Manifest, result: SelectionResult) -> None:
         diversity_lambda=result.diversity_lambda,
         max_clips=result.max_clips,
         target_duration_s=result.target_duration_s,
+        total_duration_s=round(result.total_duration_s, 3),
         selected=result.count,
         clusters=result.clusters,
     )

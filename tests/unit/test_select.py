@@ -459,7 +459,10 @@ def test_selection_without_cache_entries_still_places_a_window(tmp_path: Path) -
 
     segment = manifest.segments["a:0"]
     assert segment.best_center_s == pytest.approx(5.0)
-    assert segment.target_duration_s == pytest.approx(3.0)
+    # The length still follows the class base and the score, cache or no cache: the
+    # 4.0 s drone base at score 0.9 is 4.64, and the 6.0 s span leaves room for it.
+    assert segment.target_duration_s == pytest.approx(4.64)
+    assert segment.duration_reason == "base"
     assert np.isfinite(segment.best_center_s)
 
 

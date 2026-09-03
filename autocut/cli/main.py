@@ -201,7 +201,10 @@ def _open_project(project: Path) -> Manifest:
 def select(
     project: Annotated[Path, typer.Argument(help="Output folder holding manifest.json.")],
     max_clips: Annotated[int | None, typer.Option("--max-clips")] = None,
-    duration: Annotated[float | None, typer.Option("--duration", help="Target seconds.")] = None,
+    duration: Annotated[
+        float | None,
+        typer.Option("--duration", help="One length for every clip, instead of varied lengths."),
+    ] = None,
     diversity: Annotated[float | None, typer.Option("--diversity", help="Lambda, 0 to 1.")] = None,
     config: ConfigOpt = None,
 ) -> None:
@@ -229,6 +232,23 @@ def select(
     )
     for name, count in sorted(per_class.items()):
         console.print(f"  {name}: {count}")
+    if result.varied_durations:
+        console.print(
+            f"Total [bold]{result.total_duration_s:.1f} s[/bold]: "
+            f"{result.long_clips} long, {result.short_clips} short, {result.hero_clips} hero"
+        )
+    else:
+        console.print(
+            f"Total [bold]{result.total_duration_s:.1f} s[/bold], one length for every clip"
+        )
+    if abs(result.total_shortfall_s) > 0.05:
+        console.print(
+            f"[yellow]The total target was missed by {result.total_shortfall_s:+.1f} s[/yellow]; "
+            "the duration bounds were reached first."
+        )
+    snapped = sum(1 for s in manifest.segments.values() if s.outcome == "selected" and s.snapped)
+    if snapped:
+        console.print(f"  {snapped} windows moved onto a motion boundary")
     if result.relaxed_gap:
         console.print(
             "[yellow]The minimum temporal gap was relaxed[/yellow] to fill the remaining slots."

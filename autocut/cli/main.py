@@ -21,6 +21,8 @@ from autocut.core.analyze import AnalysisCancelled, analyze_files
 from autocut.core.cache import cache_stats, prune
 from autocut.core.config import AutocutConfig
 from autocut.core.events import ProgressEvent
+from autocut.core.export import export_clips
+from autocut.core.ffmpeg_cmd import ExportOverrides
 from autocut.core.ingest import ingest
 from autocut.core.manifest import Manifest
 from autocut.core.report import render_report
@@ -270,14 +272,70 @@ def sync(
 
 @app.command()
 def export(
-    project: Annotated[Path, typer.Argument()],
-    no_audio: Annotated[bool, typer.Option("--no-audio")] = False,
+    project: Annotated[Path, typer.Argument(help="Output folder holding manifest.json.")],
+    no_audio: Annotated[
+        bool, typer.Option("--no-audio", help="Remove audio from every clip.")
+    ] = False,
     fps: Annotated[float | None, typer.Option("--fps", help="Override target fps.")] = None,
+    fast: Annotated[
+        bool, typer.Option("--fast", help="Stream copy on keyframes. Durations approximate.")
+    ] = False,
+    rejects: Annotated[
+        bool, typer.Option("--rejects", help="Also export rejected segments into _rejects/.")
+    ] = False,
     config: ConfigOpt = None,
 ) -> None:
     """Cut, normalize and write the numbered clips into _selects/."""
-    _load_config(config)
-    _not_implemented("export")
+    cfg = _load_config(config)
+    manifest = _open_project(project)
+    # The manifest holds the output folder it was analyzed into; this run may be
+    # pointed at a moved copy of that folder, and the clips belong beside it.
+    manifest.output_dir = project
+    overrides = ExportOverrides(no_audio=no_audio, fps=fps, fast=fast, rejects=rejects)
+
+    selected = sum(1 for s in manifest.segments.values() if s.outcome == "selected")
+    if selected == 0:
+        console.print("[red]Nothing selected[/red]. Run autocut select first.")
+        raise typer.Exit(code=1)
+
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Exporting", total=selected)
+
+        def on_event(event: ProgressEvent) -> None:
+            name = event.path.name if event.path else ""
+            progress.update(task, completed=event.current, total=event.total, description=name)
+
+        result = export_clips(manifest, cfg, on_event, overrides)
+
+    manifest.updated_at = datetime.now(UTC)
+    manifest.save(project / "manifest.json")
+    report_path = render_report(manifest, project)
+
+    console.print(
+        f"Exported [bold]{result.exported}[/bold] clips at {result.target_fps:g} fps "
+        f"into {result.selects_dir}"
+    )
+    if result.skipped:
+        console.print(f"  {result.skipped} unchanged, skipped")
+    if result.slow_motion:
+        console.print(f"  {result.slow_motion} in slow motion")
+    if result.fps_converted:
+        console.print(f"  {result.fps_converted} resampled from another frame rate")
+    if result.stale_moved:
+        console.print(f"  {result.stale_moved} stale files moved to _selects/_stale/")
+    for warning in result.warnings:
+        console.print(f"[yellow]{warning}[/yellow]")
+    for segment_id, error in result.errors:
+        console.print(f"[red]failed[/red] {segment_id}: {error}")
+    console.print(f"Report written to {report_path}")
+    if result.failed:
+        raise typer.Exit(code=1)
 
 
 @app.command()

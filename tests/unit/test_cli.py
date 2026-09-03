@@ -21,7 +21,7 @@ def test_help_lists_commands() -> None:
 
 def test_unimplemented_stage_exits_2(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """Stages that land in later milestones say so rather than failing obscurely."""
-    for stage in ("soundtrack", "sync", "export"):
+    for stage in ("soundtrack", "sync"):
         args = [stage, str(tmp_path)]
         if stage == "sync":
             args += ["--audio", str(tmp_path / "track.mp3")]

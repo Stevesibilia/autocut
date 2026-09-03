@@ -9,7 +9,7 @@ Audio SHALL be removed when `export.remove_audio` is true for the segment's clas
 - **WHEN** a drone clip and a phone clip are exported with defaults
 - **THEN** neither output has an audio stream
 
-#### Scenario: Ambience opted in
+#### Scenario: Drone silent, phone keeps ambience
 
 - **WHEN** `export.remove_audio.phone` is false
 - **THEN** the phone output keeps its audio and the drone output has none

@@ -168,7 +168,22 @@ Analysis also writes one thumbnail per segment and, when `analysis.sprites = tru
 
 ### 7.4 Best window and selection
 
-For each surviving segment, a sliding window search finds the sub-window of target duration with the highest mean score. Default target 3 s. The manifest stores the segment bounds and the best window center, not a fixed final duration, so that beat sync can later grow or shrink the window around the center within the segment. See ADR 5.
+For each surviving segment, a sliding window search finds the sub-window of that clip's target duration with the highest mean score. The manifest stores the segment bounds and the best window center, not a fixed final duration, so that beat sync can later grow or shrink the window around the center within the segment. See ADR 5.
+
+**Snap to motion.** Once the window is found, its start may move onto a nearby minimum of the per-frame motion series, so the cut lands where movement stops rather than partway through a pan. The move is allowed within `selection.snap_window_seconds` (0.5 by default), only while the window still fits the trimmed span, and only when the mean score falls by no more than `selection.snap_max_score_loss` (5 percent). The window search already found the frames worth keeping, so the snap is allowed to change where the cut lands and almost nothing else. A static shot has no minimum to land on and is left alone.
+
+#### Clip durations
+
+Forty clips of exactly the same length read as a slideshow. Each selected clip gets its own duration instead, decided after the picks are made, in this order:
+
+- **Base by class**, `selection.duration_by_class`: drone 4.0 s, actioncam 2.0 s, phone 2.5 s, reflex 3.0 s, generic 3.0 s. An aerial needs longer to be read than an action shot.
+- **Scaled by score** across `selection.score_duration_range`, 0.8 at score 0 to 1.2 at score 1. Narrow on purpose: the class sets the rhythm and the score only nudges it.
+- **Hero bonus.** The top `selection.hero_share` (10 percent) by score is multiplied by `selection.hero_multiplier` (1.5). Four clips in forty get room to breathe.
+- **Alternation.** One pass over the chronological order breaks every run of three clips in the same bucket, long being at or above the class base, by scaling the middle one 25 percent towards the other bucket. Buckets are relative to the class base, so a 2.0 s action clip and a 4.0 s drone clip are both ordinary. A hero is never shortened by it; the run is broken with the next clip instead.
+- **Optional total.** When `selection.target_total_seconds` is set, one factor scales every duration so the edit lands near it, which keeps the relative rhythm intact. When the bounds put the target out of reach the shortfall is reported rather than clips dropped, because how many clips the edit holds is the user's `max_clips` decision.
+- **Clamps** throughout, to `selection.duration_min_seconds` and `selection.duration_max_seconds` (1.5 and 6.0) and to the clip's own trimmed span.
+
+Every clip records which rule settled its length, one of `base`, `hero`, `alternation`, `total`, `clamped` or `override`, and the report shows it. `autocut select --duration <seconds>` sets one length for every clip and turns the whole thing off, which is the behaviour milestone 2 shipped.
 
 Global constraints:
 
@@ -254,9 +269,10 @@ The app generates 3 to 5 variants with slightly different mood or instrumentatio
 ### 7.6 Beat sync
 
 - **Beat tracking.** `librosa.beat.beat_track()` on the provided track gives BPM and beat positions. The user can override BPM, because Suno tracks often have a declared BPM and detection sometimes halves or doubles it.
-- **Durations on the beat.** Each clip is cut to a whole number of beats from the allowed set `{2, 4, 8}` beats. At 120 BPM that is 1, 2 and 4 s. The multiple follows the score: best clips get longer durations. A clip whose segment is too short for the chosen multiple drops to the next smaller one.
+- **Durations on the beat.** Each clip is cut to a whole number of beats from the allowed set `{2, 4, 8}` beats. At 120 BPM that is 1, 2 and 4 s. A clip whose segment is too short for the chosen multiple drops to the next smaller one.
 - **Window placement.** The final window is centered on the stored best window center and clamped to the segment bounds.
-- **Alternation**, configurable: alternate long and short durations to give the edit rhythm.
+
+**Contract with clip durations.** Beat sync does not derive durations from the score. Selection has already assigned each clip a duration and a reason (section 7.4), and beat sync rounds the assigned duration to the nearest allowed beat multiple. A clip whose reason is `hero` keeps the longer multiple when a rounding lands exactly between two, so the shots given room to breathe keep it. Alternation is likewise already applied, so beat sync inherits the rhythm rather than recreating it.
 
 Result: clips in a row already fall on beats, CapCut auto beat sync has little or nothing to fix.
 

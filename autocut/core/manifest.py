@@ -19,6 +19,7 @@ MANIFEST_SCHEMA_VERSION = 1
 ANALYSIS_SCHEMA_VERSION = 1
 
 Outcome = Literal["candidate", "selected", "rejected"]
+DurationReason = Literal["base", "hero", "alternation", "total", "clamped", "override"]
 TelemetryKind = Literal["dji_embedded_srt", "dji_sidecar_srt", "gopro_gpmf", "none"]
 
 
@@ -129,6 +130,16 @@ class Segment(BaseModel):
     )
     best_center_s: float | None = None
     target_duration_s: float | None = None
+    duration_reason: DurationReason | None = Field(
+        default=None,
+        description="Which rule settled this clip's length, so the report can explain "
+        "it in one word.",
+    )
+    snapped: bool = Field(
+        default=False,
+        description="Whether the window start was moved onto a motion minimum, so the "
+        "cut lands where movement begins rather than partway through it.",
+    )
     metrics: Metrics | None = None
     score: float | None = None
     outcome: Outcome = "candidate"
@@ -193,6 +204,11 @@ class SelectionRun(BaseModel):
     diversity_lambda: float | None = None
     max_clips: int | None = None
     target_duration_s: float | None = None
+    total_duration_s: float | None = Field(
+        default=None,
+        description="Length of the edit, the sum of the selected clips' target durations. "
+        "The soundtrack prompt in M4 needs it before any track exists.",
+    )
     selected: int = 0
     clusters: int = 0
 

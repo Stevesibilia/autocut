@@ -135,6 +135,43 @@ class SelectionConfig(BaseModel):
         default=0.75,
         description="Combined similarity above which two candidates join one visual cluster.",
     )
+    duration_by_class: PerClass[float] = Field(
+        default=PerClass(drone=4.0, actioncam=2.0, phone=2.5, reflex=3.0, generic=3.0),
+        description="Base seconds per class before the score scales it. An aerial needs "
+        "longer to be read than an action shot, which is the difference these encode. "
+        "A class set to 0 falls back to target_duration_seconds.",
+    )
+    duration_min_seconds: float = 1.5
+    duration_max_seconds: float = 6.0
+    score_duration_range: tuple[float, float] = Field(
+        default=(0.8, 1.2),
+        description="Multiplier at score 0 and at score 1. Narrow on purpose: the class "
+        "base sets the rhythm and the score only nudges it, because a wide range would "
+        "make a weak drone shot shorter than a strong action shot.",
+    )
+    hero_share: float = Field(
+        default=0.1, description="Share of the selection, by score, that gets the hero bonus."
+    )
+    hero_multiplier: float = 1.5
+    alternate_durations: bool = Field(
+        default=True,
+        description="Break runs of three clips in the same duration bucket, so the edit "
+        "does not settle into one rhythm.",
+    )
+    target_total_seconds: float | None = Field(
+        default=None,
+        description="When set, every duration is scaled by one factor so the edit lands "
+        "near this length. Off by default: the length follows from the clips.",
+    )
+    snap_to_motion: bool = True
+    snap_window_seconds: float = Field(
+        default=0.5, description="How far the window start may move to reach a motion minimum."
+    )
+    snap_max_score_loss: float = Field(
+        default=0.05,
+        description="Mean score a snap may give up, as a share. The window search already "
+        "found the best frames, so the snap is only allowed to fix where the cut lands.",
+    )
 
 
 class SimilarityWeights(BaseModel):

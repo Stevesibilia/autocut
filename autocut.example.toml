@@ -1,0 +1,80 @@
+# AutoCut configuration. Copy to autocut.toml next to your project and edit.
+# Every key is optional; defaults are defined in autocut/core/config.py.
+
+[analysis]
+sample_fps = 2.0
+sample_long_side = 320
+use_proxies = true
+hwaccel = "auto"      # "off" forces software decoding
+sprites = false       # thumbnail strips for GUI scrubbing
+
+[analysis.head_trim_seconds]
+drone = 1.0
+actioncam = 1.0
+phone = 0.3
+reflex = 0.5
+generic = 0.5
+
+# Force a class on files matching a glob (evaluated in order, last match wins).
+# [[analysis.class_overrides]]
+# glob = "**/GoPro/**"
+# source_class = "actioncam"
+
+[weights]
+sharpness = 1.0
+exposure = 1.0
+motion = 1.0
+stability = 1.0
+colorfulness = 0.5
+aesthetic = 0.0
+faces = 0.0
+
+[rules.drone]
+min_height_m = 5.0
+
+[selection]
+target_duration_seconds = 3.0
+max_clips = 40
+diversity_lambda = 0.6
+max_clips_per_cluster = 2
+
+[selection.max_clips_per_file]
+drone = 1
+actioncam = 3
+phone = 1
+reflex = 2
+generic = 1
+
+[export]
+mode = "precise"      # or "fast" for keyframe aligned stream copy
+codec = "libx264"
+crf = 18
+fps = "auto"          # dominant fps of the selected clips, or a number
+max_width = 3840
+max_height = 2160
+pix_fmt = "yuv420p"
+vertical_strategy = "exclude"   # exclude | blur_pad | center_crop
+
+[export.remove_audio]
+drone = true
+actioncam = true
+phone = false
+reflex = false
+generic = true
+
+[providers]
+cloud = true          # uses OPENROUTER_API_KEY from env or keychain when present
+vision_model = "google/gemini-2.5-flash"
+llm_model = "google/gemini-2.5-flash"
+local_embeddings = true
+
+[soundtrack]
+variants = 3
+bpm_tolerance = 3.0
+beat_multiples = [2, 4, 8]
+
+# Genre table: keys are material profiles, values feed the prompt generator.
+[soundtrack.genres.aerial_landscape]
+genre = "cinematic ambient"
+instruments = "sweeping strings, soft piano"
+bpm_range = "80-100"

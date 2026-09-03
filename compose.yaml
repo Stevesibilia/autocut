@@ -1,0 +1,13 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    volumes:
+      - .:/app
+      - ${AUTOCUT_REAL_FOOTAGE:-/dev/null}:/footage:ro
+    environment:
+      AUTOCUT_REAL_FOOTAGE: ${AUTOCUT_REAL_FOOTAGE:+/footage}
+    devices:
+      - /dev/dri:/dev/dri
+    command: pytest -q

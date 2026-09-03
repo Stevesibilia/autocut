@@ -1,0 +1,26 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  dmg:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ffmpeg
+        run: brew install ffmpeg
+      - name: Install project with GUI, AI and build extras
+        run: pip install -e ".[gui,ai,build]"
+      - name: Build app bundle
+        run: make dmg
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.dmg
+          body: |
+            Unsigned build. On first launch, right-click the app and choose Open,
+            or run `xattr -dr com.apple.quarantine /Applications/AutoCut.app`.

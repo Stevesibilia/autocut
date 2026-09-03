@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+
+# Fixtures: synthetic ones are regenerated, private ones never leave this machine
+tests/fixtures/synthetic/
+tests/fixtures/private/*
+!tests/fixtures/private/.gitignore
+
+# Project runs
+output/
+*.log
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store

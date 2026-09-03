@@ -1,0 +1,142 @@
+# AGENTS.md
+
+## Project Overview
+
+AutoCut selects, trims, orders and normalizes short clips from raw vacation footage (drone, action cam, phone, camera) for import into CapCut. It is a Python library (`autocut/core`) with a Typer CLI (`autocut/cli`) and a planned PySide6 GUI (`autocut/gui`). The core never imports from the front ends and never prints; progress flows through callbacks in `autocut/core/events.py`.
+
+Read `SPEC.md` before changing behavior. Design trade-offs are recorded in `docs/adr/`. Add a new ADR for any decision that changes structure, dependencies or interfaces.
+
+**Tech stack:** Python 3.11+, ffmpeg and ffprobe as external binaries, NumPy, OpenCV headless, PySceneDetect, librosa, Pydantic, Typer and Rich. Optional extras: `ai` (torch, open_clip), `gui` (PySide6), `dev` (pytest, ruff, mypy), `build` (PyInstaller).
+
+## Setup
+
+The host must not receive global installs. Two supported paths:
+
+```bash
+make venv          # project venv in .venv with dev and gui extras
+make fixtures      # synthetic test clips into tests/fixtures/synthetic/
+make test          # fixtures + pytest in the venv
+make docker-test   # same in the python:3.12 dev container, no host Python needed
+```
+
+Run `make -n <target>` to see what a target does. There is no Justfile; the project should move to Just when recipes grow.
+
+## Key Conventions
+
+- **Core isolation.** Nothing in `autocut/core` imports Typer, Rich, or Qt. Output goes through `ProgressCallback`.
+- **ffmpeg by subprocess.** Build argument lists as Python lists, never shell strings. Tests assert on the argument list without running ffmpeg where possible. See ADR 2.
+- **No device tables in control flow.** Source classes are derived from probed signals and telemetry adapters. Per-model knowledge goes in adapters or `autocut.toml`. See ADR 3.
+- **Tunables live in config.** Every threshold and weight is a field in `autocut/core/config.py` with a default. Do not hardcode numbers in analysis or selection code.
+- **Manifest is the project file.** `autocut/core/manifest.py` is versioned. Bump `MANIFEST_SCHEMA_VERSION` on incompatible changes and add a migration.
+- **Cloud is optional.** Any provider call has a local fallback and sends only thumbnails or derived signals. See ADR 4.
+- **Private footage never enters git.** Real clips go in `tests/fixtures/private/` (gitignored) or are referenced through `AUTOCUT_REAL_FOOTAGE`. See ADR 8.
+- **Cross platform shell.** Host side scripts must work on Linux and macOS. Prefer Python over shell for anything beyond one line.
+- **English everywhere.** Code, docs, CLI output and GUI strings.
+
+## Code Style
+
+- **Python**: ruff with `line-length = 100`, rules `E, F, I, UP, B, SIM, N`, target `py311`. Formatting by `ruff format`.
+- **Typing**: mypy strict with the pydantic plugin. All public functions are annotated.
+- **Markdown**: format with prettier through the `auto-format-doc` skill after every edit.
+- Run `make lint` before committing.
+
+## Git Workflow
+
+### Commits
+
+Follow the SparkFabrik commit convention (load the `sf-commit-convention` skill before every commit). Conventional Commits format:
+
+```text
+<type>(<scope>): <description>
+```
+
+**Types:** `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `ci`, `perf`, `build`. **Scope** is the package or area (`core`, `cli`, `gui`, `spec`, `adr`). Description lowercase, imperative, no period. Every commit carries the mandatory `Assisted-by` trailer when an agent contributed.
+
+### Branching
+
+- Branch names: `feat/`, `fix/`, `chore/`, `test/`, `docs/` prefix plus kebab-case description.
+- Never push directly to `main`. Open a pull request.
+
+### Rebasing
+
+- Rebase onto `main` before pushing. No merge commits.
+- Use `--force-with-lease`, never `--force`.
+
+## Package Management
+
+### Python (pip, pyproject.toml)
+
+- Add: edit `[project.dependencies]` or the right extra in `pyproject.toml`, then `pip install -e ".[dev]"` in the venv or rebuild the dev image.
+- Dev: add to the `dev` extra.
+- There is no lock file yet. Pin exact versions when the PyInstaller bundle work starts (ADR 7).
+
+### Dependency Safety
+
+Before adding or upgrading any dependency, follow these rules:
+
+1. **Never assume you know the latest version.** Your training data is outdated. Always verify against the live registry before adding or upgrading any package.
+
+2. **Check the live registry:**
+
+```bash
+curl -s https://pypi.org/pypi/<package>/json | jq '{version: .info.version, requires_python: .info.requires_python}'
+```
+
+3. **Use the newest stable major version** compatible with Python 3.11 through 3.14. Check `requires_python` and the availability of wheels for macOS arm64 and Linux x86_64.
+
+4. **Avoid releases published within the last 5 days** to reduce supply chain attack risk.
+
+5. **Regenerate the environment** after changing `pyproject.toml`: reinstall the venv or rebuild the dev image.
+
+## Testing
+
+`make test` generates fixtures and runs pytest. `make docker-test` does the same in the container.
+
+- **Unit tests** live in `tests/unit/`.
+- **Integration tests** live in `tests/integration/`.
+- **Markers**: `ffmpeg` (needs the binary), `private` (needs clips in `tests/fixtures/private/`), `real_footage` (needs `AUTOCUT_REAL_FOOTAGE`). Tests with unmet markers skip automatically in `tests/conftest.py`.
+- **Synthetic fixtures** come from `scripts/make_fixtures.py`. Add a new case there when a new edge case is handled.
+- Changes to metrics or selection must be checked against real footage locally before merging, because synthetic fixtures verify mechanics only (ADR 8).
+
+## CI/CD
+
+GitHub Actions.
+
+| Workflow      | Trigger                       | Purpose                                                      |
+| ------------- | ----------------------------- | ------------------------------------------------------------ |
+| `ci.yml`      | push to `main`, pull requests | ruff, mypy, fixtures, pytest on Python 3.11, 3.12 and 3.14   |
+| `release.yml` | tags `v*`                     | macOS arm64 PyInstaller `.dmg`, attached to a GitHub release |
+
+## Command Safety
+
+### Safe (run autonomously)
+
+- `make lint`, `make test`, `make fixtures`, `make docker-test`
+- `pytest`, `ruff check .`, `ruff format --check .`, `mypy autocut`
+- `ffprobe` on any file, `ffmpeg` writing into `tests/fixtures/synthetic/` or a temp dir
+- `git status`, `git log`, `git diff`, `gh pr view`, `gh run list`
+
+### Dangerous (ask user first)
+
+- `git push`, `gh pr create`, `gh release create`, pushing tags
+- Editing `pyproject.toml` dependencies
+- Any `autocut export` run that writes into a user folder
+- Any command that deletes or overwrites files under `~/Documents`
+
+### Destructive (never run)
+
+- `rm -rf` outside the repository, `.venv/`, or `tests/fixtures/synthetic/`
+- `git push --force`, history rewrites on `main`
+- Deleting or moving files in the real footage folders
+- Committing anything from `tests/fixtures/private/`
+
+## Important Rules
+
+- Never install packages, runtimes or tools on the host. Use the project venv or the Docker dev container.
+- Keep `autocut/core` free of CLI and GUI imports and of print statements.
+- Put every tunable in `autocut/core/config.py`, never inline.
+- Verify library versions on PyPI before adding or upgrading a dependency.
+- Run `make lint` and `make test` before committing.
+- Load `sf-commit-convention` before every commit and add the `Assisted-by` trailer.
+- Never commit real footage. Synthetic fixtures only.
+- Write a new ADR in `docs/adr/` for any structural or dependency decision.

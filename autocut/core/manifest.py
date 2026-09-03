@@ -106,12 +106,27 @@ class Metrics(BaseModel):
 
 
 class Segment(BaseModel):
-    """A candidate clip: a scene detected span within a source file."""
+    """A candidate clip: a scene detected span within a source file.
+
+    ``start_s`` and ``end_s`` are the bounds shot detection found. ``trimmed_start_s``
+    and ``trimmed_end_s`` are those bounds after the per-class head and tail trim, and
+    they are what every later stage works with. See ADR 5 for why no final duration is
+    stored here.
+    """
 
     id: str
     file_id: str
     start_s: float
     end_s: float
+    trimmed_start_s: float | None = None
+    trimmed_end_s: float | None = None
+    frame_count: int = 0
+    analyzed_from: Literal["proxy", "original"] | None = None
+    split_reason: str | None = Field(
+        default=None,
+        description="Why this span was cut out of its shot, e.g. 'altitude'. None when "
+        "the segment is a whole detected shot.",
+    )
     best_center_s: float | None = None
     target_duration_s: float | None = None
     metrics: Metrics | None = None

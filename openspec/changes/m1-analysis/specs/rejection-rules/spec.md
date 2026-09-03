@@ -27,6 +27,16 @@ For files with telemetry that includes height, a segment whose maximum height ov
 - **WHEN** a drone segment has heights between 25 and 30 meters
 - **THEN** it is not rejected by the altitude rule
 
+#### Scenario: Takeoff inside a continuous shot
+
+- **WHEN** a drone file is one continuous shot that climbs from 0.5 meters to 30 meters and the threshold is 5
+- **THEN** the telemetry driven split has already cut the low portion into its own segment, that segment is rejected with `low_altitude`, and the segment covering the cruise is not rejected
+
+#### Scenario: Height samples on a split boundary
+
+- **WHEN** a split places a boundary on a telemetry sample time
+- **THEN** that sample counts towards the segment starting at the boundary and not towards the segment ending there
+
 ### Requirement: No motion rule
 
 A segment whose mean motion is below `rules.min_motion` SHALL be rejected with reason `no_motion`.

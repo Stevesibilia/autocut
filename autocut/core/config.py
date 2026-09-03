@@ -48,6 +48,19 @@ class AnalysisConfig(BaseModel):
     hwaccel: Literal["auto", "off"] = "auto"
     workers: int | None = Field(default=None, description="Defaults to physical cores.")
     sprites: bool = False
+    sprite_max_frames: int = 60
+    thumbnail_quality: int = 85
+    detector: Literal["inmemory", "pyscenedetect"] = "inmemory"
+    scene_threshold: float = Field(
+        default=0.30,
+        description="Content difference above which a cut is declared, 0 to 1. "
+        "Tuned for frames half a second apart, not for adjacent frames.",
+    )
+    min_scene_seconds: float = 1.0
+    stability_window: int = Field(default=5, description="Frames in the motion std window.")
+    sharpness_center_crop: float = Field(
+        default=0.6, description="Share of width and height kept for actioncam sharpness."
+    )
     head_trim_seconds: PerClass[float] = PerClass(
         drone=1.0, actioncam=1.0, phone=0.3, reflex=0.5, generic=0.5
     )

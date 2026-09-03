@@ -7,6 +7,7 @@ report that the stage is not implemented.
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -16,6 +17,8 @@ from rich.console import Console
 from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeElapsedColumn
 
 from autocut import __version__
+from autocut.core.analyze import AnalysisCancelled, analyze_files
+from autocut.core.cache import cache_stats, prune
 from autocut.core.config import AutocutConfig
 from autocut.core.events import ProgressEvent
 from autocut.core.ingest import ingest
@@ -100,15 +103,59 @@ def analyze(
         console.print("[red]No video files found[/red] in the given source folders.")
         raise typer.Exit(code=1)
 
+    manifest_path = out / "manifest.json"
     manifest = _open_manifest(out, sources, cfg)
     manifest.files = {source.id: source for source in files}
     manifest.updated_at = datetime.now(UTC)
-    manifest.save(out / "manifest.json")
+    # Saved once here so an interrupted analysis still leaves a usable file list.
+    manifest.save(manifest_path)
 
     failed = [source for source in files if source.error]
-    console.print(f"Probed [bold]{len(files)}[/bold] files into {out / 'manifest.json'}")
+    console.print(f"Probed [bold]{len(files)}[/bold] files into {manifest_path}")
     for source in failed:
         console.print(f"[yellow]unreadable[/yellow] {source.path}: {source.error}")
+
+    cached = 0
+    interrupted = False
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Analyzing", total=len(files) - len(failed))
+
+        def on_analysis(event: ProgressEvent) -> None:
+            nonlocal cached
+            if event.extra.get("cached"):
+                cached += 1
+            name = event.path.name if event.path else ""
+            suffix = " (cached)" if event.extra.get("cached") else ""
+            progress.update(
+                task, completed=event.current, total=event.total, description=f"{name}{suffix}"
+            )
+
+        try:
+            analyze_files(manifest, cfg, on_analysis)
+        except AnalysisCancelled:
+            interrupted = True
+
+    manifest.updated_at = datetime.now(UTC)
+    manifest.save(manifest_path)
+
+    rejected = Counter(s.reason for s in manifest.segments.values() if s.reason)
+    console.print(
+        f"Analyzed [bold]{len(manifest.segments)}[/bold] segments "
+        f"({cached} files from cache), {sum(rejected.values())} rejected"
+    )
+    for reason, count in sorted(rejected.items()):
+        console.print(f"  {reason}: {count}")
+    if interrupted:
+        console.print(
+            "[yellow]Analysis was cancelled[/yellow]; the manifest holds partial results."
+        )
+        raise typer.Exit(code=130)
 
 
 def _open_manifest(out: Path, sources: list[Path], cfg: AutocutConfig) -> Manifest:
@@ -195,6 +242,37 @@ def run(
     """First pass shortcut: analyze, select, soundtrack, report."""
     _load_config(config)
     _not_implemented("run")
+
+
+cache_app = typer.Typer(
+    name="cache",
+    help="Inspect and prune the global analysis cache. See ADR 6.",
+    invoke_without_command=True,
+)
+app.add_typer(cache_app)
+
+
+@cache_app.callback(invoke_without_command=True)
+def cache_root(ctx: typer.Context, config: ConfigOpt = None) -> None:
+    """Report the cache directory, entry count and total size."""
+    if ctx.invoked_subcommand is not None:
+        return
+    stats = cache_stats(_load_config(config))
+    console.print(f"Cache directory: {stats.directory}")
+    console.print(f"Entries: [bold]{stats.entries}[/bold]")
+    console.print(f"Size: [bold]{stats.megabytes:.1f}[/bold] MB")
+
+
+@cache_app.command("prune")
+def cache_prune(
+    older_than: Annotated[
+        float, typer.Option("--older-than", help="Delete entries older than this many days.")
+    ] = 90.0,
+    config: ConfigOpt = None,
+) -> None:
+    """Delete cache entries that have not been touched for a while."""
+    removed = prune(_load_config(config), older_than)
+    console.print(f"Removed [bold]{removed}[/bold] entries older than {older_than:g} days.")
 
 
 if __name__ == "__main__":

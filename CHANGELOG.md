@@ -16,7 +16,7 @@ All notable changes to this project are documented in this file. The format foll
 - Greedy clip selection with a similarity penalty, per-file, per-cluster and total caps, a minimum share per class and a minimum temporal gap.
 - Visual clusters over the combined similarity, so near duplicates group in the report.
 - `autocut select` with `--max-clips`, `--duration` and `--diversity`, and `autocut run` chaining analyze, select and report.
-- ffmpeg command builder for one clip as a pure function, covering precise re-encode and fast stream copy, frame rate and resolution normalization, pixel format conversion, per-class audio removal, automatic slow motion, the three vertical strategies, and the LUT and lens correction hooks.
+- ffmpeg command builder for one clip as a pure function, covering precise re-encode and fast stream copy, frame rate and resolution normalization, pixel format conversion, per-class audio removal, automatic slow motion, the three vertical strategies, and the LUT and lens correction hooks. `export.fps = "auto"` takes the frame rate that the most selected clips reach by whole-number division, lowest on a tie.
 - Output naming `{index:03d}_{date}_{class}_{tag}_{duration}s.mp4` into `_selects/`, with `_rejects/` on request and retired outputs moved to `_selects/_stale/`.
 - `autocut export` with `--no-audio`, `--fps`, `--fast` and `--rejects`, parallel over clips and resumable: a clip whose output matches its recorded settings is skipped.
 - Synthetic fixtures for a clip with an audio track and a 50 fps clip.

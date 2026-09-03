@@ -460,14 +460,16 @@ def test_a_segment_whose_file_is_gone_is_reported_not_crashed(
 def test_a_real_clip_lands_at_the_exact_duration(synthetic_dir: Path, tmp_path: Path) -> None:
     """The exact duration scenario in specs/clip-export, within one frame at 25 fps."""
     manifest = project(tmp_path)
-    source = add_file(manifest, "a", path=synthetic_dir / "sharp_pan.mp4")
+    add_file(manifest, "a", path=synthetic_dir / "sharp_pan.mp4")
     segment = add_segment(manifest, "a:0", "a", center=3.0, duration=3.0)
 
     result = export_clips(manifest, one_worker(AutocutConfig()))
 
     assert result.exported == 1, result.errors
     assert segment.exported_path is not None and segment.exported_path.exists()
-    assert abs(probe_duration(segment.exported_path) - 3.0) <= 1 / source.fps
+    # One frame at the target rate, which is what the requirement is about. The source
+    # rate happens to be the same here, and would be the wrong tolerance elsewhere.
+    assert abs(probe_duration(segment.exported_path) - 3.0) <= 1 / result.target_fps
 
 
 @pytest.mark.ffmpeg
@@ -525,7 +527,7 @@ def test_slow_motion_stretches_the_source_window(synthetic_dir: Path, tmp_path: 
     assert result.exported == 1, result.errors
     assert result.slow_motion == 1
     assert segment.exported_path is not None
-    assert abs(probe_duration(segment.exported_path) - 3.0) <= 1 / 25.0
+    assert abs(probe_duration(segment.exported_path) - 3.0) <= 1 / result.target_fps
     assert probe_video(segment.exported_path)["r_frame_rate"] == "25/1"
 
 

@@ -262,11 +262,31 @@ def is_fps_converted(source_fps: float, target_fps: float, tolerance: float = 0.
     return abs(ratio - round(ratio)) > tolerance
 
 
-def dominant_fps(manifest: Manifest) -> float:
-    """The most common frame rate among the selected clips, ties going to the lower.
+def reaches(source_fps: float, target_fps: float, tolerance: float = 0.01) -> bool:
+    """Whether a clip arrives at ``target_fps`` by dropping whole frames.
 
-    A tie broken by frame rate rather than by iteration order keeps the target stable
-    across runs, which is the whole point of recording it.
+    A ratio of 1 counts: a clip already at the target reaches it by dropping none.
+    Anything else has to invent a cadence, which is the conversion worth avoiding.
+    """
+    if source_fps <= 0 or target_fps <= 0:
+        return False
+    ratio = source_fps / target_fps
+    return ratio >= 1 - tolerance and abs(ratio - round(ratio)) <= tolerance
+
+
+def dominant_fps(manifest: Manifest) -> float:
+    """The rate, among those in the selection, that the most selected clips reach.
+
+    Not the most common rate. The mode counts clips, and on mixed footage the rate
+    that dominates by count need not be one anything else can arrive at: the Sardinia
+    selection is 24 clips at 50 fps, 14 at 25 and 2 at 30, where the mode is 50 and
+    only those 24 clips reach it, while 38 reach 25. Counting reach asks the question
+    that matters, which is how many clips can arrive at the target by dropping whole
+    frames rather than by resampling.
+
+    A tie goes to the lowest rate, which is both the one more rates can reach and a
+    tie breaker that does not depend on iteration order, so the target stays stable
+    across runs.
     """
     rates = Counter(
         round(manifest.files[segment.file_id].fps, 3)
@@ -276,8 +296,12 @@ def dominant_fps(manifest: Manifest) -> float:
     rates.pop(0.0, None)
     if not rates:
         return 25.0
-    most = max(rates.values())
-    return min(rate for rate, count in rates.items() if count == most)
+    reach = {
+        target: sum(count for rate, count in rates.items() if reaches(rate, target))
+        for target in rates
+    }
+    best = max(reach.values())
+    return min(target for target, count in reach.items() if count == best)
 
 
 def resolve_target_fps(

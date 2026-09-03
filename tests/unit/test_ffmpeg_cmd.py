@@ -23,6 +23,7 @@ from autocut.core.ffmpeg_cmd import (
     is_fps_converted,
     plan_export,
     quality_flags,
+    reaches,
     resolve_target_fps,
 )
 from autocut.core.manifest import Manifest, Segment, SourceFile
@@ -156,15 +157,72 @@ def test_fps_conversion_is_flagged_only_when_frames_are_resampled(
     assert is_fps_converted(source_fps, target) is converted
 
 
-def test_auto_picks_the_dominant_frame_rate(tmp_path: Path) -> None:
-    """The scenario in specs/clip-export: 20 at 25, 15 at 50 and 5 at 30 gives 25."""
+def selection(tmp_path: Path, *groups: tuple[int, float]) -> Manifest:
+    """A manifest whose selected clips have the given counts at the given frame rates."""
     manifest = project(tmp_path)
-    for index, (count, fps) in enumerate(((20, 25.0), (15, 50.0), (5, 30.0))):
+    for index, (count, fps) in enumerate(groups):
         for number in range(count):
             file_id = f"f{index}_{number}"
             manifest.files[file_id] = source(file_id, fps=fps)
             manifest.segments[f"{file_id}:0"] = segment(f"{file_id}:0", file_id)
+    return manifest
+
+
+def test_auto_picks_the_rate_the_most_clips_divide_into(tmp_path: Path) -> None:
+    """The Sardinia mix in specs/clip-export: 24 at 50, 14 at 25 and 2 at 30 gives 25.
+
+    The mode is 50 and only those 24 clips reach it. 38 reach 25, by taking every
+    other frame of the 50 fps clips and every frame of the 25 fps ones.
+    """
+    manifest = selection(tmp_path, (24, 50.0), (14, 25.0), (2, 30.0))
     assert dominant_fps(manifest) == 25.0
+
+
+def test_one_frame_rate_everywhere_is_the_target(tmp_path: Path) -> None:
+    assert dominant_fps(selection(tmp_path, (12, 30.0))) == 30.0
+
+
+def test_two_rates_that_do_not_divide_into_each_other(tmp_path: Path) -> None:
+    """Neither 24 nor 30 reaches the other, so the larger group wins."""
+    assert dominant_fps(selection(tmp_path, (12, 24.0), (8, 30.0))) == 24.0
+    assert dominant_fps(selection(tmp_path, (8, 24.0), (12, 30.0))) == 30.0
+
+
+def test_a_tie_goes_to_the_lowest_rate(tmp_path: Path) -> None:
+    assert dominant_fps(selection(tmp_path, (10, 24.0), (10, 30.0))) == 24.0
+    # Insertion order must not decide it either.
+    assert dominant_fps(selection(tmp_path, (10, 30.0), (10, 24.0))) == 24.0
+
+
+def test_a_rate_nothing_else_reaches_does_not_win_on_count(tmp_path: Path) -> None:
+    """50 has the most clips; 25 has the most reach, which is what the rule counts."""
+    assert dominant_fps(selection(tmp_path, (6, 50.0), (5, 25.0))) == 25.0
+
+
+def test_the_real_frame_rates_of_the_sardinia_set(tmp_path: Path) -> None:
+    """The phone files probe at 30.033, not a round 30, and must not reach 25."""
+    manifest = selection(tmp_path, (24, 50.0), (14, 25.0), (2, 30.033))
+    assert dominant_fps(manifest) == 25.0
+    assert not reaches(30.033, 25.0)
+    assert reaches(30.033, 30.033)
+
+
+@pytest.mark.parametrize(
+    ("source_fps", "target", "arrives"),
+    [
+        (25.0, 25.0, True),
+        (50.0, 25.0, True),
+        (100.0, 25.0, True),
+        (30.0, 25.0, False),
+        (29.97, 30.0, True),
+        (25.0, 50.0, False),
+        (0.0, 25.0, False),
+    ],
+)
+def test_reaching_a_target_means_dropping_whole_frames(
+    source_fps: float, target: float, arrives: bool
+) -> None:
+    assert reaches(source_fps, target) is arrives
 
 
 def test_only_selected_clips_decide_the_target(tmp_path: Path) -> None:

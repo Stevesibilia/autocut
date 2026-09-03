@@ -163,6 +163,28 @@ class SelectionConfig(BaseModel):
         description="When set, every duration is scaled by one factor so the edit lands "
         "near this length. Off by default: the length follows from the clips.",
     )
+    place_radius_m: float = Field(
+        default=150.0,
+        description="Two candidates this close share a place, transitively. Smaller than "
+        "the spatial similarity radius on purpose: that signal is a soft penalty and "
+        "this is a hard cap.",
+    )
+    place_visit_gap_seconds: float = Field(
+        default=7200.0,
+        description="A gap this long inside one place starts a new visit. Coming back to "
+        "the same beach the next day deserves its own clips.",
+    )
+    max_clips_per_place: int = Field(
+        default=3,
+        description="Clips from one visit to one place. Three keeps a wide, a medium and "
+        "a detail, which is how a montage covers a location.",
+    )
+    max_candidate_share: float = Field(
+        default=0.5,
+        description="Ceiling on max_clips as a share of the eligible candidates, so a "
+        "small folder does not select most of what survived the rules. An explicit "
+        "--max-clips overrides it.",
+    )
     snap_to_motion: bool = True
     snap_window_seconds: float = Field(
         default=0.5, description="How far the window start may move to reach a motion minimum."
@@ -233,8 +255,10 @@ class ExportConfig(BaseModel):
     max_width: int = 3840
     max_height: int = 2160
     pix_fmt: Literal["yuv420p", "passthrough"] = "yuv420p"
-    remove_audio: PerClass[bool] = PerClass(
-        drone=True, actioncam=True, phone=False, reflex=False, generic=True
+    remove_audio: PerClass[bool] = Field(
+        default=PerClass(drone=True, actioncam=True, phone=True, reflex=True, generic=True),
+        description="A default export is silent and the soundtrack carries the sound. Set "
+        "a class to false to keep its ambience.",
     )
     slow_motion_auto: PerClass[bool] = PerClass(
         drone=False, actioncam=True, phone=False, reflex=False, generic=False

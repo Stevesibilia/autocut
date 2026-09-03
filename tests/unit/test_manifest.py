@@ -213,3 +213,35 @@ def test_duration_fields_default_to_unset(tmp_path: Path) -> None:
     assert back.segments["k:0"].duration_reason is None
     assert back.segments["k:0"].snapped is False
     assert back.selection.total_duration_s is None
+
+
+def test_place_fields_roundtrip(tmp_path: Path) -> None:
+    now = datetime.now(UTC)
+    m = Manifest(created_at=now, updated_at=now, sources=[Path("/footage")], output_dir=tmp_path)
+    m.segments["k:0"] = Segment(
+        id="k:0",
+        file_id="k",
+        start_s=0.0,
+        end_s=20.0,
+        place_id=2,
+        visit_id=5,
+        held_by=["a:0", "b:0", "c:0"],
+        reason="place_cap",
+    )
+    m.segments["k:1"] = Segment(id="k:1", file_id="k", start_s=0.0, end_s=20.0)
+    m.selection = SelectionRun(places=9, visits=12)
+
+    out = tmp_path / "manifest.json"
+    m.save(out)
+    back = Manifest.load(out)
+
+    held = back.segments["k:0"]
+    assert held.place_id == 2
+    assert held.visit_id == 5
+    assert held.held_by == ["a:0", "b:0", "c:0"]
+    assert held.reason == "place_cap"
+    # A candidate without GPS carries no place, which is what keeps caps off it.
+    assert back.segments["k:1"].place_id is None
+    assert back.segments["k:1"].held_by == []
+    assert back.selection.places == 9
+    assert back.selection.visits == 12

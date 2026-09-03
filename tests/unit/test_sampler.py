@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from autocut.core.config import AutocutConfig
+from autocut.core.hwaccel import SOFTWARE, Hwaccel
 from autocut.core.probe import ProbeResult, probe_file
 from autocut.core.sampler import (
     build_sample_command,
@@ -31,7 +32,7 @@ def probe(width: int = 1920, height: int = 1080, rotation: int = 0) -> ProbeResu
 
 
 def test_command_is_an_argument_list_with_the_filters_ffmpeg_needs() -> None:
-    command = build_sample_command(Path("/footage/a b.MP4"), 2.0, 320, 180, hwaccel=False)
+    command = build_sample_command(Path("/footage/a b.MP4"), 2.0, 320, 180, SOFTWARE)
     assert command[0] == "ffmpeg"
     assert "-hwaccel" not in command
     assert command[command.index("-i") + 1] == "/footage/a b.MP4"
@@ -40,9 +41,18 @@ def test_command_is_an_argument_list_with_the_filters_ffmpeg_needs() -> None:
     assert command[-1] == "-"
 
 
-def test_hwaccel_flag_precedes_the_input() -> None:
-    command = build_sample_command(Path("clip.mp4"), 2.0, 320, 180, hwaccel=True)
+def test_hwaccel_flags_precede_the_input() -> None:
+    vaapi = Hwaccel(method="vaapi", device="/dev/dri/renderD128")
+    command = build_sample_command(Path("clip.mp4"), 2.0, 320, 180, vaapi)
     assert command.index("-hwaccel") < command.index("-i")
+    assert command[command.index("-hwaccel") + 1] == "vaapi"
+    assert command[command.index("-hwaccel_device") + 1] == "/dev/dri/renderD128"
+
+
+def test_videotoolbox_needs_no_device() -> None:
+    command = build_sample_command(Path("clip.mp4"), 2.0, 320, 180, Hwaccel("videotoolbox"))
+    assert command[command.index("-hwaccel") + 1] == "videotoolbox"
+    assert "-hwaccel_device" not in command
 
 
 def test_sample_size_uses_display_orientation() -> None:
@@ -52,7 +62,8 @@ def test_sample_size_uses_display_orientation() -> None:
     assert sample_size(probe(3840, 2160), 320) == (320, 180)
 
 
-def test_software_fallback_after_a_hardware_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_single_bad_file_still_retries_in_software(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The run level choice is verified, so this is a last resort for one clip."""
     commands: list[list[str]] = []
     frame = b"\x00" * (320 * 180 * 3)
 
@@ -63,30 +74,47 @@ def test_software_fallback_after_a_hardware_failure(monkeypatch: pytest.MonkeyPa
         return [frame, frame], 0, ""
 
     monkeypatch.setattr("autocut.core.sampler.read_frames", fake_read)
-    config = AutocutConfig()
-    sampled = sample_frames(Path("clip.mp4"), probe(), config)
+    vaapi = Hwaccel(method="vaapi", device="/dev/dri/renderD128")
+    sampled = sample_frames(Path("clip.mp4"), probe(), AutocutConfig(), None, vaapi)
 
     assert len(commands) == 2
     assert "-hwaccel" in commands[0]
     assert "-hwaccel" not in commands[1]
     assert sampled.count == 2
-    assert not sampled.hwaccel_used
-    assert any("hardware decoding failed" in warning for warning in sampled.warnings)
+    assert sampled.hwaccel_used == "none"
+    assert any("vaapi" in warning for warning in sampled.warnings)
 
 
-def test_hwaccel_off_never_asks_for_hardware(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_software_decoding_never_spawns_a_second_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wasted spawn per file is the whole point of issue 3."""
     commands: list[list[str]] = []
 
     def fake_read(command: list[str], frame_bytes: int) -> tuple[list[bytes], int, str]:
         commands.append(command)
+        return [], 1, "broken file"
+
+    monkeypatch.setattr("autocut.core.sampler.read_frames", fake_read)
+    sampled = sample_frames(Path("clip.mp4"), probe(), AutocutConfig(), None, SOFTWARE)
+
+    # One sampling attempt, then only the single frame fallback. Never a retry of
+    # the same software command.
+    assert len(commands) == 2
+    assert all("-hwaccel" not in command for command in commands)
+    assert "-frames:v" in commands[1]
+    assert sampled.count == 0
+
+
+def test_a_working_decoder_is_recorded_on_the_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_read(command: list[str], frame_bytes: int) -> tuple[list[bytes], int, str]:
         return [b"\x00" * frame_bytes], 0, ""
 
     monkeypatch.setattr("autocut.core.sampler.read_frames", fake_read)
-    config = AutocutConfig()
-    config.analysis.hwaccel = "off"
-    sample_frames(Path("clip.mp4"), probe(), config)
-    assert len(commands) == 1
-    assert "-hwaccel" not in commands[0]
+    sampled = sample_frames(
+        Path("clip.mp4"), probe(), AutocutConfig(), None, Hwaccel("videotoolbox")
+    )
+    assert sampled.hwaccel_used == "videotoolbox"
 
 
 def test_proxy_is_sampled_when_attached(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -97,9 +125,7 @@ def test_proxy_is_sampled_when_attached(monkeypatch: pytest.MonkeyPatch) -> None
         return [b"\x00" * frame_bytes], 0, ""
 
     monkeypatch.setattr("autocut.core.sampler.read_frames", fake_read)
-    config = AutocutConfig()
-    config.analysis.hwaccel = "off"
-    sampled = sample_frames(Path("clip.MP4"), probe(), config, Path("clip.LRF"))
+    sampled = sample_frames(Path("clip.MP4"), probe(), AutocutConfig(), Path("clip.LRF"))
     assert commands[0][commands[0].index("-i") + 1] == "clip.LRF"
     assert sampled.source == "proxy"
     assert sampled.path == Path("clip.LRF")
@@ -115,7 +141,6 @@ def test_proxy_ignored_when_proxies_are_disabled(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr("autocut.core.sampler.read_frames", fake_read)
     config = AutocutConfig()
     config.analysis.use_proxies = False
-    config.analysis.hwaccel = "off"
     sampled = sample_frames(Path("clip.MP4"), probe(), config, Path("clip.LRF"))
     assert commands[0][commands[0].index("-i") + 1] == "clip.MP4"
     assert sampled.source == "original"
@@ -154,9 +179,7 @@ def test_a_clip_too_short_for_the_fps_filter_still_yields_one_frame(
         return [], 0, ""
 
     monkeypatch.setattr("autocut.core.sampler.read_frames", fake_read)
-    config = AutocutConfig()
-    config.analysis.hwaccel = "off"
-    sampled = sample_frames(Path("clip.mp4"), probe(), config)
+    sampled = sample_frames(Path("clip.mp4"), probe(), AutocutConfig())
 
     assert sampled.count == 1
     assert sampled.timestamps.tolist() == [0.0]
@@ -169,9 +192,7 @@ def test_a_file_that_decodes_nothing_at_all_reports_it(monkeypatch: pytest.Monke
         return [], 1, "moov atom not found"
 
     monkeypatch.setattr("autocut.core.sampler.read_frames", fake_read)
-    config = AutocutConfig()
-    config.analysis.hwaccel = "off"
-    sampled = sample_frames(Path("broken.mp4"), probe(), config)
+    sampled = sample_frames(Path("broken.mp4"), probe(), AutocutConfig())
 
     assert sampled.count == 0
     assert any("no frames decoded" in warning for warning in sampled.warnings)

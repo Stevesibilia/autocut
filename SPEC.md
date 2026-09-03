@@ -364,7 +364,10 @@ Levers, by impact:
 
 - **Proxies** (`.lrv`, `.lrf`) when present. Free 5x.
 - **Sampled decoding**, 2 fps at 320 px. Note that on HEVC with long GOPs, seeking to 2 fps still decodes most frames, so hardware decode matters more than the sample rate.
-- **Hardware decode** with `-hwaccel auto` (VAAPI, videotoolbox), software fallback.
+- **Hardware decode**, chosen once per run rather than per file and verified by decoding one frame of the first file, with a single demotion to software for the whole run if that fails. `analysis.hwaccel` accepts `auto`, `off`, `vaapi` and `videotoolbox`. `auto` selects videotoolbox on macOS and software elsewhere; it never selects CUDA, which is what ffmpeg's own `-hwaccel auto` picked on the AMD development host before failing on every file.
+
+  Hardware decode is a lever only where it measures as one. On the AMD iGPU it is not: sampling one 4K clip at 2 fps measured 3.9 s in software against 9.0 s through VAAPI, and 5.7 s with a full GPU filter chain. At this sample rate most of the work is skipping frames rather than decoding them, and every decoded surface still crosses back to system memory, so VAAPI has to be asked for by name. The macOS figure is the one that matters for the 100 GB target and is still to be measured on the M4.
+
 - **Parallel files** with `ProcessPoolExecutor` sized on physical cores.
 - **Global cache.**
 

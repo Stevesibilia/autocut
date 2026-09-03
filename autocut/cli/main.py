@@ -147,6 +147,9 @@ def analyze(
 
     report_path = render_report(manifest, out)
 
+    for warning in manifest.analysis.warnings:
+        console.print(f"[yellow]{warning}[/yellow]")
+
     rejected = Counter(s.reason for s in manifest.segments.values() if s.reason)
     console.print(
         f"Analyzed [bold]{len(manifest.segments)}[/bold] segments "

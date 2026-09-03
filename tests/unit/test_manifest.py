@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from autocut.core.manifest import (
+    AnalysisRun,
     GpsPoint,
     Manifest,
     Metrics,
@@ -102,3 +103,20 @@ def test_manifest_roundtrip_with_telemetry_and_analysis(tmp_path: Path) -> None:
     assert segment.reason == "low_altitude"
     assert segment.metrics is not None
     assert segment.metrics.min_height_m == 22.7
+
+
+def test_analysis_run_defaults_and_roundtrip(tmp_path: Path) -> None:
+    now = datetime.now(UTC)
+    m = Manifest(created_at=now, updated_at=now, sources=[Path("/footage")], output_dir=tmp_path)
+    assert m.analysis == AnalysisRun()
+    assert m.analysis.hwaccel == "none"
+
+    m.analysis = AnalysisRun(
+        files_analyzed=72, files_from_cache=70, files_failed=1, completed=False, hwaccel="vaapi"
+    )
+    out = tmp_path / "manifest.json"
+    m.save(out)
+    back = Manifest.load(out)
+    assert back.analysis.hwaccel == "vaapi"
+    assert back.analysis.files_analyzed == 72
+    assert not back.analysis.completed

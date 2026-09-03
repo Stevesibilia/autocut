@@ -45,7 +45,15 @@ class AnalysisConfig(BaseModel):
     sample_fps: float = 2.0
     sample_long_side: int = 320
     use_proxies: bool = True
-    hwaccel: Literal["auto", "off"] = "auto"
+    hwaccel: Literal["auto", "off", "vaapi", "videotoolbox"] = Field(
+        default="auto",
+        description=(
+            "Decoder for sampling, chosen once per run and verified on the first file. "
+            '"auto" selects videotoolbox on macOS and software elsewhere: vaapi decodes '
+            "correctly on Linux but measured slower than software for 2 fps sampling, so "
+            'it has to be asked for by name. "off" forces software.'
+        ),
+    )
     workers: int | None = Field(default=None, description="Defaults to physical cores.")
     sprites: bool = False
     sprite_max_frames: int = 60

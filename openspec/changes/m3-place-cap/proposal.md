@@ -10,6 +10,7 @@ The first CapCut review of the Sardinia edit found clips 30 to 34 nearly identic
 - Candidate share ceiling: `selection.max_candidate_share` (default 0.5) bounds `max_clips` to that share of the eligible candidates, so a small folder does not select two thirds of what survived the rules. The explicit `--max-clips` flag overrides it.
 - `place_id` and `visit_id` on segments; the report shows the place on each card, offers a place filter, and lists places with their clip counts in the header.
 - `autocut select` prints how many places and visits were found and how many candidates the place cap held back.
+- `export.remove_audio` defaults to true for every class: a default export is silent and the soundtrack carries the sound. Requested by the user after the first CapCut review, where only the two phone clips had audio.
 
 ## Capabilities
 
@@ -21,6 +22,7 @@ The first CapCut review of the Sardinia edit found clips 30 to 34 nearly identic
 
 - `clip-selection`: place cap and candidate share ceiling join the caps and quotas.
 - `review-report`: place shown, place filter, places in the header.
+- `clip-export`: audio removed by default for every class.
 
 ## Impact
 

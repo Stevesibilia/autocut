@@ -22,3 +22,12 @@ def test_toml_override(tmp_path: Path) -> None:
     cfg = AutocutConfig.load(toml)
     assert cfg.selection.max_clips == 12
     assert cfg.export.fps == 25
+
+
+def test_the_shipped_example_parses_and_matches_the_defaults() -> None:
+    """The example is documentation, so a renamed field must not go unnoticed there."""
+    example = Path(__file__).resolve().parents[2] / "autocut.example.toml"
+    cfg = AutocutConfig.load(example)
+    defaults = AutocutConfig()
+    assert cfg.selection == defaults.selection
+    assert cfg.similarity == defaults.similarity

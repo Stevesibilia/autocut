@@ -126,6 +126,19 @@ class SelectionConfig(BaseModel):
     diversity_lambda: float = 0.6
     max_clips_per_cluster: int = 2
     min_temporal_gap_seconds: float = 60.0
+    cluster_threshold: float = Field(
+        default=0.75,
+        description="Combined similarity above which two candidates join one visual cluster.",
+    )
+
+
+class SimilarityWeights(BaseModel):
+    """Relative weight of each similarity signal. Placeholders until tuned on footage."""
+
+    visual: float = 0.5
+    spatial: float = 0.2
+    temporal: float = 0.2
+    motion: float = 0.1
 
 
 class SimilarityConfig(BaseModel):
@@ -134,6 +147,13 @@ class SimilarityConfig(BaseModel):
     spatial: bool = True
     temporal: bool = True
     motion: bool = True
+    weights: SimilarityWeights = SimilarityWeights()
+    spatial_radius_m: float = Field(
+        default=200.0, description="GPS distance at which the spatial signal reaches 0."
+    )
+    temporal_radius_s: float = Field(
+        default=600.0, description="Time distance at which the temporal signal reaches 0."
+    )
 
 
 class SoundtrackConfig(BaseModel):

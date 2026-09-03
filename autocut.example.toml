@@ -57,10 +57,13 @@ max_clipped_fraction = 0.05
 min_height_m = 5.0
 
 [selection]
+min_segment_seconds = 1.5
 target_duration_seconds = 3.0
 max_clips = 40
-diversity_lambda = 0.6
+diversity_lambda = 0.6      # the diversity slider: 0 ranks by score alone
 max_clips_per_cluster = 2
+min_temporal_gap_seconds = 60.0
+cluster_threshold = 0.75    # combined similarity above which two clips are one cluster
 
 [selection.max_clips_per_file]
 drone = 1
@@ -68,6 +71,32 @@ actioncam = 3
 phone = 1
 reflex = 2
 generic = 1
+
+# Floor on each class's share of the final count, so a mixed vacation does not
+# become an all-aerial edit. Zero everywhere means no class is reserved slots.
+[selection.min_share_per_class]
+drone = 0.0
+actioncam = 0.0
+phone = 0.0
+reflex = 0.0
+generic = 0.0
+
+[similarity]
+visual_semantic = true   # CLIP embeddings, milestone M3
+visual_fallback = true   # perceptual hash plus colour histogram
+spatial = true
+temporal = true
+motion = true
+spatial_radius_m = 200.0   # GPS distance at which the spatial signal reaches 0
+temporal_radius_s = 600.0  # time distance at which the temporal signal reaches 0
+
+# Relative weight of each similarity signal. A signal that cannot be computed for a
+# pair, because one of the two has no GPS fix, is left out of that pair's mean.
+[similarity.weights]
+visual = 0.5
+spatial = 0.2
+temporal = 0.2
+motion = 0.1
 
 [export]
 mode = "precise"      # or "fast" for keyframe aligned stream copy

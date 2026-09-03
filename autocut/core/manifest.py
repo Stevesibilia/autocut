@@ -137,6 +137,14 @@ class Segment(BaseModel):
     caption: str | None = None
     embedding_ref: str | None = None
     cluster_id: int | None = None
+    similarity_to_selected: float | None = Field(
+        default=None,
+        description="Highest similarity to any selected segment, so the report can "
+        "show how close a candidate came to being a duplicate.",
+    )
+    lost_to: str | None = Field(
+        default=None, description="Id of the selected near duplicate this candidate lost to."
+    )
     thumbnail: Path | None = None
     sprite: Path | None = None
     order: int | None = None
@@ -162,6 +170,17 @@ class AnalysisRun(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class SelectionRun(BaseModel):
+    """The parameters the last selection used, so a manifest explains its own picks."""
+
+    ran_at: datetime | None = None
+    diversity_lambda: float | None = None
+    max_clips: int | None = None
+    target_duration_s: float | None = None
+    selected: int = 0
+    clusters: int = 0
+
+
 class Soundtrack(BaseModel):
     proposed_bpm: float | None = None
     measured_bpm: float | None = None
@@ -183,6 +202,7 @@ class Manifest(BaseModel):
     files: dict[str, SourceFile] = Field(default_factory=dict)
     segments: dict[str, Segment] = Field(default_factory=dict)
     analysis: AnalysisRun = AnalysisRun()
+    selection: SelectionRun = SelectionRun()
     soundtrack: Soundtrack = Soundtrack()
     config_snapshot: dict[str, object] = Field(default_factory=dict)
 

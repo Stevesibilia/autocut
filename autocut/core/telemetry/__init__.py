@@ -95,10 +95,18 @@ def adapters() -> list[TelemetryAdapter]:
 def detect_telemetry(
     probe: ProbeResult, path: Path
 ) -> tuple[TelemetryKind, TelemetrySeries | None]:
-    """Try adapters in order and parse with the first one that detects its data."""
+    """Try adapters in order and parse with the first one that detects its data.
+
+    An adapter that detects its data but parses nothing still wins. Reporting a
+    changed or broken cue format as ``none`` would hide it: the file would look
+    like it never carried telemetry, and a drone would silently stop being
+    rejected on altitude. The empty series carries the warnings instead, and the
+    summary shows ``sample_count`` 0.
+    """
     for adapter in adapters():
         if adapter.detect(probe, path):
             series = adapter.parse(path)
-            if series.samples:
-                return adapter.kind, series
+            if not series.samples:
+                series.warnings.append(f"{adapter.kind} detected but no sample could be parsed")
+            return adapter.kind, series
     return "none", None

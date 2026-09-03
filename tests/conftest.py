@@ -31,6 +31,29 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             item.add_marker(skip_ffmpeg)
 
 
+@pytest.fixture(autouse=True)
+def plain_cli_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make Rich render CLI output as plain, unwrapped text.
+
+    Rich styles and wraps to the terminal it detects. On a CI runner that means
+    ANSI escapes inside option names and a panel wrapped at 80 columns, so a
+    substring assertion on ``--no-proxies`` fails for reasons that have nothing
+    to do with the command. Pinning the environment keeps the assertions about
+    behavior.
+    """
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("TERM", "dumb")
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    # The CLI builds its console at import time, so it captured the environment as it
+    # was before this fixture ran. Replace it with one built under the pinned settings.
+    from rich.console import Console
+
+    from autocut.cli import main
+
+    monkeypatch.setattr(main, "console", Console())
+
+
 @pytest.fixture(scope="session")
 def synthetic_dir() -> Path:
     if not SYNTHETIC.exists():

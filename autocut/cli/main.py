@@ -49,7 +49,7 @@ def _root(
     version: Annotated[bool, typer.Option("--version", help="Show version and exit.")] = False,
 ) -> None:
     if version:
-        console.print(__version__)
+        console.print(__version__, highlight=False)
         raise typer.Exit()
     if ctx.invoked_subcommand is None:
         console.print(ctx.get_help())

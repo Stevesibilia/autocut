@@ -151,6 +151,28 @@ def test_no_telemetry_is_not_an_error(synthetic_dir: Path) -> None:
     assert series is None
 
 
+def test_a_detected_adapter_that_parses_nothing_still_reports_its_kind(tmp_path: Path) -> None:
+    """A changed cue format must surface as a warning, never as "no telemetry"."""
+    video = tmp_path / "DJI_0002.MP4"
+    video.write_bytes(b"")
+    (tmp_path / "DJI_0002.SRT").write_text(
+        # Detected by the signature, but every cue carries fields we cannot read.
+        "1\n00:00:00,000 --> 00:00:01,000\nISO, GPS (, H\n\n"
+        "2\n00:00:01,000 --> 00:00:02,000\nISO, GPS (, H\n",
+        encoding="utf-8",
+    )
+    probe = probe_file(video)
+    kind, series = detect_telemetry(probe, video)
+
+    assert kind == "dji_sidecar_srt"
+    assert series is not None
+    assert series.samples == []
+    summary = series.summary()
+    assert summary.sample_count == 0
+    assert summary.min_height_m is None
+    assert any("no sample could be parsed" in warning for warning in summary.warnings)
+
+
 def test_sidecar_detection_ignores_a_non_dji_srt(tmp_path: Path) -> None:
     video = tmp_path / "clip.mp4"
     video.write_bytes(b"")

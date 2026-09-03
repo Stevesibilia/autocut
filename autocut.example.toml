@@ -16,8 +16,11 @@ reflex = 0.5
 generic = 0.5
 
 # Force a class on files matching a glob (evaluated in order, last match wins).
+# The glob is matched against the path relative to its source folder with fnmatch
+# rules, not gitignore rules: "*" crosses directory separators, so "**" and "*"
+# behave the same and "GoPro/*" already matches at any depth below the folder.
 # [[analysis.class_overrides]]
-# glob = "**/GoPro/**"
+# glob = "GoPro/**"
 # source_class = "actioncam"
 
 [weights]

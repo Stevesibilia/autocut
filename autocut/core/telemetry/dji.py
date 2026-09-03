@@ -92,22 +92,36 @@ def parse_srt(text: str, kind: TelemetryKind) -> TelemetrySeries:
 
 
 def _iter_cues(text: str) -> list[tuple[float, str]]:
+    lines = text.splitlines()
     cues: list[tuple[float, str]] = []
     start_s: float | None = None
     body: list[str] = []
-    for line in text.splitlines():
-        timing = _TIMING.search(line)
+    for position, raw in enumerate(lines):
+        line = raw.strip()
+        timing = _TIMING.search(raw)
         if timing is not None:
             if start_s is not None:
                 cues.append((start_s, " ".join(body).strip()))
             start_s = _timecode_seconds(timing.group("start"))
             body = []
             continue
-        if start_s is not None and line.strip():
-            body.append(line.strip())
+        if start_s is None or not line:
+            continue
+        # A bare number followed by a timing line is the next cue's index, not text.
+        if line.isdigit() and _next_line_is_timing(lines, position):
+            continue
+        body.append(line)
     if start_s is not None:
         cues.append((start_s, " ".join(body).strip()))
     return cues
+
+
+def _next_line_is_timing(lines: list[str], position: int) -> bool:
+    for candidate in lines[position + 1 :]:
+        if not candidate.strip():
+            continue
+        return _TIMING.search(candidate) is not None
+    return False
 
 
 def _timecode_seconds(timecode: str) -> float:
@@ -148,6 +162,11 @@ class DjiEmbeddedSrtAdapter:
     kind: TelemetryKind = "dji_embedded_srt"
 
     def __init__(self) -> None:
+        # Detection has to extract the track to look at its first cue, so the text is
+        # kept for the parse that follows. The cache is per instance and ``adapters()``
+        # builds a fresh instance per call, so it holds one file at a time. Anything
+        # that turns these adapters into singletons must bound or drop this dict, or a
+        # 500 file run keeps every SRT in memory.
         self._text: dict[Path, str] = {}
 
     def detect(self, probe: ProbeResult, path: Path) -> bool:

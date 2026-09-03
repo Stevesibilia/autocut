@@ -146,14 +146,23 @@ Sampled decoding only: 2 fps, long side 320 px, through the ffmpeg pipe. Full de
 | Stability    | Standard deviation of the motion vector over time         | Reject unstable gimbal and jerky corrections           |
 | Colorfulness | Hasler and Süsstrunk metric                               | Reward sunsets and saturated landscapes                |
 
-The composite score is a weighted mean with weights in `autocut.toml`. Weights are found by iterating on real footage, so they are never hardcoded.
+The composite score is a weighted mean of rank normalized metrics, with weights in `autocut.toml`. Weights are found by iterating on real footage, so they are never hardcoded.
 
-Rejection rules run before scoring:
+Normalization is per source class, not across the whole project. Raw metrics are not comparable between classes: action cam segments sampled from 720p proxies scored systematically above drone segments sampled from 4K originals, taking ten of the top twelve places for reasons unrelated to which clip is better. A segment is therefore ranked against the other segments of its own class, and a class with a single segment scores 0.5. Keeping the classes in proportion is the job of the per-class quota in selection, not of the score. The consequence is that scores are comparable within one class of one manifest and meaningless outside it, so the report shows the raw metrics alongside.
 
-- **Low altitude** from telemetry, below `rules.drone.min_height_m`: takeoff or landing.
-- **No motion** for the whole segment: parked drone or forgotten camera.
-- **High motion with low stability**: shaky footage.
-- **Head and tail trim** per class: drone 1.0 s, actioncam 1.0 s, phone 0.3 s, reflex 0.5 s, generic 0.5 s. Segments that fall under the minimum duration after trimming are dropped with the reason logged.
+`weights.exposure` is 0 by default. On well exposed SDR footage the clipping fraction is effectively zero on every segment, so weighting it ranks on noise; it stays a rejection rule.
+
+Rejection rules run before scoring, in this order, and the first one that fires is the recorded reason:
+
+1. **Too short**, under `selection.min_segment_seconds` after trimming.
+2. **Low altitude** from telemetry, below `rules.drone.min_height_m`: takeoff or landing. A takeoff is rarely a separate shot, so segmentation splits each shot where height crosses the threshold before this rule runs.
+3. **Clipped**, mean clipping fraction above `rules.max_clipped_fraction`. Exposure is evaluated before the motion rules because a blown out frame is a fact about the picture, while motion describes the camera, and the report should name the defect the viewer can see.
+4. **No motion**, mean motion below `rules.min_motion`: parked drone or forgotten camera.
+5. **Shaky**, stability below `rules.min_stability` with mean motion at least `rules.shaky_min_motion`. Stability is already motion variability relative to mean motion, so no absolute motion ceiling is needed; the floor keeps a near static wobble reported as no motion instead.
+
+**Head and tail trim** per class runs before all of them: drone 1.0 s, actioncam 1.0 s, phone 0.3 s, reflex 0.5 s, generic 0.5 s.
+
+Thresholds are defaults taken from the measured distribution of the Sardinia set, not guesses: `min_motion` at the pooled 8th percentile of segment motion, `shaky_min_motion` at the 27th, `min_stability` at the 10th percentile of segment stability. `scripts/metric_stats.py` prints that distribution from any manifest, so the defaults can be re-derived on new footage.
 
 Analysis also writes one thumbnail per segment and, when `analysis.sprites = true`, a 320 px sprite strip for GUI scrubbing.
 

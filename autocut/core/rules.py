@@ -15,7 +15,7 @@ from autocut.core.manifest import Metrics, Segment
 if TYPE_CHECKING:
     from autocut.core.telemetry import TelemetrySample
 
-REASONS = ("too_short", "low_altitude", "no_motion", "shaky", "clipped")
+REASONS = ("too_short", "low_altitude", "clipped", "no_motion", "shaky")
 
 
 def segment_heights(segment: Segment, telemetry: list[TelemetrySample] | None) -> list[float]:
@@ -53,13 +53,23 @@ def apply_rules(
     if heights and max(heights) < config.rules.drone.min_height_m:
         return "low_altitude"
 
+    # Exposure comes before the motion rules: a blown out frame is a fact about the
+    # picture, while motion describes the camera, and the card should name the
+    # defect the viewer can see.
+    if metrics.exposure_clipped > config.rules.max_clipped_fraction:
+        return "clipped"
+
     if metrics.motion < config.rules.min_motion:
         return "no_motion"
 
-    if metrics.motion > config.rules.max_motion and metrics.stability < config.rules.min_stability:
+    # Stability is already motion variability relative to mean motion, so gating it
+    # on an absolute motion ceiling was redundant, and at 0.6 that ceiling sat three
+    # times above anything this metric produces. The floor keeps a near static wobble
+    # reported as no_motion, which describes a forgotten camera better.
+    if (
+        metrics.stability < config.rules.min_stability
+        and metrics.motion >= config.rules.shaky_min_motion
+    ):
         return "shaky"
-
-    if metrics.exposure_clipped > config.rules.max_clipped_fraction:
-        return "clipped"
 
     return None

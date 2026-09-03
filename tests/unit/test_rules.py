@@ -74,25 +74,59 @@ def test_altitude_only_looks_at_samples_inside_the_segment() -> None:
 
 def test_parked_drone_has_no_motion() -> None:
     config = AutocutConfig()
-    assert config.rules.min_motion == pytest.approx(0.02)
+    assert config.rules.min_motion == pytest.approx(0.015)
     assert apply_rules(segment(), metrics(motion=0.005), None, config) == "no_motion"
 
 
 def test_handheld_running_is_shaky() -> None:
+    """Stability alone decides; the old max_motion gate was unreachable."""
     config = AutocutConfig()
-    result = apply_rules(segment(), metrics(motion=0.7, stability=0.2), None, config)
+    assert config.rules.shaky_min_motion == pytest.approx(0.04)
+    assert config.rules.min_stability == pytest.approx(0.71)
+    result = apply_rules(segment(), metrics(motion=0.09, stability=0.2), None, config)
     assert result == "shaky"
 
 
 def test_smooth_fast_pan_is_kept() -> None:
     config = AutocutConfig()
-    assert apply_rules(segment(), metrics(motion=0.7, stability=0.8), None, config) is None
+    assert apply_rules(segment(), metrics(motion=0.15, stability=0.8), None, config) is None
+
+
+def test_near_static_jitter_is_no_motion_not_shaky() -> None:
+    """Below the motion floor a wobble is a forgotten camera, which is more useful."""
+    config = AutocutConfig()
+    assert apply_rules(segment(), metrics(motion=0.01, stability=0.1), None, config) == "no_motion"
+
+
+def test_a_wobble_above_the_floor_but_stable_is_kept() -> None:
+    config = AutocutConfig()
+    assert apply_rules(segment(), metrics(motion=0.05, stability=0.9), None, config) is None
+
+
+def test_the_removed_max_motion_gate_no_longer_saves_a_shaky_segment() -> None:
+    """Motion of 0.09 is far below the old 0.6 ceiling and must not matter."""
+    config = AutocutConfig()
+    assert not hasattr(config.rules, "max_motion")
+    assert apply_rules(segment(), metrics(motion=0.09, stability=0.5), None, config) == "shaky"
 
 
 def test_blown_out_sky_is_clipped() -> None:
     config = AutocutConfig()
     assert config.rules.max_clipped_fraction == pytest.approx(0.05)
     assert apply_rules(segment(), metrics(clipped=0.12), None, config) == "clipped"
+
+
+def test_a_blown_out_static_shot_reports_the_exposure_defect() -> None:
+    """Exposure is evaluated before the motion rules, so the card names the picture."""
+    config = AutocutConfig()
+    result = apply_rules(segment(), metrics(clipped=0.12, motion=0.001), None, config)
+    assert result == "clipped"
+
+
+def test_a_blown_out_shaky_shot_also_reports_exposure() -> None:
+    config = AutocutConfig()
+    result = apply_rules(segment(), metrics(clipped=0.12, motion=0.09, stability=0.2), None, config)
+    assert result == "clipped"
 
 
 def test_the_first_rule_in_order_wins() -> None:
@@ -103,5 +137,5 @@ def test_the_first_rule_in_order_wins() -> None:
     assert result == "too_short"
 
 
-def test_every_reason_is_declared() -> None:
-    assert REASONS == ("too_short", "low_altitude", "no_motion", "shaky", "clipped")
+def test_every_reason_is_declared_in_evaluation_order() -> None:
+    assert REASONS == ("too_short", "low_altitude", "clipped", "no_motion", "shaky")

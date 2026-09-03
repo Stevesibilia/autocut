@@ -1,16 +1,29 @@
-"""Composite scoring across all segments of one run.
+"""Composite scoring across the segments of one run.
 
-Every metric is rank normalized across the whole project before being weighted,
-so one outlier cannot dominate and the diversity and weight sliders in the GUI
-behave predictably. The consequence is that scores are comparable within a
-manifest and meaningless between manifests; the report shows the raw metrics too.
+Every metric is rank normalized before being weighted, so one outlier cannot
+dominate and the diversity and weight sliders in the GUI behave predictably.
 
-Metrics where lower is better are inverted here. Clipping always is. Motion is
-not: still shots and shaky shots are handled by the rejection rules, and among
-what survives more motion is worth more.
+Normalization runs per source class, not across the whole project. Raw metrics
+are not comparable between classes: on the Sardinia set the action cam segments
+are sampled from 720p proxies and the drone segments from 4K originals, which
+gave the action cams a median sharpness of 1343 against 996 and ten of the top
+twelve places, for reasons that have nothing to do with which clip is better.
+Ranking within a class removes that; keeping the classes in proportion is the
+job of the per-class quota in selection, not of the score.
+
+The consequence is that a score is comparable within one class of one manifest
+and meaningless outside it. The report shows the raw metrics alongside.
+
+Metrics where lower is better are inverted here. Clipping is the only one, and it
+carries weight zero by default: on well exposed footage it separates segments on
+differences in the fourth decimal. It stays a rejection rule. Motion is not
+inverted: still and shaky shots are handled by the rules, and among what survives
+more motion is worth more.
 """
 
 from __future__ import annotations
+
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -48,8 +61,26 @@ def rank_normalize(values: np.ndarray) -> np.ndarray:
     return ranks / (count - 1)
 
 
-def score_metrics(metrics: list[Metrics], weights: ScoringWeights) -> list[float]:
-    """One composite score in 0 to 1 per segment, in the order given."""
+def score_metrics(entries: Sequence[tuple[str, Metrics]], weights: ScoringWeights) -> list[float]:
+    """One composite score in 0 to 1 per segment, in the order given.
+
+    ``entries`` pairs each segment's source class with its metrics. Segments are
+    ranked against the other segments of their own class.
+    """
+    scores = [0.5] * len(entries)
+    by_class: dict[str, list[int]] = {}
+    for index, (source_class, _) in enumerate(entries):
+        by_class.setdefault(source_class, []).append(index)
+
+    for indices in by_class.values():
+        group = [entries[index][1] for index in indices]
+        for index, score in zip(indices, _composite(group, weights), strict=True):
+            scores[index] = score
+    return scores
+
+
+def _composite(metrics: list[Metrics], weights: ScoringWeights) -> list[float]:
+    """Weighted mean of the rank normalized metrics of one class."""
     count = len(metrics)
     if count == 0:
         return []

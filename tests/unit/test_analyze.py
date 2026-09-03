@@ -50,13 +50,29 @@ def test_every_file_gets_at_least_one_scored_segment(synthetic_dir: Path, tmp_pa
     assert all(event.stage == "analyze" for event in events)
 
 
-def test_static_fixture_is_rejected_for_no_motion(synthetic_dir: Path, tmp_path: Path) -> None:
+def test_a_blown_out_static_fixture_reports_the_exposure_defect(
+    synthetic_dir: Path, tmp_path: Path
+) -> None:
+    """SMPTE bars are static and clipped at once, and exposure is evaluated first."""
     settings = AutocutConfig()
     settings.analysis.workers = 1
     manifest, _ = analyzed(synthetic_dir, tmp_path, settings)
     static_id = _file_id(manifest, "static.mp4")
     reasons = {s.reason for s in manifest.segments.values() if s.file_id == static_id}
-    assert "no_motion" in reasons
+    assert reasons == {"clipped"}
+
+
+def test_the_same_fixture_falls_through_to_no_motion_once_exposure_passes(
+    synthetic_dir: Path, tmp_path: Path
+) -> None:
+    """Raising only the exposure threshold shows the next rule in order taking it."""
+    settings = AutocutConfig()
+    settings.analysis.workers = 1
+    settings.rules.max_clipped_fraction = 1.0
+    manifest, _ = analyzed(synthetic_dir, tmp_path, settings)
+    static_id = _file_id(manifest, "static.mp4")
+    reasons = {s.reason for s in manifest.segments.values() if s.file_id == static_id}
+    assert reasons == {"no_motion"}
 
 
 def test_blurred_scores_below_sharp(synthetic_dir: Path, tmp_path: Path) -> None:

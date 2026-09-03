@@ -50,30 +50,42 @@ def test_outliers_do_not_dominate() -> None:
     assert values.tolist() == pytest.approx([0.0, 1 / 3, 2 / 3, 1.0])
 
 
+def one_class(batch: list[Metrics], name: str = "drone") -> list[tuple[str, Metrics]]:
+    return [(name, item) for item in batch]
+
+
 def test_scores_stay_inside_zero_to_one() -> None:
     batch = [metrics(sharpness=value) for value in (10.0, 50.0, 900.0)]
-    scores = score_metrics(batch, ScoringWeights())
+    scores = score_metrics(one_class(batch), ScoringWeights())
     assert len(scores) == 3
     assert all(0.0 <= score <= 1.0 for score in scores)
 
 
 def test_sharper_scores_higher_when_nothing_else_differs() -> None:
     batch = [metrics(sharpness=10.0), metrics(sharpness=900.0)]
-    low, high = score_metrics(batch, ScoringWeights())
+    low, high = score_metrics(one_class(batch), ScoringWeights())
     assert high > low
 
 
-def test_clipping_is_inverted() -> None:
+def test_clipping_is_inverted_when_it_carries_weight() -> None:
     batch = [metrics(clipped=0.0), metrics(clipped=0.4)]
-    clean, blown = score_metrics(batch, ScoringWeights())
+    clean, blown = score_metrics(one_class(batch), ScoringWeights(exposure=1.0))
     assert clean > blown
+
+
+def test_clipping_does_not_rank_by_default() -> None:
+    """Weight zero: on well exposed footage this metric only sorts noise."""
+    assert ScoringWeights().exposure == 0.0
+    batch = [metrics(clipped=0.0), metrics(clipped=0.4)]
+    clean, blown = score_metrics(one_class(batch), ScoringWeights())
+    assert clean == blown
 
 
 def test_weights_change_scores_without_touching_metrics() -> None:
     batch = [metrics(sharpness=900.0, colorfulness=0.0), metrics(sharpness=10.0, colorfulness=0.9)]
-    balanced = score_metrics(batch, ScoringWeights())
+    balanced = score_metrics(one_class(batch), ScoringWeights())
     color_heavy = score_metrics(
-        batch, ScoringWeights(sharpness=0.0, exposure=0.0, motion=0.0, stability=0.0)
+        one_class(batch), ScoringWeights(sharpness=0.0, exposure=0.0, motion=0.0, stability=0.0)
     )
     assert balanced[0] > balanced[1]
     assert color_heavy[1] > color_heavy[0]
@@ -83,8 +95,50 @@ def test_all_zero_weights_give_a_neutral_score() -> None:
     weights = ScoringWeights(
         sharpness=0.0, exposure=0.0, motion=0.0, stability=0.0, colorfulness=0.0
     )
-    assert score_metrics([metrics(), metrics()], weights) == [0.5, 0.5]
+    assert score_metrics(one_class([metrics(), metrics()]), weights) == [0.5, 0.5]
 
 
 def test_empty_input() -> None:
     assert score_metrics([], ScoringWeights()) == []
+
+
+def test_each_class_is_ranked_against_itself() -> None:
+    """The proxy sourced class must not take every top rank of the project."""
+    entries: list[tuple[str, Metrics]] = [
+        ("actioncam", metrics(sharpness=1300.0)),
+        ("actioncam", metrics(sharpness=1900.0)),
+        ("drone", metrics(sharpness=500.0)),
+        ("drone", metrics(sharpness=900.0)),
+    ]
+    scores = score_metrics(entries, ScoringWeights())
+    best_actioncam, best_drone = scores[1], scores[3]
+    # Both classes reach the top of their own range despite disjoint raw sharpness.
+    assert best_actioncam == pytest.approx(best_drone)
+    assert scores[1] > scores[0]
+    assert scores[3] > scores[2]
+    # The lowest drone segment outranks the lowest action cam segment nowhere: they
+    # are simply not compared.
+    assert scores[0] == pytest.approx(scores[2])
+
+
+def test_a_class_with_one_segment_scores_neutral() -> None:
+    entries: list[tuple[str, Metrics]] = [
+        ("drone", metrics(sharpness=100.0)),
+        ("drone", metrics(sharpness=900.0)),
+        ("phone", metrics(sharpness=2500.0)),
+    ]
+    scores = score_metrics(entries, ScoringWeights())
+    assert scores[2] == pytest.approx(0.5)
+
+
+def test_class_grouping_preserves_input_order() -> None:
+    entries: list[tuple[str, Metrics]] = [
+        ("drone", metrics(sharpness=100.0)),
+        ("actioncam", metrics(sharpness=100.0)),
+        ("drone", metrics(sharpness=900.0)),
+        ("actioncam", metrics(sharpness=900.0)),
+    ]
+    scores = score_metrics(entries, ScoringWeights())
+    assert len(scores) == 4
+    assert scores[0] < scores[2]
+    assert scores[1] < scores[3]

@@ -345,7 +345,13 @@ def _build_segments(
             segment.outcome = "rejected"
             segment.reason = reason
 
-    scores = score_metrics([s.metrics for s in segments if s.metrics is not None], config.weights)
+    # Paired with the source class, because ranking happens within a class.
+    scored = [
+        (manifest.files[segment.file_id].source_class, segment.metrics)
+        for segment in segments
+        if segment.metrics is not None
+    ]
+    scores = score_metrics(scored, config.weights)
     for segment, score in zip(segments, scores, strict=True):
         segment.score = score
 

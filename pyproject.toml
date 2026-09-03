@@ -51,6 +51,12 @@ autocut = "autocut.cli.main:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["autocut"]
+# The report template ships with the package: the renderer loads it from the
+# installed tree, not from the source checkout.
+artifacts = ["autocut/core/templates/*.j2"]
+
+[tool.hatch.build.targets.sdist]
+include = ["autocut", "scripts", "tests", "SPEC.md", "AGENTS.md", "README.md"]
 
 [tool.ruff]
 line-length = 100

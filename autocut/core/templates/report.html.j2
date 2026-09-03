@@ -1,0 +1,654 @@
+{#
+  AutoCut review report.
+
+  Self contained on purpose: no web fonts, no CDN, no external stylesheet. The page
+  has to open from a copied folder on a machine with no network, so the only things
+  it reaches for are the thumbnails under thumbs/, addressed relatively.
+#}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoCut Review</title>
+<style>
+  :root {
+    color-scheme: light dark;
+
+    --ground: #f2f5f5;
+    --surface: #ffffff;
+    --surface-sunken: #e8edee;
+    --line: #d3dcdd;
+    --line-strong: #b7c4c6;
+    --ink: #0f1417;
+    --ink-muted: #5b6a6e;
+    --ink-faint: #869599;
+
+    --accent: #0e7c86;
+    --accent-ink: #ffffff;
+    --accent-wash: #dbeced;
+
+    --reject: #b0463a;
+    --reject-wash: #f6e3e0;
+
+    --shadow: 0 1px 2px rgba(15, 20, 23, 0.06), 0 6px 16px rgba(15, 20, 23, 0.05);
+
+    --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
+
+    --gap: 1rem;
+    --radius: 6px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #10161a;
+      --surface: #182024;
+      --surface-sunken: #0c1215;
+      --line: #29353a;
+      --line-strong: #3b4a50;
+      --ink: #e6ebec;
+      --ink-muted: #9aabb0;
+      --ink-faint: #6f8288;
+
+      --accent: #3ab3bd;
+      --accent-ink: #06181a;
+      --accent-wash: #14343a;
+
+      --reject: #e08175;
+      --reject-wash: #3a201d;
+
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.3);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #10161a;
+    --surface: #182024;
+    --surface-sunken: #0c1215;
+    --line: #29353a;
+    --line-strong: #3b4a50;
+    --ink: #e6ebec;
+    --ink-muted: #9aabb0;
+    --ink-faint: #6f8288;
+
+    --accent: #3ab3bd;
+    --accent-ink: #06181a;
+    --accent-wash: #14343a;
+
+    --reject: #e08175;
+    --reject-wash: #3a201d;
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.3);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1600px;
+    margin: 0 auto;
+    padding: 1.5rem 1.25rem 4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 600;
+  }
+
+  h1 {
+    margin: 0.15rem 0 0;
+    font-size: 1.4rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+
+  .sources {
+    margin: 0.35rem 0 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-muted);
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  /* Summary ---------------------------------------------------------------- */
+
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: var(--gap);
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 0.85rem 0.95rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+
+  .panel h2 {
+    margin: 0;
+    font-size: 11px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 600;
+  }
+
+  .totals {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
+  .totals b {
+    font-family: var(--mono);
+    font-size: 1.7rem;
+    font-weight: 600;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .totals span { color: var(--ink-muted); }
+
+  .tally {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tally div {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    border-bottom: 1px dotted var(--line);
+    padding-bottom: 0.15rem;
+  }
+
+  .tally div:last-child { border-bottom: none; }
+  .tally dt { color: var(--ink-muted); }
+  .tally dd { margin: 0; font-family: var(--mono); }
+  .tally .is-reject dt { color: var(--reject); }
+
+  .note {
+    margin: 0;
+    color: var(--ink-muted);
+    font-size: 12px;
+  }
+
+  .warn {
+    border-left: 3px solid var(--reject);
+    background: var(--reject-wash);
+    color: var(--ink);
+    padding: 0.6rem 0.8rem;
+    border-radius: 0 var(--radius) var(--radius) 0;
+    margin: 0;
+  }
+
+  /* Controls --------------------------------------------------------------- */
+
+  .controls {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 0.7rem 0.9rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 0.85rem;
+    box-shadow: var(--shadow);
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .field label {
+    font-size: 11px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 600;
+  }
+
+  select, .ghost {
+    font: inherit;
+    color: var(--ink);
+    background: var(--surface-sunken);
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    padding: 0.3rem 0.5rem;
+  }
+
+  .ghost { cursor: pointer; }
+  .ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+  select:focus-visible, .ghost:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .shown {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-muted);
+  }
+
+  .shown b { color: var(--ink); }
+
+  /* Cards ------------------------------------------------------------------ */
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: var(--gap);
+    align-items: start;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid transparent;
+    border-radius: var(--radius);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .card.is-rejected {
+    border-left-color: var(--reject);
+    background: color-mix(in srgb, var(--surface) 92%, var(--reject));
+  }
+
+  .shot {
+    position: relative;
+    display: block;
+    background: var(--surface-sunken);
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+  }
+
+  .shot img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .card.is-rejected .shot img { filter: saturate(0.25) brightness(0.82); }
+
+  .shot .missing {
+    display: grid;
+    place-items: center;
+    height: 100%;
+    color: var(--ink-faint);
+    font-size: 12px;
+  }
+
+  .chip {
+    position: absolute;
+    bottom: 0.4rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-family: var(--mono);
+    font-size: 11px;
+    background: rgba(8, 14, 16, 0.78);
+    color: #f2f5f5;
+  }
+
+  .chip.left { left: 0.4rem; }
+  .chip.right { right: 0.4rem; }
+
+  .head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.6rem 0.75rem 0.35rem;
+  }
+
+  .seq {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .name {
+    font-family: var(--mono);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+
+  .tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    padding: 0 0.75rem 0.5rem;
+  }
+
+  .tag {
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    padding: 0.08rem 0.4rem;
+    border-radius: 3px;
+    border: 1px solid var(--line-strong);
+    color: var(--ink-muted);
+  }
+
+  .tag.klass { border-color: var(--accent); color: var(--accent); }
+  .tag.reason { border-color: var(--reject); color: var(--reject); background: var(--reject-wash); }
+
+  .score {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0 0.75rem 0.5rem;
+  }
+
+  .bar {
+    flex: 1;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--surface-sunken);
+    overflow: hidden;
+  }
+
+  .bar i {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+  }
+
+  .card.is-rejected .bar i { background: var(--line-strong); }
+
+  .score b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 1px;
+    background: var(--line);
+    border-top: 1px solid var(--line);
+    margin-top: auto;
+  }
+
+  .metrics div {
+    background: var(--surface);
+    padding: 0.4rem 0.3rem;
+    text-align: center;
+  }
+
+  .card.is-rejected .metrics div {
+    background: color-mix(in srgb, var(--surface) 92%, var(--reject));
+  }
+
+  .metrics dt {
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  .metrics dd {
+    margin: 0.1rem 0 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    color: var(--ink-muted);
+    padding: 3rem 1rem;
+    border: 1px dashed var(--line-strong);
+    border-radius: var(--radius);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">AutoCut analysis</p>
+    <h1>Review {{ summary.segment_count }} segments from {{ summary.file_count }} files</h1>
+    <p class="sources">
+      {% for source in sources %}{{ source }}{% if not loop.last %} · {% endif %}{% endfor %}
+    </p>
+  </header>
+
+  {% if not summary.completed %}
+  <p class="warn">
+    Analysis was cancelled before every file was measured. The segments below are the
+    ones that completed.
+  </p>
+  {% endif %}
+  {% if summary.files_failed %}
+  <p class="warn">
+    {{ summary.files_failed }} file(s) could not be analyzed. They keep their manifest
+    entry with the error and produced no segment.
+  </p>
+  {% endif %}
+
+  <section class="summary">
+    <div class="panel">
+      <h2>Analyzed</h2>
+      <p class="totals"><b>{{ summary.analyzed_label }}</b></p>
+      <p class="note">
+        {{ summary.segment_count }} segments over {{ summary.file_count }} files.
+        {{ summary.files_from_cache }} of {{ summary.file_count }} read from the analysis cache.
+      </p>
+    </div>
+
+    <div class="panel">
+      <h2>Files per class</h2>
+      <dl class="tally">
+        {% for name, count in summary.files_per_class %}
+        <div><dt>{{ name }}</dt><dd>{{ count }}</dd></div>
+        {% endfor %}
+      </dl>
+    </div>
+
+    <div class="panel">
+      <h2>Segments per outcome</h2>
+      <dl class="tally">
+        {% for name, count in summary.segments_per_outcome %}
+        <div{% if name == 'rejected' %} class="is-reject"{% endif %}>
+          <dt>{{ name }}</dt><dd>{{ count }}</dd>
+        </div>
+        {% endfor %}
+      </dl>
+    </div>
+
+    <div class="panel">
+      <h2>Rejections per reason</h2>
+      {% if summary.segments_per_reason %}
+      <dl class="tally">
+        {% for name, count in summary.segments_per_reason %}
+        <div class="is-reject"><dt>{{ name }}</dt><dd>{{ count }}</dd></div>
+        {% endfor %}
+      </dl>
+      {% else %}
+      <p class="note">Nothing was rejected.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  <div class="controls">
+    <div class="field">
+      <label for="sort">Sort</label>
+      <select id="sort">
+        <option value="chronological">Chronological</option>
+        <option value="score">Score, best first</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="klass">Class</label>
+      <select id="klass">
+        <option value="">All</option>
+        {% for name in summary.classes %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="outcome">Outcome</label>
+      <select id="outcome">
+        <option value="">All</option>
+        {% for name in summary.outcomes %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="reason">Reason</label>
+      <select id="reason">
+        <option value="">All</option>
+        {% for name in summary.reasons %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
+      </select>
+    </div>
+    <button type="button" class="ghost" id="reset">Reset</button>
+    <p class="shown"><b id="count">{{ summary.segment_count }}</b> of {{ summary.segment_count }} shown</p>
+  </div>
+
+  <section class="grid" id="grid">
+    {% for card in cards %}
+    <article class="card{% if card.outcome == 'rejected' %} is-rejected{% endif %}"
+             data-class="{{ card.source_class }}"
+             data-outcome="{{ card.outcome }}"
+             data-reason="{{ card.reason or '' }}"
+             data-order="{{ card.order }}"
+             data-score="{{ card.score if card.score is not none else -1 }}">
+      <div class="shot">
+        {% if card.thumbnail %}
+        <img src="{{ card.thumbnail }}" alt="Frame from {{ card.file_name }} at {{ card.start_label }}" loading="lazy">
+        {% else %}
+        <div class="missing">no thumbnail</div>
+        {% endif %}
+        <span class="chip left">{{ card.start_label }}–{{ card.end_label }}</span>
+        <span class="chip right">{{ card.duration_label }}</span>
+      </div>
+
+      <div class="head">
+        <span class="seq">{{ "%03d"|format(card.index) }}</span>
+        <span class="name" title="{{ card.file_name }}">{{ card.file_name }}</span>
+      </div>
+
+      <div class="tags">
+        <span class="tag klass">{{ card.source_class }}</span>
+        <span class="tag">via {{ card.class_signal }}{% if card.class_overridden %}, overridden{% endif %}</span>
+        {% if card.analyzed_from == 'proxy' %}<span class="tag">proxy</span>{% endif %}
+        {% if card.split_reason %}<span class="tag">split: {{ card.split_reason }}</span>{% endif %}
+        {% if card.height_label %}<span class="tag">min {{ card.height_label }}</span>{% endif %}
+        {% if card.reason %}<span class="tag reason">{{ card.reason }}</span>{% endif %}
+      </div>
+
+      <div class="score">
+        <div class="bar"><i style="width: {{ card.score_percent }}%"></i></div>
+        <b>{{ card.score_label }}</b>
+      </div>
+
+      <dl class="metrics">
+        {% for metric in card.metrics %}
+        <div><dt>{{ metric.label }}</dt><dd>{{ metric.value }}</dd></div>
+        {% endfor %}
+      </dl>
+    </article>
+    {% endfor %}
+    <p class="empty" id="empty" hidden>No segment matches these filters.</p>
+  </section>
+</div>
+
+<script>
+(function () {
+  var grid = document.getElementById("grid");
+  var cards = Array.prototype.slice.call(grid.querySelectorAll(".card"));
+  var empty = document.getElementById("empty");
+  var count = document.getElementById("count");
+  var controls = {
+    sort: document.getElementById("sort"),
+    klass: document.getElementById("klass"),
+    outcome: document.getElementById("outcome"),
+    reason: document.getElementById("reason")
+  };
+
+  function apply() {
+    var wanted = {
+      klass: controls.klass.value,
+      outcome: controls.outcome.value,
+      reason: controls.reason.value
+    };
+    var shown = 0;
+    cards.forEach(function (card) {
+      var keep =
+        (!wanted.klass || card.dataset.class === wanted.klass) &&
+        (!wanted.outcome || card.dataset.outcome === wanted.outcome) &&
+        (!wanted.reason || card.dataset.reason === wanted.reason);
+      card.hidden = !keep;
+      if (keep) { shown += 1; }
+    });
+    count.textContent = String(shown);
+    empty.hidden = shown !== 0;
+
+    var byScore = controls.sort.value === "score";
+    var ordered = cards.slice().sort(function (a, b) {
+      if (byScore) {
+        return Number(b.dataset.score) - Number(a.dataset.score);
+      }
+      return Number(a.dataset.order) - Number(b.dataset.order);
+    });
+    ordered.forEach(function (card) { grid.insertBefore(card, empty); });
+  }
+
+  Object.keys(controls).forEach(function (key) {
+    controls[key].addEventListener("change", apply);
+  });
+
+  document.getElementById("reset").addEventListener("click", function () {
+    controls.sort.value = "chronological";
+    controls.klass.value = "";
+    controls.outcome.value = "";
+    controls.reason.value = "";
+    apply();
+  });
+
+  apply();
+})();
+</script>
+</body>
+</html>

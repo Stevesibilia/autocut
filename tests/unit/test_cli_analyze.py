@@ -117,3 +117,61 @@ def test_analyze_updates_an_existing_manifest(synthetic_dir: Path, tmp_path: Pat
     assert again.created_at == created_at
     assert again.updated_at >= created_at
     assert again.config_snapshot["analysis"]["use_proxies"] is False
+
+
+def test_report_on_a_folder_without_a_manifest_exits_non_zero(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["report", str(tmp_path)])
+    assert result.exit_code != 0
+    assert "No manifest found" in result.stdout
+
+
+@pytest.mark.ffmpeg
+def test_analyze_writes_the_report_next_to_the_manifest(
+    synthetic_dir: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "edit"
+    result = runner.invoke(
+        app,
+        [
+            "analyze",
+            str(synthetic_dir),
+            "--out",
+            str(out),
+            "--workers",
+            "2",
+            "--config",
+            str(config_file(tmp_path)),
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    report = out / "report.html"
+    assert report.exists()
+    assert (out / "manifest.json").exists()
+    html = report.read_text(encoding="utf-8")
+    assert "http://" not in html
+    assert "https://" not in html
+    assert "thumbs/" in html
+
+
+@pytest.mark.ffmpeg
+def test_report_command_rerenders_from_an_existing_manifest(
+    synthetic_dir: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "edit"
+    analyze_args = [
+        "analyze",
+        str(synthetic_dir),
+        "--out",
+        str(out),
+        "--workers",
+        "2",
+        "--config",
+        str(config_file(tmp_path)),
+    ]
+    assert runner.invoke(app, analyze_args).exit_code == 0
+    (out / "report.html").unlink()
+
+    result = runner.invoke(app, ["report", str(out)])
+    assert result.exit_code == 0, result.stdout
+    assert (out / "report.html").exists()
+    assert "Report written to" in result.stdout

@@ -1,0 +1,251 @@
+"""Render the review report from a manifest.
+
+The report is how scoring weights and rejection thresholds get tuned: the manifest
+is the truth but nobody can read it, and the GUI is milestone M5. Everything the
+page needs is computed here, so the template stays a layout and holds no logic
+worth testing.
+
+The page is deliberately self contained. It has to open from a copied folder on a
+machine with no network, which rules out web fonts and any hosted asset; the only
+external references are the thumbnails under ``thumbs/``, addressed relatively so
+the output folder can move as a whole.
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+from autocut.core.config import SOURCE_CLASSES
+from autocut.core.manifest import Manifest, Segment, SourceFile
+from autocut.core.rules import REASONS
+
+TEMPLATE_DIR = Path(__file__).parent / "templates"
+TEMPLATE_NAME = "report.html.j2"
+REPORT_NAME = "report.html"
+
+# Order the metric grid follows on every card, with the label the user reads.
+METRIC_LABELS: tuple[tuple[str, str], ...] = (
+    ("sharpness", "Sharpness"),
+    ("exposure_clipped", "Clipped"),
+    ("motion", "Motion"),
+    ("stability", "Stability"),
+    ("colorfulness", "Color"),
+)
+
+
+@dataclass(slots=True)
+class CardMetric:
+    """One metric value as the card shows it."""
+
+    key: str
+    label: str
+    value: str
+
+
+@dataclass(slots=True)
+class Card:
+    """One segment, flattened into everything the template prints."""
+
+    id: str
+    index: int
+    order: int
+    file_name: str
+    source_class: str
+    class_signal: str
+    class_overridden: bool
+    telemetry: str
+    analyzed_from: str
+    split_reason: str | None
+    start_s: float
+    end_s: float
+    duration_s: float
+    start_label: str
+    end_label: str
+    duration_label: str
+    score: float | None
+    score_label: str
+    score_percent: float
+    outcome: str
+    reason: str | None
+    thumbnail: str | None
+    sprite: str | None
+    metrics: list[CardMetric] = field(default_factory=list)
+    height_label: str | None = None
+
+
+@dataclass(slots=True)
+class Summary:
+    """The counts in the header, all derived from the manifest."""
+
+    file_count: int
+    segment_count: int
+    files_per_class: list[tuple[str, int]]
+    segments_per_outcome: list[tuple[str, int]]
+    segments_per_reason: list[tuple[str, int]]
+    analyzed_seconds: float
+    analyzed_label: str
+    files_from_cache: int
+    files_failed: int
+    completed: bool
+    classes: list[str]
+    outcomes: list[str]
+    reasons: list[str]
+
+
+def render_report(manifest: Manifest, out_dir: Path) -> Path:
+    """Write ``report.html`` into ``out_dir`` and return its path."""
+    cards = build_cards(manifest, out_dir)
+    summary = build_summary(manifest, cards)
+    environment = Environment(
+        loader=FileSystemLoader(TEMPLATE_DIR),
+        # select_autoescape matches on the file extension, and this template ends in
+        # ".j2", so the default list would leave escaping off and let a file name
+        # containing markup through into the page.
+        autoescape=select_autoescape(
+            enabled_extensions=("html", "xml", "j2"),
+            default=True,
+            default_for_string=True,
+        ),
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
+    template = environment.get_template(TEMPLATE_NAME)
+    html = template.render(summary=summary, cards=cards, sources=manifest.sources)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / REPORT_NAME
+    path.write_text(html, encoding="utf-8")
+    return path
+
+
+def build_cards(manifest: Manifest, out_dir: Path) -> list[Card]:
+    """One card per segment, in chronological order."""
+    file_order = {file_id: position for position, file_id in enumerate(manifest.files)}
+    ordered = sorted(
+        manifest.segments.values(),
+        key=lambda segment: (file_order.get(segment.file_id, 0), segment.start_s),
+    )
+    cards: list[Card] = []
+    for index, segment in enumerate(ordered, start=1):
+        source = manifest.files.get(segment.file_id)
+        cards.append(_card(segment, source, index, out_dir))
+    return cards
+
+
+def _card(segment: Segment, source: SourceFile | None, index: int, out_dir: Path) -> Card:
+    start = segment.trimmed_start_s if segment.trimmed_start_s is not None else segment.start_s
+    end = segment.trimmed_end_s if segment.trimmed_end_s is not None else segment.end_s
+    duration = max(end - start, 0.0)
+    score = segment.score
+    metrics: list[CardMetric] = []
+    if segment.metrics is not None:
+        for key, label in METRIC_LABELS:
+            metrics.append(
+                CardMetric(key=key, label=label, value=_number(getattr(segment.metrics, key)))
+            )
+    height = None
+    if segment.metrics is not None and segment.metrics.min_height_m is not None:
+        height = f"{segment.metrics.min_height_m:.1f} m"
+    return Card(
+        id=segment.id,
+        index=index,
+        order=index,
+        file_name=source.path.name if source is not None else segment.file_id,
+        source_class=source.source_class if source is not None else "generic",
+        class_signal=source.class_signal if source is not None else "default",
+        class_overridden=source.class_overridden if source is not None else False,
+        telemetry=source.telemetry if source is not None else "none",
+        analyzed_from=segment.analyzed_from or "original",
+        split_reason=segment.split_reason,
+        start_s=start,
+        end_s=end,
+        duration_s=duration,
+        start_label=timecode(start),
+        end_label=timecode(end),
+        duration_label=f"{duration:.1f} s",
+        score=score,
+        score_label=f"{score:.3f}" if score is not None else "n/a",
+        score_percent=round((score or 0.0) * 100, 1),
+        outcome=segment.outcome,
+        reason=segment.reason,
+        thumbnail=relative_asset(segment.thumbnail, out_dir),
+        sprite=relative_asset(segment.sprite, out_dir),
+        metrics=metrics,
+        height_label=height,
+    )
+
+
+def build_summary(manifest: Manifest, cards: list[Card]) -> Summary:
+    """Header counts. Every filter dropdown is built from the values actually present."""
+    per_class = Counter(source.source_class for source in manifest.files.values())
+    per_outcome = Counter(card.outcome for card in cards)
+    per_reason = Counter(card.reason for card in cards if card.reason)
+    analyzed = sum(card.duration_s for card in cards)
+    return Summary(
+        file_count=len(manifest.files),
+        segment_count=len(cards),
+        files_per_class=[(name, per_class[name]) for name in SOURCE_CLASSES if per_class[name]],
+        segments_per_outcome=[
+            (name, per_outcome[name])
+            for name in ("candidate", "selected", "rejected")
+            if per_outcome[name]
+        ],
+        segments_per_reason=[(name, per_reason[name]) for name in REASONS if per_reason[name]],
+        analyzed_seconds=analyzed,
+        analyzed_label=duration_label(analyzed),
+        files_from_cache=manifest.analysis.files_from_cache,
+        files_failed=manifest.analysis.files_failed,
+        completed=manifest.analysis.completed,
+        classes=[name for name in SOURCE_CLASSES if per_class[name]],
+        outcomes=[name for name in ("candidate", "selected", "rejected") if per_outcome[name]],
+        reasons=[name for name in REASONS if per_reason[name]],
+    )
+
+
+def relative_asset(path: Path | None, out_dir: Path) -> str | None:
+    """Address an asset from the report, so the whole output folder can be moved."""
+    if path is None:
+        return None
+    try:
+        return path.resolve().relative_to(out_dir.resolve()).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def timecode(seconds: float) -> str:
+    """``m:ss.s``, the form the user reads back against the source clip."""
+    seconds = max(seconds, 0.0)
+    minutes, rest = divmod(seconds, 60)
+    return f"{int(minutes)}:{rest:04.1f}"
+
+
+def duration_label(seconds: float) -> str:
+    """A total, in the largest unit that still says something."""
+    seconds = max(seconds, 0.0)
+    if seconds < 60:
+        return f"{seconds:.1f} s"
+    minutes, rest = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{int(minutes)} min {int(rest)} s"
+    hours, minutes = divmod(int(minutes), 60)
+    return f"{hours} h {minutes} min"
+
+
+def _number(value: float | int | None) -> str:
+    """Metric values span orders of magnitude, so significant digits beat fixed decimals.
+
+    Values below one keep four decimals even when they are exactly zero, so the
+    metric columns stay aligned down the grid.
+    """
+    if value is None:
+        return "n/a"
+    if isinstance(value, int):
+        return str(value)
+    if abs(value) >= 100:
+        return f"{value:.0f}"
+    if abs(value) >= 1:
+        return f"{value:.2f}"
+    return f"{value:.4f}"

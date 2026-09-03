@@ -326,14 +326,30 @@ def test_slow_motion_needs_at_least_twice_the_target(tmp_path: Path) -> None:
     assert plan.slow_motion_ratio == 1
 
 
-def test_audio_follows_the_class_and_the_override(tmp_path: Path) -> None:
+def test_every_class_is_silent_by_default(tmp_path: Path) -> None:
+    """The scenario in specs/clip-export: the soundtrack carries the sound."""
     assert planned(tmp_path, source("d", "drone")).audio is False
-    phone = planned(tmp_path, source("p", "phone"), segment(file_id="p"))
+    assert planned(tmp_path, source("p", "phone"), segment(file_id="p")).audio is False
+
+
+def test_a_class_can_opt_back_into_its_ambience(tmp_path: Path) -> None:
+    """The scenario in specs/clip-export: phone keeps its audio, drone still has none."""
+    config = AutocutConfig()
+    config.export.remove_audio.phone = False
+    phone = planned(tmp_path, source("p", "phone"), segment(file_id="p"), config)
+    drone = planned(tmp_path, source("d", "drone"), config=config)
     assert phone.audio is True
+    assert drone.audio is False
+
+
+def test_no_audio_silences_a_class_that_opted_in(tmp_path: Path) -> None:
+    config = AutocutConfig()
+    config.export.remove_audio.phone = False
     silenced = planned(
         tmp_path,
         source("p", "phone"),
         segment(file_id="p"),
+        config,
         overrides=ExportOverrides(no_audio=True),
     )
     assert silenced.audio is False
@@ -528,10 +544,13 @@ def test_a_precise_drone_command(tmp_path: Path) -> None:
 
 
 def test_a_fast_phone_command_copies_and_keeps_audio(tmp_path: Path) -> None:
+    config = AutocutConfig()
+    config.export.remove_audio.phone = False
     plan = planned(
         tmp_path,
         source("p", "phone", width=1920, height=1080),
         segment(file_id="p"),
+        config,
         overrides=ExportOverrides(fast=True),
     )
     command = build_export_command(plan)

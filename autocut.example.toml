@@ -76,6 +76,13 @@ hero_share = 0.1            # top share by score that gets the bonus
 hero_multiplier = 1.5
 alternate_durations = true  # break runs of three clips in the same bucket
 # target_total_seconds = 90.0   # scale every duration so the edit lands near this length
+# One spot on one outing gives at most a few clips, however different the pixels look.
+# Candidates without GPS belong to no place and are never held back by this.
+place_radius_m = 150.0          # two candidates this close share a place, transitively
+place_visit_gap_seconds = 7200.0  # a gap this long inside one place starts a new visit
+max_clips_per_place = 3
+max_candidate_share = 0.5   # ceiling on max_clips as a share of the eligible candidates
+
 snap_to_motion = true       # start the cut where movement begins
 snap_window_seconds = 0.5   # how far the start may move to reach a motion minimum
 snap_max_score_loss = 0.05  # mean score a snap may give up, as a share
@@ -133,11 +140,13 @@ pix_fmt = "yuv420p"
 vertical_strategy = "exclude"   # exclude | blur_pad | center_crop
 keep_rejects = false  # also export rejected segments into _rejects/
 
+# A default export is silent and the soundtrack carries the sound. Set a class to false
+# to keep its ambience.
 [export.remove_audio]
 drone = true
 actioncam = true
-phone = false
-reflex = false
+phone = true
+reflex = true
 generic = true
 
 # Half speed when the source runs at twice the target or more, by a whole ratio only,

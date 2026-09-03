@@ -75,3 +75,34 @@ def test_duration_settings_can_be_overridden_in_toml(tmp_path: Path) -> None:
     assert selection.duration_by_class.drone == 5.0
     # Settings not named in the file keep their defaults.
     assert selection.duration_min_seconds == 1.5
+
+
+def test_place_defaults_match_the_spec() -> None:
+    selection = AutocutConfig().selection
+    assert selection.place_radius_m == 150.0
+    assert selection.place_visit_gap_seconds == 7200.0
+    assert selection.max_clips_per_place == 3
+    assert selection.max_candidate_share == 0.5
+
+
+def test_every_class_is_silent_by_default() -> None:
+    """The soundtrack carries the sound, so a default export has no audio at all."""
+    remove_audio = AutocutConfig().export.remove_audio
+    for source_class in SOURCE_CLASSES:
+        assert remove_audio.get(source_class) is True
+
+
+def test_a_class_can_opt_back_into_its_ambience(tmp_path: Path) -> None:
+    toml = tmp_path / "autocut.toml"
+    toml.write_text(
+        "[export.remove_audio]\n"
+        "drone = true\n"
+        "actioncam = true\n"
+        "phone = false\n"
+        "reflex = true\n"
+        "generic = true\n",
+        encoding="utf-8",
+    )
+    remove_audio = AutocutConfig.load(toml).export.remove_audio
+    assert remove_audio.phone is False
+    assert remove_audio.drone is True

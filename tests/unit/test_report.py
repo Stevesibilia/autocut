@@ -15,6 +15,7 @@ from autocut.core.report import (
     duration_label,
     relative_asset,
     render_report,
+    resolve_held_by,
     timecode,
 )
 
@@ -482,3 +483,83 @@ def test_a_card_without_a_duration_shows_neither(project: Manifest) -> None:
     assert plain.duration_target_label is None
     assert plain.duration_reason is None
     assert plain.snapped is False
+
+
+def test_a_card_shows_its_place(project: Manifest) -> None:
+    out = Path(project.output_dir)
+    project.segments["a:1"].place_id = 2
+    project.segments["a:1"].visit_id = 5
+
+    html = render_report(project, out).read_text(encoding="utf-8")
+    assert "place 2" in html
+    assert 'data-place="2"' in html
+
+
+def test_a_held_back_card_names_the_clips_that_filled_the_visit(project: Manifest) -> None:
+    """The held back card scenario in specs/review-report: orders, not ids."""
+    out = Path(project.output_dir)
+    for index, segment_id in enumerate(("a:1", "b:0"), start=1):
+        chosen = project.segments[segment_id]
+        chosen.outcome = "selected"
+        chosen.order = index
+        chosen.place_id = 0
+        chosen.visit_id = 0
+    held = project.segments["c:0"]
+    held.place_id = 0
+    held.visit_id = 0
+    held.reason = "place_cap"
+    held.held_by = ["a:1", "b:0"]
+
+    cards = build_cards(project, out)
+    resolve_held_by(cards)
+    card = next(card for card in cards if card.id == "c:0")
+    assert card.held_by_label == "001, 002"
+
+    html = render_report(project, out).read_text(encoding="utf-8")
+    assert "Its place was filled by" in html
+    assert "place_cap" in html
+
+
+def test_a_held_back_card_falls_back_to_ids(project: Manifest) -> None:
+    """A winner with no order yet still has to be named, however plainly."""
+    out = Path(project.output_dir)
+    held = project.segments["c:0"]
+    held.held_by = ["a:1"]
+    cards = build_cards(project, out)
+    resolve_held_by(cards)
+    card = next(card for card in cards if card.id == "c:0")
+    assert card.held_by_label == "a:1"
+
+
+def test_the_header_lists_the_places(project: Manifest) -> None:
+    """The places listed scenario in specs/review-report."""
+    out = Path(project.output_dir)
+    project.segments["a:1"].place_id = 0
+    project.segments["a:1"].visit_id = 0
+    project.segments["a:1"].outcome = "selected"
+    project.segments["a:1"].order = 1
+    project.segments["b:0"].place_id = 0
+    project.segments["b:0"].visit_id = 1
+    project.segments["c:0"].place_id = 1
+    project.segments["c:0"].visit_id = 2
+
+    summary = build_summary(project, build_cards(project, out))
+    assert [place.place_id for place in summary.places] == [0, 1]
+    assert summary.places[0].visits == 2
+    assert summary.places[0].selected == 1
+    assert summary.places[0].segments == 2
+    assert summary.places[1].segments == 1
+
+    html = render_report(project, out).read_text(encoding="utf-8")
+    assert "Places" in html
+    assert "2 visits" in html
+
+
+def test_a_project_without_gps_has_no_place_filter(project: Manifest) -> None:
+    """Every synthetic clip but one has no position, and the control would be empty."""
+    out = Path(project.output_dir)
+    summary = build_summary(project, build_cards(project, out))
+    assert summary.places == []
+
+    html = render_report(project, out).read_text(encoding="utf-8")
+    assert 'id="place"' not in html

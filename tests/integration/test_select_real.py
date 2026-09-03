@@ -12,11 +12,14 @@ Sardinia set with the shipped defaults (`max_clips` 40, `diversity_lambda` 0.6,
 
     candidates                60 of 77 segments (actioncam 35, drone 21, phone 4)
       held back as vertical   2 phone candidates, under the exclude strategy
-    selected                  40 (actioncam 24, drone 14, phone 2)
+      eligible                58
+    places and visits         6 and 6, over the 25 candidates that carry GPS
+      held back by the cap    6 candidates, 4 in place 2 and 2 in place 3
+    selected, defaults        29 (actioncam 19, drone 9, phone 1), the ceiling binding
+    selected, --max-clips 40  40 (actioncam 24, drone 14, phone 2)
     clusters                  45 over the 60 candidates
       sizes                   36 singletons, 7 pairs, one of 3, one of 7
-    lost to a near duplicate  9 candidates
-    total duration            112.3 s (22 long, 18 short, 4 hero)
+    total duration            77.0 s with defaults, 111.1 s at 40 clips
     wall time                 0.46 s in process, 0.95 s through the CLI
 
     selection changes         lambda 0.0 to 0.6   4 of 40 clips differ
@@ -34,11 +37,18 @@ The class counts moved when export gained its vertical strategy: three of the fi
 phone files are display-vertical, so two of their candidates are held back and the
 drone and action cam take the freed slots. The durations are per clip since
 m3-durations, so the edit no longer runs to a round 120 s.
+
+Since m3-place-cap the default run is 29 clips rather than 40, because the candidate
+share ceiling binds at half of the 58 eligible candidates before `max_clips` does.
+That is one clip under the 30 to 50 band in SPEC.md section 1, and the band describes
+a folder of about 150 raw files where the ceiling would allow 65 and `max_clips` would
+bind first. `--max-clips 40` still reaches the band on this set.
 """
 
 from __future__ import annotations
 
 import collections
+import math
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -82,13 +92,43 @@ def classes_of(manifest: Manifest, outcome: str) -> collections.Counter[str]:
     )
 
 
-def test_selection_fills_the_cap_from_a_real_folder(
+def test_the_candidate_share_ceiling_binds_on_this_folder(
     project: tuple[Manifest, AutocutConfig],
 ) -> None:
-    """The success criterion in SPEC.md section 1 is 30 to 50 usable clips."""
+    """This set is half the size the success criterion in SPEC.md section 1 describes.
+
+    That criterion is 30 to 50 clips from about 150 raw files. Sardinia is 72 files
+    and 60 candidates, 58 of them eligible once the vertical phone clips are held
+    back, so the candidate share ceiling binds at 29 slots before `max_clips` of 40
+    ever does. Twenty-nine is one short of the criterion's floor, and deliberately:
+    forty slots for sixty candidates is a rejection list rather than a selection.
+    The floor applies to a folder twice this size, where 130 candidates give 65 slots
+    and `max_clips` binds first.
+    """
     manifest, config = project
     result = select_clips(manifest, config)
-    assert result.count == config.selection.max_clips
+    # Eligibility as the ceiling sees it, before the run marks anything: the vertical
+    # exclusion is decided up front, while `place_cap` is an outcome of selection and
+    # counting it here would measure the answer against itself.
+    eligible = sum(
+        1
+        for segment in manifest.segments.values()
+        if segment.outcome in ("candidate", "selected") and segment.reason != "vertical"
+    )
+    assert result.ceiling_applied
+    assert result.count == result.max_clips
+    assert result.max_clips == math.ceil(config.selection.max_candidate_share * eligible)
+    assert result.max_clips < config.selection.max_clips
+
+
+def test_an_explicit_max_clips_reaches_the_success_criterion(
+    project: tuple[Manifest, AutocutConfig],
+) -> None:
+    """The 30 to 50 band of SPEC.md section 1, which the flag still reaches here."""
+    manifest, config = project
+    result = select_clips(manifest, config, SelectionOverrides(max_clips=40))
+    assert not result.ceiling_applied
+    assert result.count == 40
     assert 30 <= result.count <= 50
 
 

@@ -78,6 +78,11 @@ class Card:
     duration_target_label: str | None
     duration_reason: str | None
     snapped: bool
+    place_id: int | None
+    place_label: str | None
+    visit_id: int | None
+    held_by: list[str]
+    held_by_label: str | None
     cluster_id: int | None
     lost_to: str | None
     similarity_label: str | None
@@ -91,6 +96,17 @@ class Card:
     sprite: str | None
     metrics: list[CardMetric] = field(default_factory=list)
     height_label: str | None = None
+
+
+@dataclass(slots=True)
+class PlaceSummary:
+    """One place in the header: how many visits it holds and how many clips it gave."""
+
+    place_id: int
+    label: str
+    visits: int
+    selected: int
+    segments: int
 
 
 @dataclass(slots=True)
@@ -114,6 +130,7 @@ class Summary:
     selected_label: str
     exported_count: int
     snapped_count: int
+    places: list[PlaceSummary]
     export_mode: str | None
     export_fps: float | None
     export_failed: int
@@ -126,6 +143,7 @@ class Summary:
 def render_report(manifest: Manifest, out_dir: Path) -> Path:
     """Write ``report.html`` into ``out_dir`` and return its path."""
     cards = build_cards(manifest, out_dir)
+    resolve_held_by(cards)
     summary = build_summary(manifest, cards)
     environment = Environment(
         loader=FileSystemLoader(TEMPLATE_DIR),
@@ -225,6 +243,11 @@ def _card(segment: Segment, source: SourceFile | None, index: int, out_dir: Path
         ),
         duration_reason=segment.duration_reason,
         snapped=segment.snapped,
+        place_id=segment.place_id,
+        place_label=f"place {segment.place_id}" if segment.place_id is not None else None,
+        visit_id=segment.visit_id,
+        held_by=list(segment.held_by),
+        held_by_label=None,
         cluster_id=segment.cluster_id,
         lost_to=segment.lost_to,
         similarity_label=similarity,
@@ -239,6 +262,46 @@ def _card(segment: Segment, source: SourceFile | None, index: int, out_dir: Path
         metrics=metrics,
         height_label=height,
     )
+
+
+def build_places(manifest: Manifest, cards: list[Card]) -> list[PlaceSummary]:
+    """The places the footage was shot at, in the order selection numbered them."""
+    visits: dict[int, set[int]] = {}
+    counts: Counter[int] = Counter()
+    chosen: Counter[int] = Counter()
+    for segment in manifest.segments.values():
+        if segment.place_id is None:
+            continue
+        counts[segment.place_id] += 1
+        if segment.visit_id is not None:
+            visits.setdefault(segment.place_id, set()).add(segment.visit_id)
+        if segment.outcome == "selected":
+            chosen[segment.place_id] += 1
+    return [
+        PlaceSummary(
+            place_id=place_id,
+            label=f"place {place_id}",
+            visits=len(visits.get(place_id, set())),
+            selected=chosen[place_id],
+            segments=counts[place_id],
+        )
+        for place_id in sorted(counts)
+    ]
+
+
+def resolve_held_by(cards: list[Card]) -> None:
+    """Name the clips that filled a visit by their edit order, not by their ids.
+
+    A card saying it lost to `a3f9c1:0` tells the reader nothing they can act on. The
+    same card saying it lost to clips 030, 031 and 032 points at three cards on the
+    same page.
+    """
+    orders = {card.id: card.order_label for card in cards if card.order_label}
+    for card in cards:
+        if not card.held_by:
+            continue
+        named = [orders.get(segment_id) or segment_id for segment_id in card.held_by]
+        card.held_by_label = ", ".join(named)
 
 
 def build_summary(manifest: Manifest, cards: list[Card]) -> Summary:
@@ -276,6 +339,7 @@ def build_summary(manifest: Manifest, cards: list[Card]) -> Summary:
         selected_label=duration_label(selected_seconds),
         exported_count=sum(1 for card in cards if card.exported_name),
         snapped_count=sum(1 for card in cards if card.snapped),
+        places=build_places(manifest, cards),
         export_mode=manifest.export.mode,
         export_fps=manifest.export.target_fps,
         export_failed=manifest.export.failed,

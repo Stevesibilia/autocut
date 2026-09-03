@@ -148,6 +148,21 @@ class Segment(BaseModel):
     caption: str | None = None
     embedding_ref: str | None = None
     cluster_id: int | None = None
+    place_id: int | None = Field(
+        default=None,
+        description="Which spot this was shot at, from GPS. Null when the file carries "
+        "no position, in which case no place cap applies to it.",
+    )
+    visit_id: int | None = Field(
+        default=None,
+        description="Which outing to that spot. The same beach on another day is a "
+        "different visit and gets its own clips.",
+    )
+    held_by: list[str] = Field(
+        default_factory=list,
+        description="Ids of the selected clips that filled this candidate's visit, so "
+        "the report can name what it lost to rather than only that it lost.",
+    )
     similarity_to_selected: float | None = Field(
         default=None,
         description="Highest similarity to any selected segment, so the report can "
@@ -204,6 +219,8 @@ class SelectionRun(BaseModel):
     diversity_lambda: float | None = None
     max_clips: int | None = None
     target_duration_s: float | None = None
+    places: int = 0
+    visits: int = 0
     total_duration_s: float | None = Field(
         default=None,
         description="Length of the edit, the sum of the selected clips' target durations. "

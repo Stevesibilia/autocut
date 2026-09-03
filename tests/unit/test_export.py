@@ -473,8 +473,8 @@ def test_a_real_clip_lands_at_the_exact_duration(synthetic_dir: Path, tmp_path: 
 
 
 @pytest.mark.ffmpeg
-def test_audio_follows_the_class(synthetic_dir: Path, tmp_path: Path) -> None:
-    """The drone silent, phone keeps ambience scenario in specs/clip-export."""
+def test_every_class_is_silent_by_default(synthetic_dir: Path, tmp_path: Path) -> None:
+    """The silent by default scenario in specs/clip-export, on a clip that has audio."""
     manifest = project(tmp_path)
     add_file(manifest, "d", "drone", path=synthetic_dir / "with_audio.mp4", minutes=0)
     add_file(manifest, "p", "phone", path=synthetic_dir / "with_audio.mp4", minutes=10)
@@ -482,6 +482,25 @@ def test_audio_follows_the_class(synthetic_dir: Path, tmp_path: Path) -> None:
     phone = add_segment(manifest, "p:0", "p", order=2)
 
     result = export_clips(manifest, one_worker(AutocutConfig()))
+
+    assert result.exported == 2, result.errors
+    assert drone.exported_path is not None and phone.exported_path is not None
+    assert "audio" not in probe_streams(drone.exported_path)
+    assert "audio" not in probe_streams(phone.exported_path)
+
+
+@pytest.mark.ffmpeg
+def test_a_class_can_opt_back_into_its_ambience(synthetic_dir: Path, tmp_path: Path) -> None:
+    """The drone silent, phone keeps ambience scenario in specs/clip-export."""
+    manifest = project(tmp_path)
+    add_file(manifest, "d", "drone", path=synthetic_dir / "with_audio.mp4", minutes=0)
+    add_file(manifest, "p", "phone", path=synthetic_dir / "with_audio.mp4", minutes=10)
+    drone = add_segment(manifest, "d:0", "d", order=1)
+    phone = add_segment(manifest, "p:0", "p", order=2)
+    config = one_worker(AutocutConfig())
+    config.export.remove_audio.phone = False
+
+    result = export_clips(manifest, config)
 
     assert result.exported == 2, result.errors
     assert drone.exported_path is not None and phone.exported_path is not None
@@ -494,8 +513,11 @@ def test_no_audio_silences_every_clip(synthetic_dir: Path, tmp_path: Path) -> No
     manifest = project(tmp_path)
     add_file(manifest, "p", "phone", path=synthetic_dir / "with_audio.mp4")
     phone = add_segment(manifest, "p:0", "p")
+    config = one_worker(AutocutConfig())
+    # The flag has to beat a class that opted back in, not just agree with the default.
+    config.export.remove_audio.phone = False
 
-    export_clips(manifest, one_worker(AutocutConfig()), overrides=ExportOverrides(no_audio=True))
+    export_clips(manifest, config, overrides=ExportOverrides(no_audio=True))
 
     assert phone.exported_path is not None
     assert "audio" not in probe_streams(phone.exported_path)

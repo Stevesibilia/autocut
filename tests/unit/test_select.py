@@ -94,6 +94,9 @@ def open_config() -> AutocutConfig:
     config = AutocutConfig()
     config.selection.min_temporal_gap_seconds = 0.0
     config.selection.max_clips_per_cluster = 99
+    config.selection.max_clips_per_place = 99
+    # The share ceiling would otherwise bound max_clips in every test that sets it.
+    config.selection.max_candidate_share = 1.0
     for name in ("drone", "actioncam", "phone", "reflex", "generic"):
         setattr(config.selection.max_clips_per_file, name, 99)
     return config
@@ -611,3 +614,294 @@ def test_a_horizontal_clip_is_never_excluded(
 
     assert selected_ids(manifest) == ["p:0"]
     assert manifest.segments["p:0"].reason is None
+
+
+def gps_file(
+    manifest: Manifest,
+    file_id: str,
+    minutes: float,
+    metres_north: float = 0.0,
+    source_class: str = "drone",
+) -> None:
+    """A file at a known offset from one bay, so places are exact rather than plausible."""
+    add_file(
+        manifest,
+        file_id,
+        source_class,
+        minutes=minutes,
+        gps=(39.9664 + metres_north / 111_320.0, 9.6850),
+    )
+
+
+def test_five_shots_one_visit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The scenario in specs/clip-selection, and the CapCut complaint that started it.
+
+    Five drone files at one spot inside eleven minutes. The visual hash split them
+    across clusters, so only a cap that asks where they were shot holds them back.
+    """
+    no_similarity(monkeypatch)
+    manifest = project(tmp_path)
+    for index in range(5):
+        gps_file(manifest, f"n{index}", minutes=index * 2.0, metres_north=index * 20.0)
+        add_segment(manifest, f"n{index}:0", f"n{index}", 0.9 - index * 0.01)
+    # Somewhere else entirely, so eligible candidates outside the visit remain.
+    for index in range(3):
+        gps_file(manifest, f"f{index}", minutes=600 + index, metres_north=5000.0)
+        add_segment(manifest, f"f{index}:0", f"f{index}", 0.5)
+
+    config = open_config()
+    config.selection.max_clips_per_place = 3
+    config.selection.max_clips = 6
+    select_clips(manifest, config)
+
+    near = [s for s in manifest.segments.values() if s.file_id.startswith("n")]
+    chosen = [s for s in near if s.outcome == "selected"]
+    held = [s for s in near if s.outcome == "candidate"]
+    assert len(chosen) == 3
+    assert len(held) == 2
+    for segment in held:
+        assert segment.reason == "place_cap"
+        assert sorted(segment.held_by) == sorted(s.id for s in chosen)
+
+
+def test_the_place_cap_is_lifted_last(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The scenario in specs/clip-selection: an edit short of clips is worse."""
+    no_similarity(monkeypatch)
+    manifest = project(tmp_path)
+    for index in range(5):
+        gps_file(manifest, f"n{index}", minutes=index * 2.0, metres_north=index * 20.0)
+        add_segment(manifest, f"n{index}:0", f"n{index}", 0.9 - index * 0.01)
+
+    config = open_config()
+    config.selection.max_clips_per_place = 3
+    config.selection.max_clips = 5
+    result = select_clips(manifest, config)
+
+    assert result.count == 5
+    assert result.relaxed_gap
+
+
+def test_a_candidate_without_gps_is_never_held_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Absence of GPS is absence of evidence, not evidence of a different place."""
+    no_similarity(monkeypatch)
+    manifest = project(tmp_path)
+    for index in range(4):
+        add_file(manifest, f"a{index}", "actioncam", minutes=index * 2.0)
+        add_segment(manifest, f"a{index}:0", f"a{index}", 0.9)
+
+    config = open_config()
+    config.selection.max_clips_per_place = 1
+    config.selection.max_clips = 4
+    select_clips(manifest, config)
+
+    assert len(selected_ids(manifest)) == 4
+    for segment in manifest.segments.values():
+        assert segment.place_id is None
+        assert segment.visit_id is None
+        assert segment.reason is None
+
+
+def test_two_visits_to_one_place_each_get_their_own_clips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    no_similarity(monkeypatch)
+    manifest = project(tmp_path)
+    for index in range(3):
+        gps_file(manifest, f"m{index}", minutes=index * 2.0)
+        add_segment(manifest, f"m{index}:0", f"m{index}", 0.9)
+    # The next day, same bay.
+    for index in range(3):
+        gps_file(manifest, f"t{index}", minutes=24 * 60 + index * 2.0)
+        add_segment(manifest, f"t{index}:0", f"t{index}", 0.9)
+
+    config = open_config()
+    config.selection.max_clips_per_place = 2
+    config.selection.max_clips = 4
+    result = select_clips(manifest, config)
+
+    assert result.places == 1
+    assert result.visits == 2
+    assert result.count == 4
+    morning = [s for s in manifest.segments.values() if s.file_id.startswith("m")]
+    assert sum(1 for s in morning if s.outcome == "selected") == 2
+
+
+def test_places_and_visits_are_recorded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    no_similarity(monkeypatch)
+    manifest = project(tmp_path)
+    gps_file(manifest, "a", minutes=0.0)
+    add_segment(manifest, "a:0", "a", 0.9)
+    gps_file(manifest, "b", minutes=30.0, metres_north=4000.0)
+    add_segment(manifest, "b:0", "b", 0.8)
+
+    result = select_clips(manifest, open_config())
+
+    assert result.places == 2
+    assert result.visits == 2
+    assert manifest.selection.places == 2
+    assert manifest.selection.visits == 2
+    assert manifest.segments["a:0"].place_id != manifest.segments["b:0"].place_id
+
+
+def test_the_place_mark_is_cleared_between_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The mark says what this configuration does, so a looser cap has to undo it."""
+    no_similarity(monkeypatch)
+    manifest = project(tmp_path)
+    for index in range(4):
+        gps_file(manifest, f"n{index}", minutes=index * 2.0)
+        add_segment(manifest, f"n{index}:0", f"n{index}", 0.9 - index * 0.01)
+    for index in range(2):
+        gps_file(manifest, f"f{index}", minutes=600 + index, metres_north=5000.0)
+        add_segment(manifest, f"f{index}:0", f"f{index}", 0.5)
+
+    config = open_config()
+    config.selection.max_clips_per_place = 2
+    config.selection.max_clips = 4
+    select_clips(manifest, config)
+    assert any(s.reason == "place_cap" for s in manifest.segments.values())
+
+    config.selection.max_clips_per_place = 99
+    select_clips(manifest, config)
+    assert all(s.reason != "place_cap" for s in manifest.segments.values())
+    assert all(not s.held_by for s in manifest.segments.values())
+
+
+def test_a_rejection_survives_the_place_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    no_similarity(monkeypatch)
+    manifest = project(tmp_path)
+    gps_file(manifest, "a", minutes=0.0)
+    add_segment(manifest, "a:0", "a", 0.1, outcome="rejected", reason="shaky")
+    gps_file(manifest, "b", minutes=2.0)
+    add_segment(manifest, "b:0", "b", 0.9)
+
+    select_clips(manifest, open_config())
+
+    assert manifest.segments["a:0"].outcome == "rejected"
+    assert manifest.segments["a:0"].reason == "shaky"
+
+
+# --- candidate share ceiling -------------------------------------------------
+
+
+def test_the_candidate_share_ceiling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The scenario in specs/clip-selection: 60 candidates, max_clips 40, share 0.5."""
+    no_similarity(monkeypatch)
+    manifest = project(tmp_path)
+    for index in range(60):
+        add_file(manifest, f"c{index}", "actioncam", minutes=index * 10.0)
+        add_segment(manifest, f"c{index}:0", f"c{index}", 0.5)
+
+    config = open_config()
+    config.selection.max_candidate_share = 0.5
+    config.selection.max_clips = 40
+    result = select_clips(manifest, config)
+
+    assert result.max_clips == 30
+    assert result.count == 30
+    assert result.ceiling_applied
+
+
+def test_an_explicit_max_clips_wins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The scenario in specs/clip-selection: the flag is the user overruling the ceiling."""
+    no_similarity(monkeypatch)
+    manifest = project(tmp_path)
+    for index in range(60):
+        add_file(manifest, f"c{index}", "actioncam", minutes=index * 10.0)
+        add_segment(manifest, f"c{index}:0", f"c{index}", 0.5)
+
+    config = open_config()
+    config.selection.max_candidate_share = 0.5
+    result = select_clips(manifest, config, SelectionOverrides(max_clips=40))
+
+    assert result.max_clips == 40
+    assert result.count == 40
+    assert not result.ceiling_applied
+
+
+def test_the_ceiling_does_not_bind_on_a_large_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    no_similarity(monkeypatch)
+    manifest = project(tmp_path)
+    for index in range(130):
+        add_file(manifest, f"c{index}", "actioncam", minutes=index * 10.0)
+        add_segment(manifest, f"c{index}:0", f"c{index}", 0.5)
+
+    config = open_config()
+    config.selection.max_candidate_share = 0.5
+    config.selection.max_clips = 40
+    result = select_clips(manifest, config)
+
+    assert result.max_clips == 40
+    assert not result.ceiling_applied
+
+
+def test_the_ceiling_rounds_up(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    no_similarity(monkeypatch)
+    manifest = project(tmp_path)
+    for index in range(9):
+        add_file(manifest, f"c{index}", "actioncam", minutes=index * 10.0)
+        add_segment(manifest, f"c{index}:0", f"c{index}", 0.5)
+
+    config = open_config()
+    config.selection.max_candidate_share = 0.5
+    config.selection.max_clips = 40
+    result = select_clips(manifest, config)
+
+    # Half of nine is 4.5, and the ceiling is a bound on slots, not a target.
+    assert result.max_clips == 5
+
+
+def test_clips_held_back_by_policy_do_not_count_towards_the_ceiling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A vertical clip cannot be exported, so it is not a slot the edit could use."""
+    no_similarity(monkeypatch)
+    manifest = project(tmp_path)
+    for index in range(10):
+        add_file(manifest, f"c{index}", "actioncam", minutes=index * 10.0)
+        add_segment(manifest, f"c{index}:0", f"c{index}", 0.5)
+    for index in range(10):
+        vertical_file(manifest, f"v{index}", minutes=1000 + index * 10.0)
+        add_segment(manifest, f"v{index}:0", f"v{index}", 0.5)
+
+    config = open_config()
+    config.selection.max_candidate_share = 0.5
+    config.selection.max_clips = 40
+    config.export.vertical_strategy = "exclude"
+    result = select_clips(manifest, config)
+
+    # Ten eligible candidates, not twenty.
+    assert result.max_clips == 5
+
+
+def test_a_lifted_cap_does_not_blame_the_place(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A visit that went over the cap is one where the cap was lifted, not enforced.
+
+    The candidates that still missed out lost on score like any other, so putting
+    `place_cap` on their cards would name the wrong reason.
+    """
+    no_similarity(monkeypatch)
+    manifest = project(tmp_path)
+    for index in range(6):
+        gps_file(manifest, f"n{index}", minutes=index * 2.0, metres_north=index * 20.0)
+        add_segment(manifest, f"n{index}:0", f"n{index}", 0.9 - index * 0.01)
+
+    config = open_config()
+    config.selection.max_clips_per_place = 3
+    config.selection.max_clips = 5
+    result = select_clips(manifest, config)
+
+    assert result.count == 5
+    assert result.held_by_place == 0
+    for segment in manifest.segments.values():
+        assert segment.reason != "place_cap"
+        assert not segment.held_by

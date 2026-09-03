@@ -92,6 +92,15 @@ def test_drone_takeoff_is_split_out_and_rejected(synthetic_dir: Path, tmp_path: 
     assert takeoff.reason == "low_altitude"
     assert cruise.outcome == "candidate"
     assert cruise.reason is None
+
+    # The boundary sample at t = 3.0 belongs to the cruise, not to the takeoff it was
+    # split away from, so the aggregate must not carry the takeoff height across.
+    assert takeoff.metrics is not None
+    assert cruise.metrics is not None
+    # The takeoff span is 0.0 to 3.0 but the drone head trim starts it at 1.0, so its
+    # lowest measured height is the sample at t = 1.0 rather than the one at t = 0.0.
+    assert takeoff.metrics.min_height_m == pytest.approx(1.0)
+    assert cruise.metrics.min_height_m == pytest.approx(25.0)
     # The drone tail trim of 1.0 s ends the usable part of the file at 5.0 s, so the
     # descent span is emptied by the trim and the length rule fires before altitude.
     assert descent.outcome == "rejected"

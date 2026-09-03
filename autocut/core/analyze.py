@@ -335,15 +335,18 @@ def _aggregate(
             return 0.0
         return float(values[indices].mean())
 
+    # Half open, exactly like rules.segment_heights and the altitude split. A boundary
+    # sample describes the span that starts there; counting it on both sides would make
+    # a cruise segment report the takeoff height it was split away from.
     heights = [
         sample.height_m
         for sample in telemetry
-        if sample.height_m is not None and span[0] <= sample.time_s <= span[1]
+        if sample.height_m is not None and span[0] <= sample.time_s < span[1]
     ]
     speeds = [
         sample.speed_h_ms
         for sample in telemetry
-        if sample.speed_h_ms is not None and span[0] <= sample.time_s <= span[1]
+        if sample.speed_h_ms is not None and span[0] <= sample.time_s < span[1]
     ]
     return Metrics(
         sharpness=mean("sharpness"),

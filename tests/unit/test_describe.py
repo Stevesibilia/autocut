@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -30,20 +31,30 @@ JPEG = b"\xff\xd8\xff\xe0 thumbnail \xff\xd9"
 
 
 class FakeProvider:
-    """Replays answers in order, remembering what it was asked."""
+    """Replays answers in order, remembering what it was asked.
+
+    The describe step calls this from a thread pool, so the queue is popped under a
+    lock. Without one two threads can take the same answer or leave the list torn, and
+    the test would fail for a reason that has nothing to do with the code under test.
+
+    Which segment gets which answer is still up to the scheduler. A test whose
+    assertion depends on that mapping has to set ``max_concurrency`` to 1.
+    """
 
     def __init__(self, answers: list[Description | ProviderError]) -> None:
         self.model = "fake/vision"
         self.answers = answers
         self.calls: list[tuple[bytes, list[str], str | None]] = []
+        self._lock = threading.Lock()
 
     def describe_frame(
         self, jpeg: bytes, labels: list[str], correction: str | None = None
     ) -> Description | ProviderError:
-        self.calls.append((jpeg, labels, correction))
-        if not self.answers:
-            raise AssertionError("the describe step asked for more answers than were queued")
-        return self.answers.pop(0)
+        with self._lock:
+            self.calls.append((jpeg, labels, correction))
+            if not self.answers:
+                raise AssertionError("the describe step asked for more answers than were queued")
+            return self.answers.pop(0)
 
 
 def good(
@@ -156,11 +167,16 @@ def test_an_invalid_answer_earns_one_correction(tmp_path: Path) -> None:
 
 
 def test_prose_twice_is_a_failure_and_the_run_continues(tmp_path: Path) -> None:
+    # One request in flight, because the assertion below is about which segment failed
+    # and which one succeeded. With the default concurrency both go to the pool in one
+    # batch and the scheduler decides who gets the prose.
+    config = config_in(tmp_path)
+    config.providers.max_concurrency = 1
     manifest = project_in(tmp_path, count=2)
     prose = Description(model="fake/vision", cost_usd=0.0002, raw="I cannot")
     provider = FakeProvider([prose, prose, good()])
 
-    result = describe_project(manifest, config_in(tmp_path), provider)
+    result = describe_project(manifest, config, provider)
 
     assert result.failed == 1
     assert result.described == 1
@@ -297,6 +313,7 @@ def test_one_success_resets_the_failure_run(tmp_path: Path) -> None:
 
 
 def test_the_cost_of_every_answer_is_summed(tmp_path: Path) -> None:
+    """Order independent on purpose: the sum is the claim, not who paid which part."""
     manifest = project_in(tmp_path, count=3)
     answers = [good(), good(), good()]
     for index, answer in enumerate(answers):

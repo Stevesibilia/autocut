@@ -469,10 +469,10 @@ Tests run in Docker on Linux (`compose.yaml`, `python:3.12` image with ffmpeg). 
 
 ## 15. Roadmap
 
-- **M0, foundation.** This spec, ADRs, repository skeleton, config and manifest schemas, Docker dev setup, CI, synthetic fixture generator.
-- **M1, ingest and analysis.** Scan, probe, proxy discovery, telemetry adapters (DJI embedded subtitle first), classification, classic metrics, manifest, global cache. Output: `report.html` only. Verifies scoring on real footage before building on it.
-- **M2, selection and export.** Best window, rejection rules, deduplication with classic signals, cutting, normalization, naming. The tool is useful from here.
-- **M3, embeddings and diversity.** CLIP or SigLIP, semantic similarity, greedy selection with penalty, tagging (local and cloud), captions.
+- **M0, foundation** (done 2026-09-03). This spec, ADRs, repository skeleton, config and manifest schemas, Docker dev setup, CI, synthetic fixture generator.
+- **M1, ingest and analysis** (done 2026-09-03). Scan, probe, proxy discovery, telemetry adapters (DJI embedded subtitle first), classification, classic metrics, manifest, global cache. Output: `report.html` only. Verifies scoring on real footage before building on it.
+- **M2, selection and export** (done 2026-09-03, plus per-clip durations and the place cap on 2026-09-03). Best window, rejection rules, deduplication with classic signals, cutting, normalization, naming. The tool is useful from here.
+- **M3, embeddings and diversity** (done 2026-09-04; the live cloud validation run is pending the user's key). CLIP or SigLIP, semantic similarity, greedy selection with penalty, tagging (local and cloud), captions.
 - **M4, soundtrack.** Template prompt, validation, variants, optional LLM refinement. Beat tracking, beat durations, BPM check, `beatmap.txt`.
 - **M4b, remaining AI.** Aesthetic scoring, face detection.
 - **M5, GUI.** Five screens on the existing core.

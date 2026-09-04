@@ -1,0 +1,271 @@
+"""Watching one clip, and moving its in and out points.
+
+Playback is a convenience; the decision is the point. So the panel is built to be
+useful without a working codec: the sprite strip and the bounds sliders answer "is
+this the moment" on their own, and the video appears above them when the platform can
+decode the file. HEVC 10-bit from a drone plays on macOS and often does not on Linux
+(design note), and a panel that is empty in that case would make the screen useless
+on the machine this is developed on.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSlider,
+    QVBoxLayout,
+    QWidget,
+)
+
+from autocut.core.manifest import Segment
+from autocut.gui.state import ProjectState
+from autocut.gui.widgets.scrubber import StripCache
+
+#: Bounds are integers in a slider, seconds in the manifest. A millisecond step is
+#: finer than the sampling grid, which is what the values are snapped to anyway.
+MS = 1000
+
+
+def snap(value: float, sample_fps: float) -> float:
+    """The nearest instant the analysis sampled. The unit of a bound is a sampled frame."""
+    if sample_fps <= 0:
+        return value
+    return round(value * sample_fps) / sample_fps
+
+
+class PreviewPanel(QWidget):
+    """The current clip: a picture, a scrub bar, and the two bounds.
+
+    ``QMediaPlayer`` is created on demand and only when the platform reports it can
+    play the file, so a machine without the codecs shows the strip and the bounds
+    rather than a black rectangle and a silent failure.
+    """
+
+    bounds_committed = Signal(str, object)
+    """Segment id and either a ``(start, end)`` tuple or ``None`` to clear."""
+
+    def __init__(self, state: ProjectState, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._state = state
+        self._segment_id = ""
+        self._strips = StripCache(self)
+
+        self.title = QLabel("Nothing selected")
+        self.title.setStyleSheet("font-weight: 600;")
+        self.frame = QLabel()
+        self.frame.setMinimumHeight(180)
+        self.frame.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.frame.setStyleSheet("background: #222; color: #999;")
+        self.frame.setText("no preview")
+
+        self.scrub = QSlider(Qt.Orientation.Horizontal)
+        self.scrub.setRange(0, MS)
+        self.scrub.valueChanged.connect(self._scrubbed)
+
+        self.start_slider = QSlider(Qt.Orientation.Horizontal)
+        self.end_slider = QSlider(Qt.Orientation.Horizontal)
+        for slider in (self.start_slider, self.end_slider):
+            slider.setRange(0, MS)
+            slider.sliderReleased.connect(self._commit_bounds)
+        self.start_slider.valueChanged.connect(self._bounds_moved)
+        self.end_slider.valueChanged.connect(self._bounds_moved)
+
+        self.bounds_label = QLabel("")
+        self.note = QLabel("")
+        self.note.setWordWrap(True)
+        self.note.setStyleSheet("color: palette(mid);")
+
+        self.clear_button = QPushButton("Use the automatic window")
+        self.clear_button.clicked.connect(self._clear_bounds)
+        self.play_button = QPushButton("Play")
+        self.play_button.clicked.connect(self._play)
+
+        buttons = QHBoxLayout()
+        buttons.addWidget(self.play_button)
+        buttons.addWidget(self.clear_button)
+        buttons.addStretch(1)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.title)
+        layout.addWidget(self.frame, 1)
+        layout.addWidget(QLabel("Scrub"))
+        layout.addWidget(self.scrub)
+        layout.addWidget(QLabel("In"))
+        layout.addWidget(self.start_slider)
+        layout.addWidget(QLabel("Out"))
+        layout.addWidget(self.end_slider)
+        layout.addWidget(self.bounds_label)
+        layout.addLayout(buttons)
+        layout.addWidget(self.note)
+
+        self._player: object | None = None
+        self.show_segment("")
+
+    # --- what is on screen -------------------------------------------------
+
+    @property
+    def segment_id(self) -> str:
+        return self._segment_id
+
+    def show_segment(self, segment_id: str) -> None:
+        """Point the panel at a segment, or clear it with an empty id."""
+        self._segment_id = segment_id
+        segment = self._state.segment(segment_id) if segment_id else None
+        enabled = segment is not None
+        for widget in (
+            self.scrub,
+            self.start_slider,
+            self.end_slider,
+            self.clear_button,
+            self.play_button,
+        ):
+            widget.setEnabled(enabled)
+        if segment is None:
+            self.title.setText("Nothing selected")
+            self.frame.setText("no preview")
+            self.bounds_label.clear()
+            self.note.clear()
+            return
+
+        source = self._state.manifest.files.get(segment.file_id) if self._state.manifest else None
+        name = Path(source.path).name if source is not None else segment.file_id
+        self.title.setText(f"{name}  {segment.start_s:.1f} to {segment.end_s:.1f} s")
+        self._span = _trimmed(segment)
+        start, end = segment.effective_bounds
+        for slider, value in ((self.start_slider, start), (self.end_slider, end)):
+            slider.blockSignals(True)
+            slider.setValue(self._to_slider(value))
+            slider.blockSignals(False)
+        self.scrub.blockSignals(True)
+        self.scrub.setValue(self._to_slider(segment.effective_center))
+        self.scrub.blockSignals(False)
+        self._update_bounds_label()
+        self._show_frame(self.scrub.value() / MS)
+        self.note.setText(
+            "In and out snap to the sampling grid, which is the finest position the "
+            "analysis measured."
+        )
+
+    # --- the picture -------------------------------------------------------
+
+    def _show_frame(self, fraction: float) -> None:
+        segment = self._state.segment(self._segment_id)
+        manifest = self._state.manifest
+        if segment is None or manifest is None:
+            return
+        strip = self._strips.strip(manifest, segment, self._state.config)
+        if strip is None:
+            self.frame.setText("no strip for this clip; run the analysis with sprites on")
+            return
+        pixmap = strip.frame_at(fraction)
+        if pixmap.isNull():
+            self.frame.setText("no preview")
+            return
+        self.frame.setPixmap(
+            pixmap.scaled(
+                self.frame.width(),
+                self.frame.height(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
+    def _scrubbed(self, value: int) -> None:
+        self._show_frame(value / MS)
+
+    def _play(self) -> None:
+        """Try the platform's player, and say plainly when it cannot help.
+
+        Nothing is imported until the button is pressed: ``QtMultimedia`` pulls in the
+        platform's media stack, which is a slow import and, on a machine without the
+        codecs, a noisy one.
+        """
+        segment = self._state.segment(self._segment_id)
+        manifest = self._state.manifest
+        if segment is None or manifest is None:
+            return
+        source = manifest.files.get(segment.file_id)
+        if source is None:
+            return
+        try:
+            from PySide6.QtMultimedia import QMediaPlayer
+        except ImportError:
+            self.note.setText(
+                "Playback needs the Qt multimedia module, which this build does not "
+                "have. The strip above is the clip, frame by frame."
+            )
+            return
+        path = Path(source.proxy_path or source.path)
+        if not path.exists():
+            self.note.setText(f"{path} is not where the manifest says it is.")
+            return
+        player = self._player if isinstance(self._player, QMediaPlayer) else QMediaPlayer(self)
+        self._player = player
+        from PySide6.QtCore import QUrl
+
+        player.setSource(QUrl.fromLocalFile(str(path)))
+        player.setPosition(int(segment.effective_bounds[0] * 1000))
+        player.play()
+        self.note.setText(
+            "Playing from the in point. If nothing appears, the platform has no decoder "
+            "for this file and the strip above is the clip."
+        )
+
+    # --- the bounds --------------------------------------------------------
+
+    def _to_slider(self, seconds: float) -> int:
+        start, end = self._span
+        span = max(end - start, 1e-6)
+        return int(round((seconds - start) / span * MS))
+
+    def _from_slider(self, value: int) -> float:
+        start, end = self._span
+        return start + (end - start) * value / MS
+
+    def bounds(self) -> tuple[float, float]:
+        """The two bounds as seconds, snapped, in order."""
+        sample_fps = self._state.config.analysis.sample_fps
+        start = snap(self._from_slider(self.start_slider.value()), sample_fps)
+        end = snap(self._from_slider(self.end_slider.value()), sample_fps)
+        return (start, end) if end > start else (end, start)
+
+    def _bounds_moved(self) -> None:
+        self._update_bounds_label()
+        self._show_frame(self.start_slider.value() / MS)
+
+    def _update_bounds_label(self) -> None:
+        start, end = self.bounds()
+        self.bounds_label.setText(f"in {start:.2f} s, out {end:.2f} s, {end - start:.2f} s long")
+
+    def _commit_bounds(self) -> None:
+        """Save the drag. A span shorter than one sampled frame is a slip, not a decision."""
+        if not self._segment_id:
+            return
+        start, end = self.bounds()
+        sample_fps = self._state.config.analysis.sample_fps
+        step = 1.0 / sample_fps if sample_fps > 0 else 0.0
+        if end - start <= step:
+            self.note.setText("That is shorter than one sampled frame, so it was not saved.")
+            return
+        self.bounds_committed.emit(self._segment_id, (start, end))
+
+    def _clear_bounds(self) -> None:
+        if self._segment_id:
+            self.bounds_committed.emit(self._segment_id, None)
+
+
+def _trimmed(segment: Segment) -> tuple[float, float]:
+    """The span the sliders move in: the trim, not the hand set bounds.
+
+    A bound has to be draggable back out again, so the range is the shot as the trim
+    left it, even when the reviewer has already narrowed it.
+    """
+    start = segment.trimmed_start_s if segment.trimmed_start_s is not None else segment.start_s
+    end = segment.trimmed_end_s if segment.trimmed_end_s is not None else segment.end_s
+    return start, max(end, start + 1e-6)

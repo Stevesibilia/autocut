@@ -32,6 +32,7 @@ from autocut.core.manifest import Manifest
 from autocut.gui.screens.analysis import AnalysisScreen
 from autocut.gui.screens.placeholder import PlaceholderScreen
 from autocut.gui.screens.project import ProjectScreen
+from autocut.gui.screens.review import ReviewScreen
 from autocut.gui.settings import SettingsDialog
 from autocut.gui.state import ProjectState
 
@@ -94,11 +95,7 @@ class MainWindow(QMainWindow):
         self.screens: dict[str, QWidget] = {
             "project": ProjectScreen(self.state),
             "analysis": AnalysisScreen(self.state),
-            "review": PlaceholderScreen(
-                "Review",
-                "The clip grid, the score sliders and the live reordering arrive with "
-                "m5-gui-review.",
-            ),
+            "review": ReviewScreen(self.state),
             "soundtrack": PlaceholderScreen(
                 "Soundtrack",
                 "The prompt, its variants and the beat sync arrive with m5-gui-soundtrack-export.",

@@ -10,6 +10,12 @@ All notable changes to this project are documented in this file. The format foll
 - The settings dialog: cloud toggle, API key through the OS keychain, hardware decoder, worker count, cache folder and size, the four scoring weights, maximum clips and diversity, written into `autocut.toml` beside the manifest so the CLI sees the same values.
 - The `gui` extra pinned to PySide6 6.11.2, a `dev-gui` extra for `pytest-qt`, a `gui` Docker target running Qt offscreen, `make docker-test-gui` and a `gui` CI job. A `gui` pytest marker skips these tests when PySide6 is absent.
 
+- User decisions in the core: a segment can be kept or rejected by hand, and can carry hand set in and out points. A keep is selected before the class shares and the greedy loop and is never dropped for a cap; a reject is ineligible and does not count towards the candidate ceiling; hand set bounds replace the searched window and the assigned duration with the reason `user`, are what beat sync quantises inside and what export cuts. `autocut select`, `autocut export` and `autocut sync` honour them and the report shows them.
+- The Review screen: a card grid sortable by chronology or score, hover scrubbing over the sprite strip, keep and reject by click or keyboard with an undo stack, a preview with in and out points snapped to the sampling grid, filters by class, tag, place, outcome, rejection reason and score range, a toggle for the clips the rules rejected, weight and diversity sliders that re-score and re-select live, a similar-groups view of clusters and visits where one click swaps the pick, a header counting the edit project wide, and Export report.
+- `thumbs.sprite_for_segment` builds one segment's strip from the cache without decoding video, so a project whose `thumbs/` was cleaned scrubs again on the first hover.
+- `score.rescore` recomputes every segment's score from the metrics in the manifest, which is what a weight slider needs and what the CLI can now reuse.
+- `gui.slider_debounce_ms` (250), `gui.reselect_worker_threshold` (300) and `gui.grid_thumbnail_px` (196).
+
 ### Added
 
 - Project specification in English with the decisions from the 2026-09-03 review.
@@ -59,6 +65,9 @@ All notable changes to this project are documented in this file. The format foll
 - Beat sync: `autocut sync --audio <track>` decodes the track through ffmpeg, measures its beat grid, rounds every selected clip to a whole number of beats, stores final bounds centred on the best window and snapped to the sampling grid, and writes `beatmap.txt`. Export cuts to those bounds. A span with no sampled instant that holds the window keeps the shot's own bound and records that the grid was out of reach; a span too short for even the smallest multiple gives the clip its length, no beat count and the reason `clamped`. Measured on the Sardinia edit, all 29 clips land exactly on the beat where 4 of 29 did before.
 - The BPM comparison names a drifted track and spots the half and double tempo cases, offering the `--bpm` flag that fixes them. Sync runs without the soundtrack step and says the comparison was skipped.
 - The review report shows each clip's beat count beside its duration and a header panel with the measured BPM, the comparison and a link to the beat map.
+
+- `read_entry` no longer decompresses the sprite strips unless asked, and selection asks it not to. The strips are most of the bytes in an entry and selection never looks at them: on the Sardinia project this took a re-selection, which is what every slider move costs, from 1.5 s to 485 ms.
+- The review grid keeps the cursor on the clip it was on across the model reset that every re-selection causes, so working down the grid with the keyboard is possible.
 
 ### Changed
 

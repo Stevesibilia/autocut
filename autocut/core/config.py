@@ -338,30 +338,253 @@ class SimilarityConfig(BaseModel):
     )
 
 
+EnergyBand = Literal["low", "mid", "high"]
+TimeOfDay = Literal["morning", "daytime", "evening", "night"]
+
+
+class GenreWhen(BaseModel):
+    """What has to be true of an edit for a genre row to apply.
+
+    Every field is optional and an absent field is not a condition. A row with an empty
+    ``when`` matches anything, which is what makes the last row a default.
+    """
+
+    tags_any: list[str] = Field(
+        default_factory=list, description="At least one of these tags is on the edit."
+    )
+    tags_dominant: list[str] = Field(
+        default_factory=list, description="The edit's dominant tag is one of these."
+    )
+    class_min_share: dict[SourceClass, float] = Field(
+        default_factory=dict, description="Each named class holds at least this share."
+    )
+    energy: list[EnergyBand] = Field(default_factory=list)
+    time_of_day: list[TimeOfDay] = Field(default_factory=list)
+    region_any: list[str] = Field(
+        default_factory=list,
+        description="A place region contains one of these, case insensitively. Needs "
+        "geocoding to have run.",
+    )
+
+
+class GenreRow(BaseModel):
+    """One row of the genre table: when it applies and what it asks the model for."""
+
+    name: str
+    genre: str
+    instruments: list[str] = Field(
+        description="Adjective plus instrument, as Suno wants them: 'twangy guitar', "
+        "never 'guitar'. Two or three."
+    )
+    bpm: tuple[int, int]
+    mood: list[str]
+    when: GenreWhen = GenreWhen()
+    mood_alternates: list[str] = Field(
+        default_factory=list, description="Swapped in to make a variant differ in mood."
+    )
+    instrument_alternates: list[str] = Field(
+        default_factory=list, description="Swapped in to make a variant differ in sound."
+    )
+
+
+#: Ordered specific to general, first match wins, the default last. Seeded from the
+#: user's own list of genres. These are data: editing a row needs no code change, and
+#: the report says which row matched so a surprising choice can be traced to one line.
+DEFAULT_GENRE_ROWS: tuple[GenreRow, ...] = (
+    GenreRow(
+        name="surf rock",
+        genre="surf rock",
+        instruments=["twangy reverb guitar", "driving drums", "warm bass"],
+        bpm=(120, 140),
+        mood=["sunny", "carefree"],
+        mood_alternates=["breezy", "playful"],
+        instrument_alternates=["shimmering tremolo guitar"],
+        when=GenreWhen(tags_dominant=["beach"], tags_any=["underwater"], energy=["mid", "high"]),
+    ),
+    GenreRow(
+        name="pop punk",
+        genre="pop punk",
+        instruments=["crunchy guitar", "fast drums", "punchy bass"],
+        bpm=(150, 175),
+        mood=["restless", "bright"],
+        mood_alternates=["urgent", "giddy"],
+        instrument_alternates=["chugging guitar"],
+        when=GenreWhen(class_min_share={"actioncam": 0.6}, energy=["high"]),
+    ),
+    GenreRow(
+        name="reggae and dub",
+        genre="reggae dub",
+        instruments=["skanking guitar", "deep dub bass", "loose drums"],
+        bpm=(70, 90),
+        mood=["hazy", "unhurried"],
+        mood_alternates=["drowsy", "warm"],
+        instrument_alternates=["spring reverb guitar"],
+        when=GenreWhen(tags_dominant=["beach"], energy=["low"]),
+    ),
+    GenreRow(
+        name="funk and disco",
+        genre="funk disco",
+        instruments=["wah guitar", "slap bass", "tight drums"],
+        bpm=(110, 125),
+        mood=["joyful", "strutting"],
+        mood_alternates=["giddy", "glittering"],
+        instrument_alternates=["funky clavinet"],
+        when=GenreWhen(tags_dominant=["people", "food"], energy=["high"]),
+    ),
+    GenreRow(
+        name="acoustic and ukulele pop",
+        genre="acoustic pop",
+        instruments=["warm ukulele", "brushed drums", "soft acoustic guitar"],
+        bpm=(95, 115),
+        mood=["tender", "domestic"],
+        mood_alternates=["gentle", "nostalgic"],
+        instrument_alternates=["muted upright bass"],
+        when=GenreWhen(tags_dominant=["people", "food"], energy=["low", "mid"]),
+    ),
+    GenreRow(
+        name="italian and mediterranean folk",
+        genre="mediterranean folk",
+        instruments=["nylon string guitar", "hand percussion", "wheezing accordion"],
+        bpm=(100, 120),
+        mood=["sunlit", "convivial"],
+        mood_alternates=["languid", "festive"],
+        instrument_alternates=["bright mandolin"],
+        when=GenreWhen(
+            tags_dominant=["city", "street"],
+            region_any=["sardegna", "sardinia", "italia", "italy"],
+        ),
+    ),
+    GenreRow(
+        name="americana",
+        genre="americana",
+        instruments=["slide guitar", "loping drums", "upright bass"],
+        bpm=(95, 115),
+        mood=["wide", "wistful"],
+        mood_alternates=["dusty", "hopeful"],
+        instrument_alternates=["weeping pedal steel"],
+        when=GenreWhen(class_min_share={"drone": 0.5}, energy=["mid"]),
+    ),
+    GenreRow(
+        name="cinematic ambient and post-rock",
+        genre="cinematic post-rock",
+        instruments=["sweeping strings", "soft piano", "swelling guitar"],
+        bpm=(75, 95),
+        mood=["vast", "still"],
+        mood_alternates=["solemn", "weightless"],
+        instrument_alternates=["bowed guitar"],
+        when=GenreWhen(class_min_share={"drone": 0.5}, energy=["low"]),
+    ),
+    GenreRow(
+        name="country",
+        genre="country",
+        instruments=["twangy guitar", "shuffling drums", "walking bass"],
+        bpm=(100, 120),
+        mood=["easygoing", "open"],
+        mood_alternates=["homespun", "rolling"],
+        instrument_alternates=["sawing fiddle"],
+        when=GenreWhen(tags_dominant=["mountain", "street"], energy=["mid"]),
+    ),
+    GenreRow(
+        name="rock",
+        genre="rock",
+        instruments=["distorted guitar", "heavy drums", "driving bass"],
+        bpm=(120, 145),
+        mood=["bold", "propulsive"],
+        mood_alternates=["gritty", "elated"],
+        instrument_alternates=["overdriven guitar"],
+        when=GenreWhen(energy=["high"]),
+    ),
+    GenreRow(
+        name="indie pop",
+        genre="indie pop",
+        instruments=["chiming guitar", "crisp drums", "round bass"],
+        bpm=(105, 125),
+        mood=["bright", "wandering"],
+        mood_alternates=["dreamy", "buoyant"],
+        instrument_alternates=["twinkling glockenspiel"],
+        when=GenreWhen(energy=["mid"]),
+    ),
+    GenreRow(
+        name="upbeat folk",
+        genre="upbeat folk",
+        instruments=["strummed acoustic guitar", "stomping percussion", "warm bass"],
+        bpm=(100, 120),
+        mood=["cheerful", "easy"],
+        mood_alternates=["sunny", "companionable"],
+        instrument_alternates=["rolling banjo"],
+    ),
+)
+
+#: The section words Suno accepts. In configuration because the rules are Suno's and
+#: they change without asking us.
+DEFAULT_ALLOWED_SECTIONS: tuple[str, ...] = (
+    "intro",
+    "verse",
+    "verse 1",
+    "verse 2",
+    "verse 3",
+    "pre-chorus",
+    "chorus",
+    "bridge",
+    "solo",
+    "break",
+    "drop",
+    "build",
+    "transition",
+    "outro",
+    "end",
+)
+
+
+class TimeOfDayBands(BaseModel):
+    """Hour ranges, local time, half open. Anything outside them is night."""
+
+    morning: tuple[int, int] = (5, 9)
+    daytime: tuple[int, int] = (9, 17)
+    evening: tuple[int, int] = (17, 21)
+
+
 class SoundtrackConfig(BaseModel):
-    variants: int = 3
+    variants: int = Field(default=3, ge=1, le=5)
     bpm_tolerance: float = 3.0
-    beat_multiples: list[int] = Field(default_factory=lambda: [2, 4, 8])
+    beat_multiples: list[int] = Field(
+        default_factory=lambda: [2, 4, 8],
+        description="A clip length is on the grid when it is this many beats long.",
+    )
     alternate_durations: bool = True
-    genres: dict[str, dict[str, str]] = Field(
-        default_factory=lambda: {
-            "aerial_landscape": {
-                "genre": "cinematic ambient",
-                "instruments": "sweeping strings, soft piano",
-                "bpm_range": "80-100",
-            },
-            "beach_family": {
-                "genre": "indie folk",
-                "instruments": "acoustic guitar, warm ukulele",
-                "bpm_range": "100-120",
-            },
-            "action_water": {
-                "genre": "tropical house",
-                "instruments": "plucked synth, deep bass",
-                "bpm_range": "115-125",
-            },
-        },
-        description="Placeholder genre table, tune to taste.",
+    refine: bool = Field(
+        default=True,
+        description="Ask the text model to polish the template prompt when cloud is "
+        "enabled. The validator still decides, so a refusal costs one request.",
+    )
+    description_max_chars: int = Field(default=200, ge=40)
+    allowed_sections: list[str] = Field(default_factory=lambda: list(DEFAULT_ALLOWED_SECTIONS))
+    energy_bands: tuple[float, float] = Field(
+        default=(0.34, 0.67),
+        description="Where the normalized energy curve turns from low to mid and from mid to high.",
+    )
+    time_of_day: TimeOfDayBands = TimeOfDayBands()
+    default_profile: str = Field(
+        default="upbeat folk",
+        description="The row used when no row's conditions match. Named rather than "
+        "positional so reordering the table cannot change the fallback by accident.",
+    )
+    genres: list[GenreRow] = Field(default_factory=lambda: list(DEFAULT_GENRE_ROWS))
+
+
+class PlacesConfig(BaseModel):
+    geocode: bool = Field(
+        default=True,
+        description="Reverse geocode place centroids through Nominatim, once each and "
+        "cached forever. False keeps places numeric and makes the run fully offline.",
+    )
+    user_agent: str | None = Field(
+        default=None,
+        description="Overrides the default 'autocut/<version>'. Nominatim requires a "
+        "real one and blocks anonymous clients.",
+    )
+    min_interval_s: float = Field(
+        default=1.0, ge=0.0, description="Nominatim's usage policy asks for one request a second."
     )
 
 
@@ -451,6 +674,13 @@ class ProvidersConfig(BaseModel):
 
 class CacheConfig(BaseModel):
     dir: Path | None = Field(default=None, description="Defaults to the platform cache dir.")
+    models_dir: Path | None = Field(
+        default=None,
+        description="Where model weights live. Deliberately independent of 'dir': the "
+        "analysis cache is per project by nature and a user may point it at a scratch "
+        "disk, while a 350 MB checkpoint belongs to the machine and must not be "
+        "downloaded again for every project. Defaults to the platform cache dir.",
+    )
 
 
 class AutocutConfig(BaseModel):
@@ -465,6 +695,7 @@ class AutocutConfig(BaseModel):
     soundtrack: SoundtrackConfig = SoundtrackConfig()
     export: ExportConfig = ExportConfig()
     providers: ProvidersConfig = ProvidersConfig()
+    places: PlacesConfig = PlacesConfig()
     cache: CacheConfig = CacheConfig()
 
     @classmethod

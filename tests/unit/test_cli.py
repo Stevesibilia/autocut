@@ -20,10 +20,18 @@ def test_help_lists_commands() -> None:
 
 
 def test_unimplemented_stage_exits_2(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    """Stages that land in later milestones say so rather than failing obscurely."""
-    for stage in ("soundtrack", "sync"):
-        args = [stage, str(tmp_path)]
-        if stage == "sync":
-            args += ["--audio", str(tmp_path / "track.mp3")]
-        result = runner.invoke(app, args)
-        assert result.exit_code == 2, stage
+    """Stages that land in later milestones say so rather than failing obscurely.
+
+    ``soundtrack`` left this list when m4-soundtrack-prompt implemented it; ``sync`` is
+    the last stub and goes with m4-beat-sync.
+    """
+    result = runner.invoke(app, ["sync", str(tmp_path), "--audio", str(tmp_path / "track.mp3")])
+    assert result.exit_code == 2
+    assert "not implemented" in result.stdout
+
+
+def test_soundtrack_needs_a_project(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """It is implemented now, so a missing manifest is what fails rather than the stage."""
+    result = runner.invoke(app, ["soundtrack", str(tmp_path / "nowhere")])
+    assert result.exit_code == 1
+    assert "No manifest found" in result.stdout

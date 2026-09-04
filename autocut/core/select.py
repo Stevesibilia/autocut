@@ -21,8 +21,8 @@ import numpy as np
 from autocut.core.cache import CacheEntry, read_entry, thumb_index
 from autocut.core.config import SOURCE_CLASSES, AutocutConfig, SourceClass
 from autocut.core.durations import assign_durations, buckets, shortfall, total_duration
-from autocut.core.manifest import Manifest, Segment, SelectionRun, SourceFile
-from autocut.core.places import PlaceIndex, build_index, candidate_position
+from autocut.core.manifest import Manifest, PlaceInfo, Segment, SelectionRun, SourceFile
+from autocut.core.places import PlaceIndex, Position, build_index, candidate_position
 from autocut.core.rules import EXCLUSIONS
 from autocut.core.similarity import (
     CandidateFeatures,
@@ -535,7 +535,35 @@ def _assign_places(
     for segment in candidates:
         segment.place_id = index.place_of.get(segment.id)
         segment.visit_id = index.visit_of.get(segment.id)
+    _record_places(manifest, index, positions)
     return index
+
+
+def _record_places(manifest: Manifest, index: PlaceIndex, positions: dict[str, Position]) -> None:
+    """Write each place and its centroid onto the manifest, keeping any name it has.
+
+    The centroid is what reverse geocoding asks about, and a name already fetched for
+    the same place survives a re-selection: the grouping is deterministic for the same
+    footage and radius, so the id means the same thing.
+    """
+    previous = {key: value for key, value in manifest.places.items()}
+    manifest.places = {}
+    for place in index.places:
+        points = [positions[sid] for sid in place.segment_ids if sid in positions]
+        lat = lon = None
+        if points:
+            lat = sum(point.lat for point in points) / len(points)
+            lon = sum(point.lon for point in points) / len(points)
+        key = str(place.place_id)
+        known = previous.get(key)
+        manifest.places[key] = PlaceInfo(
+            place_id=place.place_id,
+            lat=lat,
+            lon=lon,
+            segments=len(place.segment_ids),
+            name=known.name if known is not None else None,
+            region=known.region if known is not None else None,
+        )
 
 
 def _mark_excluded(manifest: Manifest, config: AutocutConfig) -> None:

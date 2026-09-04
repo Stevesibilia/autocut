@@ -612,11 +612,30 @@
       <dl class="tally">
         {% for place in summary.places %}
         <div>
-          <dt>{{ place.label }}</dt>
+          <dt>{{ place.label }}{% if place.region %} <span class="confidence">{{ place.region }}</span>{% endif %}</dt>
           <dd>{{ place.selected }} of {{ place.segments }}, {{ place.visits }} visits</dd>
         </div>
         {% endfor %}
       </dl>
+    </div>
+    {% endif %}
+
+    {% if summary.matched_row %}
+    <div class="panel">
+      <h2>Soundtrack</h2>
+      <p class="totals"><b>{{ summary.proposed_bpm|round|int }}</b><span>bpm</span></p>
+      <p class="note">
+        {{ summary.genre }}, from row <code>{{ summary.matched_row }}</code>.
+        {% if summary.beat_distance is not none %}
+        Mean distance from a whole beat {{ "%.3f"|format(summary.beat_distance) }} beats.
+        {% endif %}
+        {% if summary.prompt_link %}
+        <a href="{{ summary.prompt_link }}">{{ summary.variant_count }} prompt variants</a>.
+        {% endif %}
+      </p>
+      {% if summary.matched_reason %}
+      <p class="note">{{ summary.matched_reason }}</p>
+      {% endif %}
     </div>
     {% endif %}
 

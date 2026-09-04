@@ -20,7 +20,7 @@ from typing import Any
 import httpx
 
 from autocut.core.config import AutocutConfig
-from autocut.core.providers import Description, ProviderError
+from autocut.core.providers import Description, ProviderError, TextAnswer
 
 ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 TIMEOUT_S = 60.0
@@ -101,6 +101,55 @@ class OpenRouterProvider:
         # Unreachable: the loop returns on the last attempt.
         return ProviderError(message="no attempt was made", retryable=False, attempts=0)
 
+    def complete_text(self, system: str, user: str) -> TextAnswer | ProviderError:
+        """One text completion, with the same retry and pricing rules as a vision call.
+
+        The payload carries two strings and the model id. What may go into them is the
+        caller's business, and :mod:`autocut.core.soundtrack.refine` is the one caller,
+        so the data minimization rule for text lives there with a test of its own.
+        """
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "usage": {"include": True},
+        }
+        retries = max(self._config.providers.max_retries, 0)
+        for attempt in range(retries + 1):
+            outcome = self._text_request(payload)
+            outcome.attempts = attempt + 1
+            if isinstance(outcome, TextAnswer):
+                return outcome
+            if not outcome.retryable or attempt == retries:
+                return outcome
+            self._sleep(BACKOFF_S[min(attempt, len(BACKOFF_S) - 1)])
+        return ProviderError(message="no attempt was made", retryable=False, attempts=0)
+
+    def _text_request(self, payload: dict[str, Any]) -> TextAnswer | ProviderError:
+        response = self._post(payload)
+        if isinstance(response, ProviderError):
+            return response
+        try:
+            body = response.json()
+        except ValueError:
+            return ProviderError(message="response was not JSON", retryable=False)
+        try:
+            text = body["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError):
+            return ProviderError(message="response carried no message content", retryable=False)
+        if not isinstance(text, str):
+            return ProviderError(message="message content was not text", retryable=False)
+        usage = body.get("usage") or {}
+        return TextAnswer(
+            text=text,
+            model=str(body.get("model") or self.model),
+            cost_usd=bounded_float(usage.get("cost"), MAX_COST_USD) or 0.0,
+            prompt_tokens=bounded_int(usage.get("prompt_tokens"), MAX_TOKENS) or 0,
+            completion_tokens=bounded_int(usage.get("completion_tokens"), MAX_TOKENS) or 0,
+        )
+
     def _payload(self, jpeg: bytes, labels: list[str], correction: str | None) -> dict[str, Any]:
         """The request body. Only the picture, the prompt and the model id go in it.
 
@@ -127,7 +176,8 @@ class OpenRouterProvider:
             "usage": {"include": True},
         }
 
-    def _request(self, payload: dict[str, Any]) -> Description | ProviderError:
+    def _post(self, payload: dict[str, Any]) -> httpx.Response | ProviderError:
+        """Send one request and turn a status into a verdict. Never raises."""
         try:
             response = self._client.post(
                 ENDPOINT,
@@ -148,6 +198,12 @@ class OpenRouterProvider:
             return ProviderError(
                 message=f"provider returned {status}", retryable=False, status=status
             )
+        return response
+
+    def _request(self, payload: dict[str, Any]) -> Description | ProviderError:
+        response = self._post(payload)
+        if isinstance(response, ProviderError):
+            return response
         return self._parse(response)
 
     def _parse(self, response: httpx.Response) -> Description | ProviderError:

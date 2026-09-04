@@ -43,6 +43,9 @@ def tagged_project(
 ) -> tuple[Manifest, AutocutConfig]:
     settings = config or AutocutConfig()
     settings.cache.dir = tmp_path / "cache"
+    # The model directory is left at the platform default on purpose: in dev-ai that
+    # is the named volume, so the checkpoint is downloaded once for the whole suite
+    # rather than once per test into the container tmpfs.
     sources = [synthetic_dir / name for name in names]
 
     now = datetime.now(UTC)

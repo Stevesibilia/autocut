@@ -124,6 +124,7 @@ class PlaceSummary:
     visits: int
     selected: int
     segments: int
+    region: str | None = None
 
 
 @dataclass(slots=True)
@@ -162,6 +163,13 @@ class Summary:
     cloud_requests: int
     cloud_cost_usd: float
     captioned_count: int
+    genre: str | None
+    matched_row: str | None
+    matched_reason: str | None
+    proposed_bpm: float | None
+    beat_distance: float | None
+    prompt_link: str | None
+    variant_count: int
     export_mode: str | None
     export_fps: float | None
     export_failed: int
@@ -176,7 +184,7 @@ def render_report(manifest: Manifest, out_dir: Path) -> Path:
     """Write ``report.html`` into ``out_dir`` and return its path."""
     cards = build_cards(manifest, out_dir)
     resolve_held_by(cards)
-    summary = build_summary(manifest, cards)
+    summary = build_summary(manifest, cards, out_dir)
     environment = Environment(
         loader=FileSystemLoader(TEMPLATE_DIR),
         # select_autoescape matches on the file extension, and this template ends in
@@ -350,13 +358,16 @@ def build_places(manifest: Manifest, cards: list[Card]) -> list[PlaceSummary]:
             visits.setdefault(segment.place_id, set()).add(segment.visit_id)
         if segment.outcome == "selected":
             chosen[segment.place_id] += 1
+    named = manifest.places
     return [
         PlaceSummary(
             place_id=place_id,
-            label=f"place {place_id}",
+            # The name reverse geocoding found, or the number selection gave it.
+            label=named[str(place_id)].label if str(place_id) in named else f"place {place_id}",
             visits=len(visits.get(place_id, set())),
             selected=chosen[place_id],
             segments=counts[place_id],
+            region=named[str(place_id)].region if str(place_id) in named else None,
         )
         for place_id in sorted(counts)
     ]
@@ -396,8 +407,13 @@ def resolve_held_by(cards: list[Card]) -> None:
         card.held_by_label = ", ".join(named)
 
 
-def build_summary(manifest: Manifest, cards: list[Card]) -> Summary:
-    """Header counts. Every filter dropdown is built from the values actually present."""
+def build_summary(manifest: Manifest, cards: list[Card], out_dir: Path | None = None) -> Summary:
+    """Header counts. Every filter dropdown is built from the values actually present.
+
+    ``out_dir`` is only needed to address the prompt file relatively, the same way the
+    thumbnails are addressed, so the whole output folder can be moved.
+    """
+    out_dir = out_dir if out_dir is not None else Path(manifest.output_dir)
     tags = build_tags(manifest)
     per_class = Counter(source.source_class for source in manifest.files.values())
     per_outcome = Counter(card.outcome for card in cards)
@@ -444,6 +460,13 @@ def build_summary(manifest: Manifest, cards: list[Card]) -> Summary:
         cloud_requests=manifest.analysis.cloud_requests,
         cloud_cost_usd=manifest.analysis.cloud_cost_usd,
         captioned_count=sum(1 for card in cards if card.caption),
+        genre=manifest.soundtrack.genre,
+        matched_row=manifest.soundtrack.matched_row,
+        matched_reason=manifest.soundtrack.matched_reason,
+        proposed_bpm=manifest.soundtrack.proposed_bpm,
+        beat_distance=manifest.soundtrack.beat_distance,
+        prompt_link=relative_asset(manifest.soundtrack.prompt_path, out_dir),
+        variant_count=len(manifest.soundtrack.variants),
         export_mode=manifest.export.mode,
         export_fps=manifest.export.target_fps,
         export_failed=manifest.export.failed,

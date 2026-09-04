@@ -49,6 +49,75 @@ def test_the_shipped_example_lists_the_provider_defaults() -> None:
     assert AutocutConfig.load(example).providers == AutocutConfig().providers
 
 
+def test_the_genre_table_ships_the_twelve_rows_in_order() -> None:
+    rows = AutocutConfig().soundtrack.genres
+
+    assert [row.name for row in rows] == [
+        "surf rock",
+        "pop punk",
+        "reggae and dub",
+        "funk and disco",
+        "acoustic and ukulele pop",
+        "italian and mediterranean folk",
+        "americana",
+        "cinematic ambient and post-rock",
+        "country",
+        "rock",
+        "indie pop",
+        "upbeat folk",
+    ]
+    # The last row has no conditions, so it matches anything and the table never runs out.
+    assert rows[-1].when == type(rows[-1].when)()
+
+
+def test_every_shipped_row_is_usable() -> None:
+    """Two or three instruments, a real range, a mood, and adjectives on the instruments."""
+    for row in AutocutConfig().soundtrack.genres:
+        assert 2 <= len(row.instruments) <= 3, row.name
+        assert row.bpm[0] < row.bpm[1], row.name
+        assert row.mood, row.name
+        # SPEC.md section 7.5: "instruments with a specific adjective (`sweeping
+        # strings`, not `strings`)". That holds for the alternates too, since a variant
+        # puts them in the Description in place of an instrument.
+        for instrument in [*row.instruments, *row.instrument_alternates]:
+            assert len(instrument.split()) >= 2, (row.name, instrument)
+        nouns = {instrument.split()[-1] for instrument in row.instruments}
+        assert len(nouns) == len(row.instruments), (row.name, "two instruments share a noun")
+
+
+def test_the_soundtrack_defaults_match_the_spec() -> None:
+    soundtrack = AutocutConfig().soundtrack
+
+    assert soundtrack.variants == 3
+    assert soundtrack.refine
+    assert soundtrack.description_max_chars == 200
+    assert soundtrack.default_profile == "upbeat folk"
+    assert soundtrack.energy_bands == (0.34, 0.67)
+    assert "intro" in soundtrack.allowed_sections
+    assert "end" in soundtrack.allowed_sections
+    assert soundtrack.time_of_day.daytime == (9, 17)
+
+
+def test_the_variants_count_is_bounded() -> None:
+    """The spec allows 3 to 5, and one is the least that makes a file worth writing."""
+    import pytest
+    from pydantic import ValidationError
+
+    from autocut.core.config import SoundtrackConfig
+
+    for bad in ({"variants": 0}, {"variants": 6}, {"description_max_chars": 10}):
+        with pytest.raises(ValidationError):
+            SoundtrackConfig(**bad)
+
+
+def test_the_place_defaults() -> None:
+    places = AutocutConfig().places
+
+    assert places.geocode
+    assert places.min_interval_s == 1.0
+    assert places.user_agent is None
+
+
 def test_provider_defaults_match_the_spec() -> None:
     providers = AutocutConfig().providers
     assert providers.cloud

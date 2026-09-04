@@ -44,6 +44,9 @@ def forget_the_probe() -> Any:
 def config_in(tmp_path: Path, model: str = MODEL) -> AutocutConfig:
     config = AutocutConfig()
     config.cache.dir = tmp_path / "cache"
+    # Pinned separately from the analysis cache, which is the point of the field: a
+    # checkpoint belongs to the machine and must not follow a per project cache dir.
+    config.cache.models_dir = tmp_path / "models-root"
     config.providers.embedding_model = model
     return config
 
@@ -360,8 +363,16 @@ def test_weights_are_reported_missing_before_the_first_download(tmp_path: Path) 
     config = config_in(tmp_path)
     assert not weights_present(config)
     directory = embeddings.models_dir(config)
-    assert directory == tmp_path / "cache" / "models"
+    assert directory == tmp_path / "models-root" / "models"
     assert not directory.exists()
+
+
+def test_the_model_directory_does_not_follow_the_analysis_cache(tmp_path: Path) -> None:
+    """A 350 MB checkpoint must not be downloaded again for every project."""
+    config = AutocutConfig()
+    config.cache.dir = tmp_path / "one-project"
+
+    assert tmp_path / "one-project" not in embeddings.models_dir(config).parents
 
 
 def test_weights_are_found_by_the_pretrained_tag(tmp_path: Path) -> None:

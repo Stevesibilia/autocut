@@ -782,3 +782,65 @@ def test_a_caption_wins_over_a_stale_error_on_the_card(project: Manifest) -> Non
 
     assert "a beach at noon" in html
     assert "No description" not in html
+
+
+def with_soundtrack(project: Manifest) -> Manifest:
+    from autocut.core.manifest import PlaceInfo, PromptVariant
+
+    project.soundtrack.matched_row = "surf rock"
+    project.soundtrack.matched_reason = "dominant tag is beach; energy mid"
+    project.soundtrack.genre = "surf rock"
+    project.soundtrack.proposed_bpm = 128.0
+    project.soundtrack.beat_distance = 0.0125
+    project.soundtrack.prompt_path = Path(project.output_dir) / "suno-prompt.md"
+    project.soundtrack.variants = [
+        PromptVariant(title="t", description="d", structure=["[end]"]) for _ in range(3)
+    ]
+    project.places["0"] = PlaceInfo(
+        place_id=0, lat=40.1, lon=9.6, name="Cala Goloritze", region="Sardegna", segments=3
+    )
+    return project
+
+
+def test_the_header_shows_the_genre_the_bpm_and_the_prompt_link(project: Manifest) -> None:
+    html = render_report(with_soundtrack(project), Path(project.output_dir)).read_text(
+        encoding="utf-8"
+    )
+
+    assert "<h2>Soundtrack</h2>" in html
+    assert "128" in html
+    assert "surf rock" in html
+    assert "dominant tag is beach" in html
+    assert 'href="suno-prompt.md"' in html
+    assert "3 prompt variants" in html
+
+
+def test_the_prompt_link_is_relative_to_the_output_folder(project: Manifest) -> None:
+    summary = build_summary(
+        with_soundtrack(project),
+        build_cards(project, Path(project.output_dir)),
+        Path(project.output_dir),
+    )
+
+    assert summary.prompt_link == "suno-prompt.md"
+    assert summary.proposed_bpm == 128.0
+    assert summary.variant_count == 3
+
+
+def test_a_project_without_a_soundtrack_shows_no_panel(project: Manifest) -> None:
+    html = render_report(project, Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert "<h2>Soundtrack</h2>" not in html
+
+
+def test_a_geocoded_place_is_named_in_the_header(project: Manifest) -> None:
+    """The numeric label is a fallback, not the thing the reader should see."""
+    ids = list(project.segments)
+    project.segments[ids[0]].place_id = 0
+    project.segments[ids[0]].visit_id = 0
+    html = render_report(with_soundtrack(project), Path(project.output_dir)).read_text(
+        encoding="utf-8"
+    )
+
+    assert "Cala Goloritze" in html
+    assert "Sardegna" in html

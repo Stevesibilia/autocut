@@ -249,12 +249,200 @@ embedding_model = "ViT-B-32/laion2b_s34b_b79k"
 embedding_batch_size = 16
 
 [soundtrack]
-variants = 3
+variants = 3                 # 1 to 5
 bpm_tolerance = 3.0
-beat_multiples = [2, 4, 8]
+beat_multiples = [2, 4, 8]       # a clip is on the grid at this many beats
+refine = true                # ask the text model to polish the template prompt
+description_max_chars = 200
+energy_bands = [0.34, 0.67]     # where the curve turns low to mid to high
+default_profile = "upbeat folk"
+# Suno's own section words. Here because the rules are Suno's and Suno changes them.
+allowed_sections = [
+  "intro", "verse", "verse 1", "verse 2", "verse 3",
+  "pre-chorus", "chorus", "bridge", "solo", "break",
+  "drop", "build", "transition", "outro", "end",
+]
 
-# Genre table: keys are material profiles, values feed the prompt generator.
-[soundtrack.genres.aerial_landscape]
-genre = "cinematic ambient"
-instruments = "sweeping strings, soft piano"
-bpm_range = "80-100"
+# Local hours, half open. Anything outside them is night.
+[soundtrack.time_of_day]
+morning = [5, 9]
+daytime = [9, 17]
+evening = [17, 21]
+
+# The genre table, ordered specific to general. The first row whose every condition
+# holds wins, and the report says which one it was, so a surprising genre traces to
+# one row here. A row with no [when] block matches anything, which is why the last
+# row is the fallback. Every field of a [when] block is optional. Instruments carry
+# an adjective each, because Suno wants 'sweeping strings' rather than 'strings'.
+
+[[soundtrack.genres]]
+name = "surf rock"
+genre = "surf rock"
+instruments = ["twangy reverb guitar", "driving drums", "warm bass"]
+bpm = [120, 140]
+mood = ["sunny", "carefree"]
+mood_alternates = ["breezy", "playful"]
+instrument_alternates = ["shimmering tremolo guitar"]
+
+[soundtrack.genres.when]
+tags_dominant = ["beach"]
+tags_any = ["underwater"]
+energy = ["mid", "high"]
+
+[[soundtrack.genres]]
+name = "pop punk"
+genre = "pop punk"
+instruments = ["crunchy guitar", "fast drums", "punchy bass"]
+bpm = [150, 175]
+mood = ["restless", "bright"]
+mood_alternates = ["urgent", "giddy"]
+instrument_alternates = ["chugging guitar"]
+
+[soundtrack.genres.when]
+energy = ["high"]
+
+[soundtrack.genres.when.class_min_share]
+actioncam = 0.6
+
+[[soundtrack.genres]]
+name = "reggae and dub"
+genre = "reggae dub"
+instruments = ["skanking guitar", "deep dub bass", "loose drums"]
+bpm = [70, 90]
+mood = ["hazy", "unhurried"]
+mood_alternates = ["drowsy", "warm"]
+instrument_alternates = ["spring reverb guitar"]
+
+[soundtrack.genres.when]
+tags_dominant = ["beach"]
+energy = ["low"]
+
+[[soundtrack.genres]]
+name = "funk and disco"
+genre = "funk disco"
+instruments = ["wah guitar", "slap bass", "tight drums"]
+bpm = [110, 125]
+mood = ["joyful", "strutting"]
+mood_alternates = ["giddy", "glittering"]
+instrument_alternates = ["funky clavinet"]
+
+[soundtrack.genres.when]
+tags_dominant = ["people", "food"]
+energy = ["high"]
+
+[[soundtrack.genres]]
+name = "acoustic and ukulele pop"
+genre = "acoustic pop"
+instruments = ["warm ukulele", "brushed drums", "soft acoustic guitar"]
+bpm = [95, 115]
+mood = ["tender", "domestic"]
+mood_alternates = ["gentle", "nostalgic"]
+instrument_alternates = ["muted upright bass"]
+
+[soundtrack.genres.when]
+tags_dominant = ["people", "food"]
+energy = ["low", "mid"]
+
+[[soundtrack.genres]]
+name = "italian and mediterranean folk"
+genre = "mediterranean folk"
+instruments = ["nylon string guitar", "hand percussion", "wheezing accordion"]
+bpm = [100, 120]
+mood = ["sunlit", "convivial"]
+mood_alternates = ["languid", "festive"]
+instrument_alternates = ["bright mandolin"]
+
+[soundtrack.genres.when]
+tags_dominant = ["city", "street"]
+region_any = ["sardegna", "sardinia", "italia", "italy"]
+
+[[soundtrack.genres]]
+name = "americana"
+genre = "americana"
+instruments = ["slide guitar", "loping drums", "upright bass"]
+bpm = [95, 115]
+mood = ["wide", "wistful"]
+mood_alternates = ["dusty", "hopeful"]
+instrument_alternates = ["weeping pedal steel"]
+
+[soundtrack.genres.when]
+energy = ["mid"]
+
+[soundtrack.genres.when.class_min_share]
+drone = 0.5
+
+[[soundtrack.genres]]
+name = "cinematic ambient and post-rock"
+genre = "cinematic post-rock"
+instruments = ["sweeping strings", "soft piano", "swelling guitar"]
+bpm = [75, 95]
+mood = ["vast", "still"]
+mood_alternates = ["solemn", "weightless"]
+instrument_alternates = ["bowed guitar"]
+
+[soundtrack.genres.when]
+energy = ["low"]
+
+[soundtrack.genres.when.class_min_share]
+drone = 0.5
+
+[[soundtrack.genres]]
+name = "country"
+genre = "country"
+instruments = ["twangy guitar", "shuffling drums", "walking bass"]
+bpm = [100, 120]
+mood = ["easygoing", "open"]
+mood_alternates = ["homespun", "rolling"]
+instrument_alternates = ["sawing fiddle"]
+
+[soundtrack.genres.when]
+tags_dominant = ["mountain", "street"]
+energy = ["mid"]
+
+[[soundtrack.genres]]
+name = "rock"
+genre = "rock"
+instruments = ["distorted guitar", "heavy drums", "driving bass"]
+bpm = [120, 145]
+mood = ["bold", "propulsive"]
+mood_alternates = ["gritty", "elated"]
+instrument_alternates = ["overdriven guitar"]
+
+[soundtrack.genres.when]
+energy = ["high"]
+
+[[soundtrack.genres]]
+name = "indie pop"
+genre = "indie pop"
+instruments = ["chiming guitar", "crisp drums", "round bass"]
+bpm = [105, 125]
+mood = ["bright", "wandering"]
+mood_alternates = ["dreamy", "buoyant"]
+instrument_alternates = ["twinkling glockenspiel"]
+
+[soundtrack.genres.when]
+energy = ["mid"]
+
+[[soundtrack.genres]]
+name = "upbeat folk"
+genre = "upbeat folk"
+instruments = ["strummed acoustic guitar", "stomping percussion", "warm bass"]
+bpm = [100, 120]
+mood = ["cheerful", "easy"]
+mood_alternates = ["sunny", "companionable"]
+instrument_alternates = ["rolling banjo"]
+
+# Reverse geocoding through Nominatim: one request per place, cached forever, spaced
+# to keep to the usage policy. False keeps places numeric and the run fully offline.
+[places]
+geocode = true
+min_interval_s = 1.0
+# user_agent = "autocut/0.0.1"   # defaults to autocut/<version>
+
+# The analysis cache and the model weights are separate on purpose. The cache is about
+# one project's footage and can live anywhere; a checkpoint is about this machine, and
+# following the cache directory meant every project with its own cache downloaded its
+# own 350 MB copy. Both default to the platform cache directory.
+[cache]
+# dir = "~/.cache/autocut"
+# models_dir = "~/.cache/autocut"

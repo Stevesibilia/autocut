@@ -144,8 +144,14 @@ def parse_model_name(name: str) -> tuple[str, str]:
 
 
 def models_dir(config: AutocutConfig) -> Path:
-    """Where model weights are kept. Not created here: ``doctor`` only reads it."""
-    base = config.cache.dir or Path(user_cache_dir("autocut"))
+    """Where model weights are kept. Not created here: ``doctor`` only reads it.
+
+    ``cache.models_dir`` rather than ``cache.dir``, because the two answer different
+    questions. The analysis cache is about one project's footage and a user may put it
+    anywhere; the checkpoint is about this machine, and following ``cache.dir`` meant
+    every project with its own cache directory downloaded its own 350 MB copy.
+    """
+    base = config.cache.models_dir or Path(user_cache_dir("autocut"))
     return base / MODELS_DIRNAME
 
 

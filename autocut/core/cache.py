@@ -93,12 +93,32 @@ def thumb_index(segment_id: str, count: int) -> int:
     return min(max(index, 0), count - 1)
 
 
-def read_entry(file_key: str, config: AutocutConfig) -> CacheEntry | None:
+def shot_index(shot_bounds: list[tuple[float, float]], start_s: float) -> int:
+    """Index of the detected shot a span came from. Splits share their shot's frames.
+
+    Here beside ``thumb_index`` because both answer the same question, which cached
+    picture belongs to a segment, and both have to give the same answer to every
+    consumer: the thumbnails, the sprite strips and the embeddings are indexed by shot.
+    """
+    for index, (start, stop) in enumerate(shot_bounds):
+        if start <= start_s < stop:
+            return index
+    return max(len(shot_bounds) - 1, 0)
+
+
+def read_entry(file_key: str, config: AutocutConfig, sprites: bool = True) -> CacheEntry | None:
     """Load an entry, or ``None`` when it is missing, stale or unreadable.
 
     An entry whose embeddings were computed with another model comes back with none,
     because the vectors are not comparable, while its metric arrays are handed over
     untouched.
+
+    ``sprites`` exists because they are most of the file and almost nobody wants them.
+    A strip is every sampled frame of a shot, so an entry with sprites is megabytes
+    where the metric arrays are kilobytes, and decompressing them is what a caller
+    pays for asking. Selection reads every entry in the project on every run, which is
+    what the review sliders do on every move: measured on the Sardinia folder, leaving
+    the strips in the file took a re-selection from 1.5 s to under half a second.
     """
     arrays_path = entry_path(file_key, config)
     meta_path = arrays_path.with_suffix(".json")
@@ -110,13 +130,17 @@ def read_entry(file_key: str, config: AutocutConfig) -> CacheEntry | None:
             arrays = {name: payload[name] for name in ARRAY_NAMES if name in payload}
             thumbs = payload.get("thumb_frames")
             embeddings = payload.get("embeddings")
-            sprites = [
-                payload[name]
-                for name in sorted(
-                    (n for n in payload.files if n.startswith("sprite_")),
-                    key=lambda n: int(n.split("_")[1]),
-                )
-            ]
+            strips = (
+                [
+                    payload[name]
+                    for name in sorted(
+                        (n for n in payload.files if n.startswith("sprite_")),
+                        key=lambda n: int(n.split("_")[1]),
+                    )
+                ]
+                if sprites
+                else []
+            )
     except (OSError, ValueError, KeyError, json.JSONDecodeError):
         return None
     if meta.get("analysis_schema_version") != ANALYSIS_SCHEMA_VERSION:
@@ -132,7 +156,7 @@ def read_entry(file_key: str, config: AutocutConfig) -> CacheEntry | None:
         telemetry=list(meta.get("telemetry", [])),
         probe=dict(meta.get("probe", {})),
         thumb_frames=thumbs,
-        sprites=sprites,
+        sprites=strips,
         embeddings=embeddings,
         embedding_model=embedding_model,
         warnings=list(meta.get("warnings", [])),

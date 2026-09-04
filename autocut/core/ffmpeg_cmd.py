@@ -341,8 +341,10 @@ def plan_export(
     ratio = slow_motion_ratio(source, target_fps, config)
     # Beat sync has the last word on the window when it has run: it rounded the length
     # onto the track's grid and put the bounds where the good frames are, and recomputing
-    # either here would undo that.
-    bounds = _beat_bounds(segment)
+    # either here would undo that. Beat sync itself works inside the reviewer's bounds
+    # when there are any, so its numbers already carry them; the hand set span is the
+    # fallback for a project that was trimmed but never synced.
+    bounds = _beat_bounds(segment) or _user_window(segment)
     if bounds is not None:
         start, source_duration = bounds
         out_duration = source_duration * ratio
@@ -418,6 +420,15 @@ def _beat_bounds(segment: Segment) -> tuple[float, float] | None:
     start, stop = segment.final_start_s, segment.final_end_s
     if start is None or stop is None or stop <= start:
         return None
+    return start, stop - start
+
+
+def _user_window(segment: Segment) -> tuple[float, float] | None:
+    """The source window the reviewer set by hand, as a start and a length."""
+    bounds = segment.user_bounds
+    if bounds is None:
+        return None
+    start, stop = bounds
     return start, stop - start
 
 

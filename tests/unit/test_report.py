@@ -846,6 +846,73 @@ def test_a_geocoded_place_is_named_in_the_header(project: Manifest) -> None:
     assert "Sardegna" in html
 
 
+def test_a_kept_clip_is_marked_on_its_card_and_in_the_page(project: Manifest) -> None:
+    """A human decision has to be visible in the report the CLI writes, not only in the GUI."""
+    first = project.segments[next(iter(project.segments))]
+    first.user_decision = "keep"
+
+    cards = build_cards(project, Path(project.output_dir))
+    card = next(c for c in cards if c.id == first.id)
+    html = render_report(project, Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert card.user_decision == "keep"
+    assert "user kept" in html
+
+
+def test_a_user_rejected_clip_is_marked(project: Manifest) -> None:
+    """The scenario from the gui-review spec: the report shows what the reviewer threw out."""
+    ids = list(project.segments)
+    for segment_id in ids[:2]:
+        project.segments[segment_id].user_decision = "reject"
+
+    summary = build_summary(project, build_cards(project, Path(project.output_dir)))
+    html = render_report(project, Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert summary.user_rejected_count == 2
+    assert "user rejected" in html
+
+
+def test_hand_set_bounds_are_shown_with_the_user_reason(project: Manifest) -> None:
+    first = project.segments[next(iter(project.segments))]
+    first.outcome = "selected"
+    first.order = 1
+    first.user_start_s = 4.0
+    first.user_end_s = 6.5
+    first.target_duration_s = 2.5
+    first.duration_reason = "user"
+
+    cards = build_cards(project, Path(project.output_dir))
+    card = next(c for c in cards if c.id == first.id)
+    html = render_report(project, Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert card.user_bounds_label == "4.0 to 6.5 s by hand"
+    assert card.duration_reason == "user"
+    assert "4.0 to 6.5 s by hand" in html
+    assert ">user<" in html
+
+
+def test_a_project_nobody_reviewed_shows_no_review_markers(project: Manifest) -> None:
+    summary = build_summary(project, build_cards(project, Path(project.output_dir)))
+    html = render_report(project, Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert summary.kept_count == 0
+    assert summary.user_rejected_count == 0
+    assert "user kept" not in html
+    assert "user rejected" not in html
+
+
+def test_the_selection_panel_counts_the_review_decisions(project: Manifest) -> None:
+    ids = list(project.segments)
+    project.segments[ids[0]].user_decision = "keep"
+    project.segments[ids[0]].outcome = "selected"
+    project.segments[ids[0]].order = 1
+    project.segments[ids[1]].user_decision = "reject"
+
+    html = render_report(project, Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert "1 kept and 1 rejected by hand" in html
+
+
 def synced(project: Manifest) -> Manifest:
     """A project after beat sync: one clip selected, cut to four beats."""
     project.soundtrack.measured_bpm = 119.8

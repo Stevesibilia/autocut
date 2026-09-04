@@ -71,6 +71,13 @@ class SelectionResult:
     short_clips: int = 0
     hero_clips: int = 0
     total_shortfall_s: float = 0.0
+    kept: int = 0
+    """Clips the reviewer pinned. Selected before anything competes."""
+
+    kept_over_cap: bool = False
+    """Whether the pins alone outnumber ``max_clips``, so the edit is longer than asked."""
+
+    user_rejected: int = 0
 
     @property
     def count(self) -> int:
@@ -103,11 +110,17 @@ def select_clips(
     _mark_excluded(manifest, config)
     candidates = [s for s in manifest.segments.values() if s.outcome == "candidate"]
     eligible = [segment for segment in candidates if not _excluded(segment)]
+    pinned = [segment for segment in candidates if segment.kept]
     capped, ceiling_applied = _apply_share_ceiling(
         max_clips, len(eligible), config, explicit=overrides.max_clips is not None
     )
     result = SelectionResult(max_clips=capped, target_duration_s=target, diversity_lambda=lam)
     result.ceiling_applied = ceiling_applied
+    result.kept = len(pinned)
+    result.user_rejected = sum(1 for segment in candidates if segment.user_rejected)
+    # The cap counts pins but cannot drop them, so a reviewer who keeps more clips than
+    # the cap allows gets all of them and is told the edit is longer than asked for.
+    result.kept_over_cap = len(pinned) > capped
     max_clips = capped
     if not candidates:
         _record(manifest, result)
@@ -211,7 +224,9 @@ def _load_entries(config: AutocutConfig, candidates: list[Segment]) -> dict[str,
     for segment in candidates:
         if segment.file_id in entries:
             continue
-        entry = read_entry(segment.file_id, config)
+        # Without the sprite strips: selection wants the metric arrays, the thumbnail
+        # frames and the embeddings, and the strips are most of the bytes in the file.
+        entry = read_entry(segment.file_id, config, sprites=False)
         if entry is not None:
             entries[segment.file_id] = entry
     return entries
@@ -258,6 +273,14 @@ def _place_windows(
     cut lands where movement begins rather than partway through it.
     """
     for segment in segments:
+        hand_set = segment.user_bounds
+        if hand_set is not None:
+            # Nothing to search for: the reviewer said where the clip starts and ends,
+            # and a window search would move it.
+            segment.best_center_s = (hand_set[0] + hand_set[1]) / 2.0
+            segment.target_duration_s = hand_set[1] - hand_set[0]
+            segment.snapped = False
+            continue
         cached = entries.get(segment.file_id)
         bounds = _bounds(segment)
         wanted = (segment.target_duration_s or target) if per_clip else target
@@ -285,9 +308,7 @@ def _place_windows(
 
 
 def _bounds(segment: Segment) -> tuple[float, float]:
-    start = segment.trimmed_start_s if segment.trimmed_start_s is not None else segment.start_s
-    stop = segment.trimmed_end_s if segment.trimmed_end_s is not None else segment.end_s
-    return start, stop
+    return segment.effective_bounds
 
 
 def _build_features(
@@ -370,9 +391,16 @@ def _greedy(
     lam: float,
     result: SelectionResult,
 ) -> list[Segment]:
-    """Class shares first, then the open field, both by penalized score."""
-    chosen: list[Segment] = []
-    remaining = list(candidates)
+    """The reviewer's keeps first, then class shares, then the open field.
+
+    Pins are seeded rather than given a high score: a score high enough to beat every
+    cap is a number nobody can reason about, and the pin has to survive the diversity
+    penalty as well, which no score can promise. Seeded in capture order so the edit
+    is not reordered by which pin happened to score best; ``_finish`` orders the whole
+    selection by time anyway.
+    """
+    chosen: list[Segment] = [segment for segment in candidates if segment.kept]
+    remaining = [segment for segment in candidates if not segment.kept]
 
     for source_class, quota in _class_quotas(manifest, config, candidates, max_clips).items():
         while (
@@ -585,7 +613,7 @@ def _mark_excluded(manifest: Manifest, config: AutocutConfig) -> None:
 
 
 def _excluded(segment: Segment) -> bool:
-    return segment.reason in EXCLUSIONS
+    return segment.reason in EXCLUSIONS or segment.user_rejected
 
 
 def _eligible(

@@ -172,6 +172,29 @@ def measure_track(samples: np.ndarray, sample_rate: int = SAMPLE_RATE) -> Track:
 GAP_TOLERANCE = 0.5
 
 
+def envelope(samples: np.ndarray, points: int = 2000) -> np.ndarray:
+    """The signal as ``points`` minimum and maximum pairs, for drawing a waveform.
+
+    A waveform is not a plot of the samples: a three minute track at 22050 Hz is four
+    million of them and a widget is a thousand pixels wide. Each pixel is the loudest
+    and quietest sample in its slice, which is what makes a waveform look like the
+    music instead of like noise, and it is one pass over the array.
+
+    Shape is ``(points, 2)``. Fewer samples than points gives one pair per sample.
+    """
+    if samples.size == 0 or points <= 0:
+        return np.zeros((0, 2), dtype=np.float32)
+    count = min(points, int(samples.size))
+    # Trimmed to a whole number of slices so the reshape is exact; the remainder is at
+    # most one slice of a waveform nobody can see the end pixel of.
+    per_slice = int(samples.size // count)
+    trimmed = samples[: per_slice * count].reshape(count, per_slice)
+    pairs = np.empty((count, 2), dtype=np.float32)
+    pairs[:, 0] = trimmed.min(axis=1)
+    pairs[:, 1] = trimmed.max(axis=1)
+    return pairs
+
+
 def bpm_from_beats(beats_s: list[float], fallback: float) -> float:
     """Tempo implied by the beat spacing, or ``fallback`` when there is no spacing."""
     if len(beats_s) < 2:
@@ -252,8 +275,15 @@ def quantize_durations(
     bpm: float,
     config: AutocutConfig,
     progress: ProgressCallback = null_progress,
+    dry_run: bool = False,
 ) -> QuantizeResult:
-    """Round every selected clip onto the beat grid and set its final bounds."""
+    """Round every selected clip onto the beat grid and set its final bounds.
+
+    ``dry_run`` answers the question the GUI asks before Apply, what would this tempo do
+    to the edit, without touching a single segment. The arithmetic is the same code
+    rather than a copy of it, because a preview that disagrees with the run is worse
+    than no preview.
+    """
     selected = sorted(
         (s for s in manifest.segments.values() if s.outcome == "selected"),
         key=lambda s: (s.order if s.order is not None else 0, s.id),
@@ -298,15 +328,16 @@ def quantize_durations(
             reason = "clamped"
             clamped = True
 
-        # Not rounded: the whole point is that the length is exactly this many beats,
-        # and the report formats it for display.
-        segment.target_duration_s = duration
-        segment.beats = beats
-        segment.duration_reason = reason
-        _set_final_bounds(segment, duration / ratio, config)
+        if not dry_run:
+            # Not rounded: the whole point is that the length is exactly this many
+            # beats, and the report formats it for display.
+            segment.target_duration_s = duration
+            segment.beats = beats
+            segment.duration_reason = reason
+            _set_final_bounds(segment, duration / ratio, config)
         result.clips += 1
         result.clamped += int(clamped)
-        result.off_grid += int(segment.grid_unreachable)
+        result.off_grid += int(segment.grid_unreachable if not dry_run else False)
         result.total_after_s += duration
         if beats is not None:
             result.per_multiple[beats] = result.per_multiple.get(beats, 0) + 1

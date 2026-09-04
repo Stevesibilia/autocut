@@ -10,7 +10,7 @@ import tomllib
 from pathlib import Path
 from typing import Generic, Literal, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 SourceClass = Literal["drone", "actioncam", "phone", "reflex", "generic"]
 VerticalStrategy = Literal["exclude", "blur_pad", "center_crop"]
@@ -574,6 +574,120 @@ class SoundtrackConfig(BaseModel):
         "positional so reordering the table cannot change the fallback by accident.",
     )
     genres: list[GenreRow] = Field(default_factory=lambda: list(DEFAULT_GENRE_ROWS))
+    calm_to_energetic: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_CALM_TO_ENERGETIC),
+        description="Mood words in order from calm to energetic, used by the GUI's mood "
+        "control to choose between the words a row already offers. A word that is not "
+        "listed counts as neutral rather than being guessed at.",
+    )
+    intimate_to_cinematic: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_INTIMATE_TO_CINEMATIC),
+        description="The same words in order from intimate to cinematic, meaning how "
+        "much room the music implies.",
+    )
+
+
+#: Mood words the shipped rows use, ordered from calm to energetic. A word absent from
+#: this list sits in the middle: the two axes are a way of picking between the words a
+#: row already offers, not a claim to understand any word in English.
+DEFAULT_CALM_TO_ENERGETIC: tuple[str, ...] = (
+    "still",
+    "solemn",
+    "drowsy",
+    "languid",
+    "unhurried",
+    "tender",
+    "gentle",
+    "hazy",
+    "dreamy",
+    "wistful",
+    "nostalgic",
+    "weightless",
+    "easy",
+    "easygoing",
+    "warm",
+    "homespun",
+    "domestic",
+    "companionable",
+    "wandering",
+    "open",
+    "hopeful",
+    "breezy",
+    "sunlit",
+    "dusty",
+    "carefree",
+    "cheerful",
+    "sunny",
+    "bright",
+    "playful",
+    "buoyant",
+    "rolling",
+    "glittering",
+    "joyful",
+    "elated",
+    "convivial",
+    "festive",
+    "bold",
+    "strutting",
+    "gritty",
+    "giddy",
+    "propulsive",
+    "restless",
+    "urgent",
+    # "wide" and "vast" say how much room, not how much energy; they sit at the calm
+    # end because the rows that use them are the slow ones.
+    "wide",
+    "vast",
+)
+
+#: The same words ordered from intimate to cinematic: how much room the music implies.
+DEFAULT_INTIMATE_TO_CINEMATIC: tuple[str, ...] = (
+    "domestic",
+    "homespun",
+    "companionable",
+    "tender",
+    "gentle",
+    "still",
+    "warm",
+    "easy",
+    "easygoing",
+    "playful",
+    "giddy",
+    "cheerful",
+    "carefree",
+    "gritty",
+    "strutting",
+    "convivial",
+    "festive",
+    "restless",
+    "urgent",
+    "propulsive",
+    "bright",
+    "buoyant",
+    "sunny",
+    "sunlit",
+    "dusty",
+    "breezy",
+    "rolling",
+    "glittering",
+    "joyful",
+    "elated",
+    "nostalgic",
+    "wistful",
+    "hazy",
+    "drowsy",
+    "languid",
+    "unhurried",
+    "dreamy",
+    "wandering",
+    "hopeful",
+    "open",
+    "solemn",
+    "weightless",
+    "bold",
+    "wide",
+    "vast",
+)
 
 
 class PlacesConfig(BaseModel):
@@ -612,6 +726,21 @@ class ExportConfig(BaseModel):
     lut: PerClass[Path | None] = PerClass(
         drone=None, actioncam=None, phone=None, reflex=None, generic=None
     )
+
+    @field_validator("lut", mode="before")
+    @classmethod
+    def _empty_lut_is_none(cls, value: object) -> object:
+        """An empty string in the LUT table means no LUT for that class.
+
+        TOML has no null and every key of a per class table has to be present, so a
+        writer saying "this class has no LUT" has only the empty string to say it with.
+        Read here rather than worked around at each call site, so a file written by the
+        GUI and one written by hand mean the same thing.
+        """
+        if isinstance(value, dict):
+            return {key: (None if item == "" else item) for key, item in value.items()}
+        return value
+
     lens_correction: PerClass[bool] = PerClass(
         drone=False, actioncam=False, phone=False, reflex=False, generic=False
     )

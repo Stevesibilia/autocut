@@ -563,3 +563,121 @@ def test_a_project_without_gps_has_no_place_filter(project: Manifest) -> None:
 
     html = render_report(project, out).read_text(encoding="utf-8")
     assert 'id="place"' not in html
+
+
+def tagged(project: Manifest) -> Manifest:
+    """Two tagged segments and one left ambiguous, so every branch has a card."""
+    from autocut.core.manifest import Tag
+
+    ids = list(project.segments)
+    project.segments[ids[0]].tags = [
+        Tag(label="beach", confidence=0.62, source="local", group="subject", primary=True),
+        Tag(label="people", confidence=0.21, source="local", group="subject", primary=True),
+    ]
+    project.segments[ids[1]].tags = [
+        Tag(label="food", confidence=0.55, source="local", group="subject", primary=True)
+    ]
+    project.segments[ids[2]].tags = []
+    return project
+
+
+def test_a_tagged_card_shows_every_tag_with_its_confidence(project: Manifest) -> None:
+    cards = build_cards(tagged(project), Path(project.output_dir))
+    card = next(c for c in cards if c.tags)
+
+    assert [tag.label for tag in card.tags] == ["beach", "people"]
+    assert [tag.confidence_label for tag in card.tags] == ["0.62", "0.21"]
+    assert card.tags[0].dominant
+    assert not card.tags[1].dominant
+
+
+def test_the_tag_keys_hold_whole_labels(project: Manifest) -> None:
+    """The filter compares whole labels, so a label with a space must not split."""
+    from autocut.core.manifest import Tag
+
+    ids = list(project.segments)
+    project.segments[ids[0]].tags = [
+        Tag(label="street food", confidence=0.7, source="local", group="subject", primary=True)
+    ]
+    card = next(c for c in build_cards(project, Path(project.output_dir)) if c.tags)
+
+    assert card.tag_keys == "|street food|"
+
+
+def test_the_header_counts_segments_carrying_each_tag(project: Manifest) -> None:
+    summary = build_summary(tagged(project), build_cards(tagged(project), Path(project.output_dir)))
+
+    assert [(tag.label, tag.segments) for tag in summary.tags] == [
+        ("beach", 1),
+        ("food", 1),
+        ("people", 1),
+    ]
+    assert summary.tag_names == ["beach", "food", "people"]
+
+
+def test_a_project_without_tags_offers_no_tag_filter(project: Manifest) -> None:
+    html = render_report(project, Path(project.output_dir)).read_text(encoding="utf-8")
+    assert 'id="tag"' not in html
+    assert "<h2>Tags</h2>" not in html
+
+
+def test_the_page_offers_a_tag_filter_when_something_is_tagged(project: Manifest) -> None:
+    html = render_report(tagged(project), Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert 'id="tag"' in html
+    assert "<h2>Tags</h2>" in html
+    assert '<option value="beach">beach (1)</option>' in html
+    assert 'data-tags="|beach|people|"' in html
+    # The filter matches a whole label between the delimiters.
+    assert 'dataset.tags.indexOf("|" + wanted.tag + "|")' in html
+
+
+def test_tags_show_on_the_card_with_their_confidence(project: Manifest) -> None:
+    html = render_report(tagged(project), Path(project.output_dir)).read_text(encoding="utf-8")
+    assert "tag subject" in html
+    assert ">beach<" in html
+    assert ">0.62<" in html
+
+
+def test_a_secondary_tag_is_shown_after_the_subject_and_not_marked(project: Manifest) -> None:
+    """The card has to say which tag names the clip, not just list what fired."""
+    from autocut.core.manifest import Tag
+
+    ids = list(project.segments)
+    project.segments[ids[0]].tags = [
+        Tag(label="aerial", confidence=0.58, source="local", group="view", primary=False),
+        Tag(label="beach", confidence=0.24, source="local", group="subject", primary=True),
+    ]
+    card = next(c for c in build_cards(project, Path(project.output_dir)) if c.tags)
+
+    assert [tag.label for tag in card.tags] == ["beach", "aerial"]
+    assert [tag.dominant for tag in card.tags] == [True, False]
+    assert [tag.group for tag in card.tags] == ["subject", "view"]
+
+
+def test_the_page_marks_the_tag_that_names_the_clip(project: Manifest) -> None:
+    from autocut.core.manifest import Tag
+
+    ids = list(project.segments)
+    project.segments[ids[0]].tags = [
+        Tag(label="aerial", confidence=0.58, source="local", group="view", primary=False),
+        Tag(label="beach", confidence=0.24, source="local", group="subject", primary=True),
+    ]
+    html = render_report(project, Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert "subject tag, local, confidence 0.24, names the clip" in html
+    assert "view tag, local, confidence 0.58" in html
+    # The view tag is styled as the weaker of the two rather than as the dominant one.
+    assert 'class="tag subject weak"' in html
+
+
+def test_a_card_with_only_a_view_tag_has_no_dominant_chip(project: Manifest) -> None:
+    from autocut.core.manifest import Tag
+
+    ids = list(project.segments)
+    project.segments[ids[0]].tags = [
+        Tag(label="aerial", confidence=0.58, source="local", group="view", primary=False)
+    ]
+    card = next(c for c in build_cards(project, Path(project.output_dir)) if c.tags)
+
+    assert [tag.dominant for tag in card.tags] == [False]

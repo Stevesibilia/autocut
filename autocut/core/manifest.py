@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from autocut.core.config import CutMode, SourceClass
 
@@ -19,8 +19,37 @@ MANIFEST_SCHEMA_VERSION = 1
 ANALYSIS_SCHEMA_VERSION = 1
 
 Outcome = Literal["candidate", "selected", "rejected"]
+TagSource = Literal["local", "cloud"]
 DurationReason = Literal["base", "hero", "alternation", "total", "clamped", "override"]
 TelemetryKind = Literal["dji_embedded_srt", "dji_sidecar_srt", "gopro_gpmf", "none"]
+
+
+class Tag(BaseModel):
+    """One label on a segment, with how sure it is and where it came from.
+
+    The source is here from the first tag rather than added when the second producer
+    arrives, because a later source must not silently delete another source's tags and
+    that rule needs somewhere to read the provenance from.
+
+    ``primary`` says this tag came from the group that names the clip. It is stored
+    rather than derived so that naming and the report can read a manifest without the
+    configuration that produced it: which group is primary is a setting, and a project
+    opened later must still name its clips the way it exported them.
+    """
+
+    label: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    source: TagSource = "local"
+    group: str | None = Field(
+        default=None,
+        description="Which label group scored this tag. None for a source that does "
+        "not group, such as a cloud vision model.",
+    )
+    primary: bool = Field(
+        default=False,
+        description="Whether this tag can be the dominant one. A view or lighting tag "
+        "describes the shot without naming its subject, so it never is.",
+    )
 
 
 class GpsPoint(BaseModel):
@@ -144,7 +173,10 @@ class Segment(BaseModel):
     score: float | None = None
     outcome: Outcome = "candidate"
     reason: str | None = None
-    tags: list[str] = Field(default_factory=list)
+    tags: list[Tag] = Field(
+        default_factory=list,
+        description="Semantic labels, highest confidence first.",
+    )
     caption: str | None = None
     embedding_ref: str | None = None
     cluster_id: int | None = None
@@ -193,6 +225,46 @@ class Segment(BaseModel):
         description="True when the source frame rate is neither the export target nor "
         "a whole multiple of it, so frames had to be resampled.",
     )
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _upgrade_string_tags(cls, value: object) -> object:
+        """Read a manifest written before tags carried a confidence and a source.
+
+        M2 wrote ``tags`` as a list of strings. Upgrading them here rather than by a
+        schema bump keeps every M2 project openable: the shape changed, what a tag
+        means did not, and a string tag was always something a person wrote by hand.
+        """
+        if not isinstance(value, list):
+            return value
+        return [
+            {"label": item, "confidence": 1.0, "source": "local", "primary": True}
+            if isinstance(item, str)
+            else item
+            for item in value
+        ]
+
+    @property
+    def dominant_tag(self) -> str | None:
+        """The tag that names this clip, or ``None`` when nothing named its subject.
+
+        Only a primary tag can be dominant. A shot that is confidently ``aerial`` and
+        confidently nothing else is still a clip whose subject is unknown, and calling
+        the file ``aerial`` would say what the source class already says.
+
+        Derived rather than stored: it changes whenever the tag list does, and a stored
+        copy would be one more thing to keep in step. ``m3-cloud-providers`` gives cloud
+        tags precedence here.
+        """
+        primary = [tag for tag in self.tags if tag.primary]
+        if not primary:
+            return None
+        return max(primary, key=lambda tag: tag.confidence).label
+
+    @property
+    def secondary_tags(self) -> list[Tag]:
+        """Everything that describes the shot without naming its subject."""
+        return [tag for tag in self.tags if not tag.primary]
 
 
 class AnalysisRun(BaseModel):

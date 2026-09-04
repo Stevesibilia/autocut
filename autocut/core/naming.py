@@ -37,8 +37,9 @@ def sanitize(text: str) -> str:
 
 
 def clip_tag(segment: Segment) -> str:
-    """The first semantic tag, or the placeholder until tagging lands in M3."""
-    return sanitize(segment.tags[0]) if segment.tags else DEFAULT_TAG
+    """The segment's dominant tag, or the placeholder when nothing was confident enough."""
+    dominant = segment.dominant_tag
+    return sanitize(dominant) if dominant else DEFAULT_TAG
 
 
 def clip_date(segment: Segment, source: SourceFile) -> str:

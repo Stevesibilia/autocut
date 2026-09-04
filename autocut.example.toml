@@ -81,6 +81,7 @@ alternate_durations = true  # break runs of three clips in the same bucket
 place_radius_m = 150.0          # two candidates this close share a place, transitively
 place_visit_gap_seconds = 7200.0  # a gap this long inside one place starts a new visit
 max_clips_per_place = 3
+max_share_per_tag = 0.5     # ceiling on one dominant tag's share of the final count
 max_candidate_share = 0.5   # ceiling on max_clips as a share of the eligible candidates
 
 snap_to_motion = true       # start the cut where movement begins
@@ -134,6 +135,59 @@ semantic = 0.5
 spatial = 0.2
 temporal = 0.2
 motion = 0.1
+
+# Zero-shot semantic tags, computed from the segment embeddings and these labels.
+# Editing the groups and re-running "autocut tag" recomputes the tags in seconds and
+# touches neither the embeddings nor the metrics.
+[tags]
+enabled = true
+# Cosines are multiplied by this before the softmax. CLIP ships 100, the constant its
+# contrastive loss was trained with, which over a handful of labels makes one label win
+# with probability 1 and leaves the threshold deciding nothing.
+logit_scale = 10.0
+threshold = 0.2        # probability after the softmax over a group, its null prompt included
+max_per_segment = 3    # across groups; the dominant tag is kept first
+
+# Labels are grouped and each group is scored on its own, because a drone shot over a
+# beach is a beach and is aerial, and one softmax over both makes them compete. Anything
+# that can be true at the same time as another label belongs in another group.
+#
+# Every group carries a null_prompt. It joins the softmax and is never emitted: it is how
+# a group says "none of these", and without it some label always wins.
+#
+# The primary group is the one whose top label names the exported clip. Exactly one group
+# should be primary.
+[[tags.groups]]
+name = "subject"
+prompt_template = "a photo of {label}"
+null_prompt = "a photo"
+primary = true
+labels = [
+  { label = "beach" },
+  { label = "mountain" },
+  { label = "city" },
+  { label = "street" },
+  { label = "indoor" },
+  { label = "food" },
+  { label = "people" },
+]
+
+[[tags.groups]]
+name = "view"
+prompt_template = "a photo of {label}"
+null_prompt = "a photo taken at ground level"
+# CLIP is sensitive to phrasing: "aerial" on its own encodes closer to an antenna than
+# to a view from the air, so that label carries its own sentence.
+labels = [
+  { label = "aerial", prompt = "an aerial photo taken from a drone" },
+  { label = "underwater" },
+]
+
+[[tags.groups]]
+name = "light"
+prompt_template = "a photo of {label}"
+null_prompt = "a photo taken in ordinary daylight"
+labels = [{ label = "sunset" }]
 
 [export]
 mode = "precise"      # or "fast" for keyframe aligned stream copy

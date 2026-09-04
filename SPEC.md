@@ -332,6 +332,8 @@ CapCut imports in alphabetical order, so the filename carries chronology. The da
 015_20260813_reflex_detail_4.0s.mp4
 ```
 
+The tag is the segment's dominant tag, which is its most confident label from the primary group, or `clip` when no subject label beat its group's null prompt. A tag from another group never appears here: `aerial` says how a shot was taken and the class field already says it.
+
 Output folder:
 
 ```text
@@ -364,7 +366,16 @@ Modules in order of value over complexity:
 
 1. **CLIP embeddings**, one per segment, local, computed from the 320 px thumbnail frame the analysis already cached, so no video is decoded a second time. `ViT-B-32/laion2b_s34b_b79k` through open_clip, on CUDA, MPS or CPU in that order. The vectors live in the file's cache entry beside the metric arrays together with the model identifier, so changing the model recomputes them and leaves the metrics alone. `autocut embed` fills a project that was analyzed without the extra, and `autocut analyze` calls it at the end when the extra is there. Without it analysis completes, records `embedding_model: none` and prints one line. Built in M3.
 2. **Semantic similarity for deduplication.** The best similarity signal by far. The cosine between two normalized vectors is stretched from `similarity.semantic_floor`, 0.5 by default, up to 1 onto 0 to 1, because two unrelated holiday shots still score around 0.5 against each other. It replaces the perceptual hash for any pair where both candidates carry a vector rather than being averaged with it, so the mean holds one visual opinion and not two; a pair missing one vector falls back to the hash on its own. Built in M3.
-3. **Semantic tagging.** Local zero-shot against a label set (`aerial`, `sunset`, `beach`, `mountain`, `people`, `food`, `city`, `underwater`, `indoor`, `street`), or cloud vision model. Feeds the filename tag, category balancing and the soundtrack prompt.
+3. **Semantic tagging.** Local zero-shot from the segment embedding against a configurable label set, or a cloud vision model. Feeds the filename tag, category balancing and the soundtrack prompt. Built in M3, and the shape of it came from measurement rather than from the obvious design.
+
+   Labels live in **groups**, one softmax each: `subject` (beach, mountain, city, street, indoor, food, people), `view` (aerial, underwater) and `light` (sunset). Labels that can be true at the same time must not compete, and one softmax over all ten made them: a drone shot over a beach scored `beach` at a cosine of 0.2886 against `aerial` at 0.2052, so `beach` took all 27 drone segments and `aerial` appeared on none.
+
+   Each group carries a **null prompt** that joins its softmax, is never emitted, and has to be beaten before a label is. A group whose probabilities sum to one over its labels alone always emits something; and a probability threshold alone means different things in a group of two rows and a group of eight, which put `sunset` on all 77 segments of a set with no sunset in it.
+
+   The **logit scale** is `tags.logit_scale`, default 10. CLIP's own 100 belongs to its contrastive loss: at 100 the distribution is one-hot, every segment took a tag, and no threshold rejected anything.
+
+   Only the **primary group** names a file. A view or a lighting tag says how a shot was taken, which the source class already says. On the Sardinia set 55 of 77 segments get a subject, 22 fall back to `clip`, every one of the 20 `aerial` tags is on a drone clip, and `autocut tag` runs in 5 s.
+
 4. **Captions**, cloud vision model only. One sentence per selected clip, feeds the soundtrack prompt.
 5. **Aesthetic scoring.** Predictor on CLIP embeddings (LAION weights) locally, or the cloud model's judgment.
 6. **Face detection** (MediaPipe or InsightFace). Family scenes have value no sharpness metric sees. Raises the score, handled as a separate rule. Also protects deduplication: similar frames with different people are not duplicates.
@@ -386,6 +397,7 @@ autocut doctor
 # first pass
 autocut analyze    ./footage --out ./edit-sardinia
 autocut embed      ./edit-sardinia   # only when analyze ran without the ai extra
+autocut tag        ./edit-sardinia   # after editing the label set in autocut.toml
 autocut select     ./edit-sardinia --max-clips 40 --duration 3.0 --diversity 0.6
 autocut soundtrack ./edit-sardinia --variants 3
 autocut report     ./edit-sardinia

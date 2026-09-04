@@ -23,14 +23,14 @@ from autocut.core.cache import cache_stats
 from autocut.core.config import AutocutConfig
 from autocut.core.hwaccel import select as select_hwaccel
 from autocut.core.hwaccel import verify as verify_hwaccel
+from autocut.core.providers import (
+    KEY_ENV_VAR,
+    KEYRING_SERVICE,
+    KEYRING_USERNAME,
+    find_key,
+)
 
 VERSION_TIMEOUT_S = 10.0
-
-#: Where the OpenRouter key is looked for. ``m3-cloud-providers`` moves the lookup into
-#: the provider package and this command will call it there; the names have to match.
-KEY_ENV_VAR = "OPENROUTER_API_KEY"
-KEYRING_SERVICE = "autocut"
-KEYRING_USERNAME = "openrouter"
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +95,7 @@ def inspect_environment(config: AutocutConfig, sample: Path | None = None) -> Do
         ai_extra=_ai_extra_check(),
         compute_device=_device_check(),
         model_weights=_weights_check(config),
-        cloud_key=_key_check(),
+        cloud_key=_key_check(config),
         cache=_cache_check(config),
     )
 
@@ -168,28 +168,21 @@ def _weights_check(config: AutocutConfig) -> Check:
     )
 
 
-def find_key() -> str | None:
-    """The OpenRouter key from the environment, then the keychain. Never logged."""
-    from_env = os.environ.get(KEY_ENV_VAR)
-    if from_env:
-        return from_env
-    try:
-        import keyring
-
-        stored = keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
-    except Exception:  # noqa: BLE001 - no backend, a locked keychain, all the same here
-        return None
-    return stored or None
-
-
-def _key_check() -> Check:
+def _key_check(config: AutocutConfig) -> Check:
+    """Whether a key exists and which model it would reach. Never the key itself."""
+    model = config.providers.vision_model
+    switched_off = "" if config.providers.cloud else ", but providers.cloud is false"
     if os.environ.get(KEY_ENV_VAR):
-        return Check(name="cloud_key", ok=True, detail=f"{KEY_ENV_VAR} is set")
+        return Check(
+            name="cloud_key", ok=True, detail=f"{KEY_ENV_VAR} is set, {model}{switched_off}"
+        )
     if find_key() is not None:
         return Check(
             name="cloud_key",
             ok=True,
-            detail=f"in the keychain as {KEYRING_SERVICE}/{KEYRING_USERNAME}",
+            detail=(
+                f"in the keychain as {KEYRING_SERVICE}/{KEYRING_USERNAME}, {model}{switched_off}"
+            ),
         )
     return Check(
         name="cloud_key",

@@ -8,6 +8,7 @@ report that the stage is not implemented.
 from __future__ import annotations
 
 import json
+import sys
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,6 +29,7 @@ from autocut import __version__
 from autocut.core.analyze import AnalysisCancelled, analyze_files
 from autocut.core.cache import cache_stats, prune
 from autocut.core.config import AutocutConfig
+from autocut.core.describe import DescribeResult, describe_project
 from autocut.core.doctor import inspect_environment
 from autocut.core.embeddings import EmbedResult, embed_project
 from autocut.core.events import ProgressEvent
@@ -35,6 +37,8 @@ from autocut.core.export import export_clips
 from autocut.core.ffmpeg_cmd import ExportOverrides
 from autocut.core.ingest import ingest
 from autocut.core.manifest import Manifest
+from autocut.core.providers import clear_key, cloud_enabled, find_key, set_key
+from autocut.core.providers.openrouter import OpenRouterProvider
 from autocut.core.report import render_report
 from autocut.core.select import SelectionOverrides, select_clips
 from autocut.core.tags import TagResult, tag_project
@@ -51,9 +55,25 @@ ConfigOpt = Annotated[
     typer.Option("--config", "-c", help="Path to autocut.toml. Defaults to ./autocut.toml."),
 ]
 
+# On every command, because a user scripting the pipeline should be able to put it on
+# any of them and get a run that reaches no provider. On the commands that make no
+# provider call it simply has nothing to switch off.
+NoCloudOpt = Annotated[
+    bool, typer.Option("--no-cloud", help="Make no call to a hosted provider in this run.")
+]
 
-def _load_config(path: Path | None) -> AutocutConfig:
-    return AutocutConfig.load(path or Path("autocut.toml"))
+
+def _load_config(path: Path | None, no_cloud: bool = False) -> AutocutConfig:
+    """The configuration for this run, with ``--no-cloud`` applied.
+
+    The flag is applied here rather than at each call site so it means the same thing
+    everywhere: this run reaches no provider. On a command that makes no provider call
+    it still has an effect worth having, since ``doctor`` then reports the run as it is.
+    """
+    config = AutocutConfig.load(path or Path("autocut.toml"))
+    if no_cloud:
+        config.providers.cloud = False
+    return config
 
 
 def _not_implemented(stage: str) -> None:
@@ -79,7 +99,7 @@ def analyze(
     sources: Annotated[list[Path], typer.Argument(help="Source folders to scan.")],
     out: Annotated[Path, typer.Option("--out", "-o", help="Output folder.")],
     config: ConfigOpt = None,
-    no_cloud: Annotated[bool, typer.Option("--no-cloud", help="Disable cloud providers.")] = False,
+    no_cloud: NoCloudOpt = False,
     no_proxies: Annotated[
         bool, typer.Option("--no-proxies", help="Ignore .lrv and .lrf proxy files.")
     ] = False,
@@ -88,9 +108,7 @@ def analyze(
     ] = None,
 ) -> None:
     """Scan, probe and analyze footage. Writes manifest.json and report.html."""
-    cfg = _load_config(config)
-    if no_cloud:
-        cfg.providers.cloud = False
+    cfg = _load_config(config, no_cloud)
     if no_proxies:
         cfg.analysis.use_proxies = False
     if workers is not None:
@@ -158,6 +176,7 @@ def analyze(
 
     embedded = _run_embed(manifest, cfg)
     tagged = _run_tag(manifest, cfg)
+    described = _run_describe(manifest, cfg, no_cloud)
     manifest.updated_at = datetime.now(UTC)
     manifest.save(manifest_path)
 
@@ -175,6 +194,7 @@ def analyze(
         console.print(f"  {reason}: {count}")
     _print_embed(embedded)
     _print_tag(tagged)
+    _print_describe(described)
     console.print(f"Report written to {report_path}")
     if interrupted:
         console.print(
@@ -264,9 +284,10 @@ def _print_embed(result: EmbedResult) -> None:
 def embed(
     project: Annotated[Path, typer.Argument(help="Output folder holding manifest.json.")],
     config: ConfigOpt = None,
+    no_cloud: NoCloudOpt = False,
 ) -> None:
     """Compute the missing segment embeddings from the analysis cache."""
-    cfg = _load_config(config)
+    cfg = _load_config(config, no_cloud)
     manifest = _open_project(project)
     result = _run_embed(manifest, cfg)
     manifest.updated_at = datetime.now(UTC)
@@ -302,9 +323,10 @@ def _print_tag(result: TagResult) -> None:
 def tag(
     project: Annotated[Path, typer.Argument(help="Output folder holding manifest.json.")],
     config: ConfigOpt = None,
+    no_cloud: NoCloudOpt = False,
 ) -> None:
     """Recompute the semantic tags from the cached embeddings and the label set."""
-    cfg = _load_config(config)
+    cfg = _load_config(config, no_cloud)
     manifest = _open_project(project)
     result = _run_tag(manifest, cfg)
     manifest.updated_at = datetime.now(UTC)
@@ -312,9 +334,129 @@ def tag(
     _print_tag(result)
 
 
+def _run_describe(manifest: Manifest, cfg: AutocutConfig, no_cloud: bool) -> DescribeResult:
+    """Describe the project through the configured provider, or say why it did not.
+
+    Cloud needs three things to agree and this is where the answer is recorded on the
+    run, so a manifest says whether a hosted model saw the footage and what it cost.
+    """
+    enabled, reason = cloud_enabled(cfg, no_cloud)
+    if not enabled:
+        result = DescribeResult(scope=cfg.providers.describe_scope, skipped_reason=reason)
+    else:
+        key = find_key()
+        # cloud_enabled already established there is one; this keeps the type honest.
+        assert key is not None
+        with (
+            OpenRouterProvider(key, cfg) as provider,
+            Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeElapsedColumn(),
+                console=console,
+            ) as bar,
+        ):
+            task = bar.add_task("Describing", total=None)
+
+            def on_event(event: ProgressEvent) -> None:
+                bar.update(task, completed=event.current, total=event.total)
+
+            result = describe_project(manifest, cfg, provider, on_event)
+
+    manifest.analysis.cloud_model = "none" if result.skipped else result.model
+    manifest.analysis.cloud_requests = result.requests
+    manifest.analysis.cloud_cost_usd = result.cost_usd
+    return result
+
+
+def _print_describe(result: DescribeResult) -> None:
+    if result.skipped_reason is not None:
+        console.print(f"Descriptions skipped: {result.skipped_reason}")
+        return
+    console.print(
+        f"Described [bold]{result.described}[/bold] of {result.in_scope} segments "
+        f"in scope ({result.scope}) with {result.model}"
+    )
+    console.print(
+        f"  {result.requests} requests, {result.from_cache} from cache, "
+        f"[bold]{result.cost_usd:.4f} USD[/bold]"
+    )
+    if result.aborted:
+        console.print("[yellow]Describing stopped early[/yellow] after repeated provider failures.")
+    for segment_id, message in result.errors[:5]:
+        console.print(f"[yellow]failed[/yellow] {segment_id}: {message}")
+    if len(result.errors) > 5:
+        console.print(f"[yellow]... and {len(result.errors) - 5} more[/yellow]")
+
+
+@app.command()
+def describe(
+    project: Annotated[Path, typer.Argument(help="Output folder holding manifest.json.")],
+    scope: Annotated[
+        str | None,
+        typer.Option("--scope", help="Segments to describe: candidates or selected."),
+    ] = None,
+    config: ConfigOpt = None,
+    no_cloud: NoCloudOpt = False,
+) -> None:
+    """Ask a hosted vision model for tags, a caption and an aesthetic per segment."""
+    cfg = _load_config(config, no_cloud)
+    if scope is not None:
+        if scope not in ("candidates", "selected"):
+            console.print(f"[red]Unknown scope[/red] {scope!r}. Use candidates or selected.")
+            raise typer.Exit(code=2)
+        cfg.providers.describe_scope = scope  # type: ignore[assignment]
+    manifest = _open_project(project)
+    result = _run_describe(manifest, cfg, no_cloud)
+    manifest.updated_at = datetime.now(UTC)
+    manifest.save(project / "manifest.json")
+    _print_describe(result)
+
+
+key_app = typer.Typer(name="key", help="Store the provider API key in the OS keychain.")
+app.add_typer(key_app)
+
+
+@key_app.command("set")
+def key_set(
+    from_stdin: Annotated[
+        bool,
+        typer.Option("--stdin", help="Read the key from standard input, for a script or a pipe."),
+    ] = False,
+) -> None:
+    """Store an OpenRouter key in the keychain. It never goes into autocut.toml.
+
+    There is deliberately no option to pass the key as an argument. An argument is
+    visible in ``ps`` and in ``/proc/*/cmdline`` to every other user on the machine, and
+    it lands in the shell history. Interactively the key is prompted for without echo;
+    a script pipes it in with ``--stdin``.
+    """
+    secret = sys.stdin.readline() if from_stdin else typer.prompt("OpenRouter key", hide_input=True)
+    if not secret.strip():
+        console.print("[red]No key given[/red]; nothing was stored.")
+        raise typer.Exit(code=2)
+    try:
+        set_key(secret.strip())
+    except Exception as exc:  # noqa: BLE001 - any keyring backend failure reads the same
+        console.print(f"[red]Could not store the key[/red]: {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print("Key stored in the keychain as autocut/openrouter.")
+
+
+@key_app.command("clear")
+def key_clear() -> None:
+    """Remove the stored key. The environment variable, if set, still wins."""
+    if clear_key():
+        console.print("Key removed from the keychain.")
+    else:
+        console.print("No key was stored in the keychain.")
+
+
 @app.command()
 def doctor(
     config: ConfigOpt = None,
+    no_cloud: NoCloudOpt = False,
     as_json: Annotated[
         bool, typer.Option("--json", help="Print the same facts as a JSON object.")
     ] = False,
@@ -324,7 +466,7 @@ def doctor(
     ] = None,
 ) -> None:
     """Report what this machine provides: binaries, decoder, extra, model, key, cache."""
-    report = inspect_environment(_load_config(config), sample)
+    report = inspect_environment(_load_config(config, no_cloud), sample)
     if as_json:
         # Written straight to stdout: Rich would soft wrap a long cache path and the
         # output has to parse.
@@ -347,9 +489,10 @@ def select(
     ] = None,
     diversity: Annotated[float | None, typer.Option("--diversity", help="Lambda, 0 to 1.")] = None,
     config: ConfigOpt = None,
+    no_cloud: NoCloudOpt = False,
 ) -> None:
     """Pick the best window per segment and the final diverse set of clips."""
-    cfg = _load_config(config)
+    cfg = _load_config(config, no_cloud)
     manifest = _open_project(project)
     result = select_clips(
         manifest,
@@ -422,16 +565,21 @@ def soundtrack(
     project: Annotated[Path, typer.Argument()],
     variants: Annotated[int | None, typer.Option("--variants")] = None,
     config: ConfigOpt = None,
+    no_cloud: NoCloudOpt = False,
 ) -> None:
     """Generate the music prompt from the selected clips."""
-    _load_config(config)
+    _load_config(config, no_cloud)
     _not_implemented("soundtrack")
 
 
 @app.command()
-def report(project: Annotated[Path, typer.Argument()], config: ConfigOpt = None) -> None:
+def report(
+    project: Annotated[Path, typer.Argument()],
+    config: ConfigOpt = None,
+    no_cloud: NoCloudOpt = False,
+) -> None:
     """Write report.html for visual review."""
-    _load_config(config)
+    _load_config(config, no_cloud)
     manifest_path = project / "manifest.json"
     if not manifest_path.exists():
         console.print(f"[red]No manifest found[/red] at {manifest_path}. Run analyze first.")
@@ -446,9 +594,10 @@ def sync(
     audio: Annotated[Path, typer.Option("--audio", help="Generated track.")],
     bpm: Annotated[float | None, typer.Option("--bpm", help="Override measured BPM.")] = None,
     config: ConfigOpt = None,
+    no_cloud: NoCloudOpt = False,
 ) -> None:
     """Measure the track BPM and quantize clip durations to beats."""
-    _load_config(config)
+    _load_config(config, no_cloud)
     _not_implemented("sync")
 
 
@@ -466,9 +615,10 @@ def export(
         bool, typer.Option("--rejects", help="Also export rejected segments into _rejects/.")
     ] = False,
     config: ConfigOpt = None,
+    no_cloud: NoCloudOpt = False,
 ) -> None:
     """Cut, normalize and write the numbered clips into _selects/."""
-    cfg = _load_config(config)
+    cfg = _load_config(config, no_cloud)
     manifest = _open_project(project)
     # The manifest holds the output folder it was analyzed into; this run may be
     # pointed at a moved copy of that folder, and the clips belong beside it.
@@ -525,7 +675,7 @@ def run(
     sources: Annotated[list[Path], typer.Argument()],
     out: Annotated[Path, typer.Option("--out", "-o")],
     config: ConfigOpt = None,
-    no_cloud: Annotated[bool, typer.Option("--no-cloud", help="Disable cloud providers.")] = False,
+    no_cloud: NoCloudOpt = False,
     no_proxies: Annotated[
         bool, typer.Option("--no-proxies", help="Ignore .lrv and .lrf proxy files.")
     ] = False,

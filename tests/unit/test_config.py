@@ -49,6 +49,46 @@ def test_the_shipped_example_lists_the_provider_defaults() -> None:
     assert AutocutConfig.load(example).providers == AutocutConfig().providers
 
 
+def test_provider_defaults_match_the_spec() -> None:
+    providers = AutocutConfig().providers
+    assert providers.cloud
+    assert providers.vision_model == "google/gemini-2.5-flash"
+    assert providers.describe_scope == "candidates"
+    assert providers.max_concurrency == 4
+    assert providers.max_retries == 4
+    assert providers.max_failures == 8
+    assert providers.prompt_version == 1
+
+
+def test_the_provider_bounds_reject_a_mistyped_file(tmp_path: Path) -> None:
+    """A bad autocut.toml should fail when it is loaded, not at the first request."""
+    import pytest
+    from pydantic import ValidationError
+
+    from autocut.core.config import ProvidersConfig
+
+    for bad in (
+        {"max_concurrency": 0},
+        {"max_concurrency": 999},
+        {"max_retries": -1},
+        {"max_retries": 100},
+        {"max_failures": 0},
+        {"prompt_version": 0},
+    ):
+        with pytest.raises(ValidationError):
+            ProvidersConfig(**bad)
+
+
+def test_the_shipped_example_lists_the_provider_settings() -> None:
+    example = Path(__file__).resolve().parents[2] / "autocut.example.toml"
+    assert AutocutConfig.load(example).providers == AutocutConfig().providers
+
+
+def test_the_aesthetic_weight_is_zero_by_default() -> None:
+    """Descriptions must not change a score until the user asks them to."""
+    assert AutocutConfig().weights.aesthetic == 0.0
+
+
 def test_tag_defaults_match_the_spec() -> None:
     cfg = AutocutConfig()
     assert cfg.tags.enabled

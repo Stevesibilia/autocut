@@ -37,6 +37,10 @@ SCORED_METRICS: tuple[tuple[str, str, bool], ...] = (
     ("motion", "motion", False),
     ("stability", "stability", False),
     ("colorfulness", "colorfulness", False),
+    # Filled by cloud descriptions and absent until they run. A metric no segment of a
+    # class has is skipped for that class, so a weight above zero changes nothing until
+    # the descriptions exist.
+    ("aesthetic", "aesthetic", False),
 )
 
 
@@ -90,7 +94,12 @@ def _composite(metrics: list[Metrics], weights: ScoringWeights) -> list[float]:
         weight = float(getattr(weights, weight_name))
         if weight <= 0:
             continue
-        values = np.array([float(getattr(m, metric_name)) for m in metrics], dtype=np.float64)
+        raw = [getattr(m, metric_name) for m in metrics]
+        if any(value is None for value in raw):
+            # Partial coverage would rank a described segment against an undescribed
+            # one on a number only the first one has, so the metric sits this class out.
+            continue
+        values = np.array([float(value) for value in raw], dtype=np.float64)
         normalized = rank_normalize(values)
         if lower_is_better:
             normalized = 1.0 - normalized

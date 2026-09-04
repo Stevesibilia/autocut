@@ -110,6 +110,9 @@ class Card:
     tags: list[CardTag] = field(default_factory=list)
     tag_keys: str = ""
     height_label: str | None = None
+    caption: str | None = None
+    aesthetic_label: str | None = None
+    description_error: str | None = None
 
 
 @dataclass(slots=True)
@@ -155,6 +158,10 @@ class Summary:
     snapped_count: int
     places: list[PlaceSummary]
     tags: list[TagSummary]
+    cloud_model: str | None
+    cloud_requests: int
+    cloud_cost_usd: float
+    captioned_count: int
     export_mode: str | None
     export_fps: float | None
     export_failed: int
@@ -285,6 +292,15 @@ def _card(segment: Segment, source: SourceFile | None, index: int, out_dir: Path
         thumbnail=relative_asset(segment.thumbnail, out_dir),
         sprite=relative_asset(segment.sprite, out_dir),
         metrics=metrics,
+        caption=segment.caption,
+        # Stored on the segment scaled to 0 to 1 so it normalizes beside the other
+        # metrics; the card shows the 1 to 10 the model was asked for.
+        aesthetic_label=(
+            f"{segment.metrics.aesthetic * 10:.0f}"
+            if segment.metrics is not None and segment.metrics.aesthetic is not None
+            else None
+        ),
+        description_error=segment.description_error,
         tags=_card_tags(segment),
         # A delimited list rather than a space separated one: a label from the user's
         # own set may contain a space, and the filter compares whole labels.
@@ -418,6 +434,16 @@ def build_summary(manifest: Manifest, cards: list[Card]) -> Summary:
         snapped_count=sum(1 for card in cards if card.snapped),
         places=build_places(manifest, cards),
         tags=tags,
+        # "none" is what a run that made no cloud call records; the header shows the
+        # panel only when a model actually looked at the footage.
+        cloud_model=(
+            manifest.analysis.cloud_model
+            if manifest.analysis.cloud_model not in (None, "", "none")
+            else None
+        ),
+        cloud_requests=manifest.analysis.cloud_requests,
+        cloud_cost_usd=manifest.analysis.cloud_cost_usd,
+        captioned_count=sum(1 for card in cards if card.caption),
         export_mode=manifest.export.mode,
         export_fps=manifest.export.target_fps,
         export_failed=manifest.export.failed,

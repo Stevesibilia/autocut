@@ -681,3 +681,104 @@ def test_a_card_with_only_a_view_tag_has_no_dominant_chip(project: Manifest) -> 
     card = next(c for c in build_cards(project, Path(project.output_dir)) if c.tags)
 
     assert [tag.dominant for tag in card.tags] == [False]
+
+
+def described(project: Manifest) -> Manifest:
+    """One segment with a cloud description, one with only local tags, one with neither."""
+    from autocut.core.manifest import Tag
+
+    ids = list(project.segments)
+    first = project.segments[ids[0]]
+    first.caption = "two people snorkeling over clear turquoise water"
+    first.tags = [
+        Tag(label="snorkeling", confidence=1.0, source="cloud", primary=True),
+        Tag(label="beach", confidence=0.62, source="local", group="subject", primary=True),
+    ]
+    assert first.metrics is not None
+    first.metrics.aesthetic = 0.7
+    project.segments[ids[1]].tags = [
+        Tag(label="food", confidence=0.55, source="local", group="subject", primary=True)
+    ]
+    project.analysis.cloud_model = "google/gemini-2.5-flash"
+    project.analysis.cloud_requests = 60
+    project.analysis.cloud_cost_usd = 0.0312
+    return project
+
+
+def test_a_described_card_carries_its_caption_and_aesthetic(project: Manifest) -> None:
+    cards = build_cards(described(project), Path(project.output_dir))
+    card = next(c for c in cards if c.caption)
+
+    assert card.caption == "two people snorkeling over clear turquoise water"
+    # Stored scaled to 0 to 1, shown as the 1 to 10 the model was asked for.
+    assert card.aesthetic_label == "7"
+
+
+def test_a_cloud_tag_is_distinguished_from_a_local_one(project: Manifest) -> None:
+    cards = build_cards(described(project), Path(project.output_dir))
+    card = next(c for c in cards if c.caption)
+
+    assert [(tag.label, tag.source) for tag in card.tags] == [
+        ("snorkeling", "cloud"),
+        ("beach", "local"),
+    ]
+    assert card.tags[0].dominant
+    assert not card.tags[1].dominant
+
+
+def test_the_page_shows_the_caption_the_aesthetic_and_the_cloud_tag(project: Manifest) -> None:
+    html = render_report(described(project), Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert "two people snorkeling over clear turquoise water" in html
+    assert "aesthetic 7" in html
+    # A cloud tag reads differently from a local one on the card.
+    assert "tag subject cloud" in html
+    assert 'class="tag subject weak"' in html
+
+
+def test_the_header_shows_the_model_the_requests_and_the_cost(project: Manifest) -> None:
+    """The scenario from the spec: 60 requests costing 0.0312 USD."""
+    html = render_report(described(project), Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert "<h2>Descriptions</h2>" in html
+    assert "google/gemini-2.5-flash" in html
+    assert "60 requests" in html
+    assert "0.0312" in html
+
+
+def test_the_header_counts_the_captioned_clips(project: Manifest) -> None:
+    summary = build_summary(
+        described(project), build_cards(described(project), Path(project.output_dir))
+    )
+
+    assert summary.captioned_count == 1
+    assert summary.cloud_requests == 60
+    assert summary.cloud_cost_usd == 0.0312
+
+
+def test_a_project_without_descriptions_shows_no_cost_panel(project: Manifest) -> None:
+    html = render_report(project, Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert "<h2>Descriptions</h2>" not in html
+    assert (
+        build_summary(project, build_cards(project, Path(project.output_dir))).cloud_model is None
+    )
+
+
+def test_a_failed_description_says_so_on_the_card(project: Manifest) -> None:
+    ids = list(project.segments)
+    project.segments[ids[0]].description_error = "provider returned 503"
+    html = render_report(project, Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert "No description: provider returned 503" in html
+
+
+def test_a_caption_wins_over_a_stale_error_on_the_card(project: Manifest) -> None:
+    """A clip that failed once and succeeded later shows the caption, not the error."""
+    ids = list(project.segments)
+    project.segments[ids[0]].caption = "a beach at noon"
+    project.segments[ids[0]].description_error = None
+    html = render_report(project, Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert "a beach at noon" in html
+    assert "No description" not in html

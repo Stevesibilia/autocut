@@ -443,6 +443,17 @@
     margin-left: 0.35em;
   }
   .tag.subject.weak { font-weight: 400; }
+  .tag.subject.cloud {
+    border-style: double;
+  }
+  .caption {
+    margin: 0.6rem 0 0;
+    font-style: italic;
+    color: var(--muted);
+  }
+  .aesthetic {
+    font-variant-numeric: tabular-nums;
+  }
   .tag.reason { border-color: var(--reject); color: var(--reject); background: var(--reject-wash); }
   .tag.policy { border-color: var(--ink-muted); color: var(--ink-muted); background: transparent; }
   .tag.length { font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -609,6 +620,17 @@
     </div>
     {% endif %}
 
+    {% if summary.cloud_model %}
+    <div class="panel">
+      <h2>Descriptions</h2>
+      <p class="totals"><b>{{ "%.4f"|format(summary.cloud_cost_usd) }}</b><span>USD</span></p>
+      <p class="note">
+        {{ summary.cloud_model }}, {{ summary.cloud_requests }} requests,
+        {{ summary.captioned_count }} clips captioned.
+      </p>
+    </div>
+    {% endif %}
+
     {% if summary.tags %}
     <div class="panel">
       <h2>Tags</h2>
@@ -758,11 +780,15 @@
         <span class="tag" title="Window start moved onto a motion boundary">snapped</span>
         {% endif %}
         {% for tag in card.tags %}
-        <span class="tag subject{% if not tag.dominant %} weak{% endif %}"
+        <span class="tag subject{% if not tag.dominant %} weak{% endif %}{% if tag.source == 'cloud' %} cloud{% endif %}"
               title="{{ tag.group or tag.source }} tag, {{ tag.source }}, confidence {{ tag.confidence_label }}{% if tag.dominant %}, names the clip{% endif %}">{{ tag.label }}<span class="confidence">{{ tag.confidence_label }}</span></span>
         {% endfor %}
         {% if card.place_label %}
         <span class="tag place" title="Visit {{ card.visit_id }}">{{ card.place_label }}</span>
+        {% endif %}
+        {% if card.aesthetic_label %}
+        <span class="tag aesthetic" title="What the vision model thought of the shot, 1 to 10">
+          aesthetic {{ card.aesthetic_label }}</span>
         {% endif %}
         {% if card.cluster_id is not none %}
         <span class="tag cluster">cluster {{ card.cluster_id }}</span>
@@ -777,6 +803,11 @@
         <span class="tag warn" title="Resampled from a frame rate that is not a multiple of the target">fps converted</span>
         {% endif %}
       </div>
+      {% if card.caption %}
+      <p class="caption">{{ card.caption }}</p>
+      {% elif card.description_error %}
+      <p class="lost">No description: {{ card.description_error }}</p>
+      {% endif %}
       {% if card.exported_name %}
       <p class="exported">
         <span>cut to</span>

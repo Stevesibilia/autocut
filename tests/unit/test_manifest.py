@@ -185,6 +185,58 @@ def test_analysis_run_defaults_and_roundtrip(tmp_path: Path) -> None:
     assert back.analysis.embedding_device == "mps"
 
 
+def test_the_cloud_fields_of_a_run_round_trip(tmp_path: Path) -> None:
+    now = datetime.now(UTC)
+    m = Manifest(created_at=now, updated_at=now, sources=[Path("/footage")], output_dir=tmp_path)
+    assert m.analysis.cloud_model == "none"
+    assert m.analysis.cloud_requests == 0
+    assert m.analysis.cloud_cost_usd == 0.0
+
+    m.analysis.cloud_model = "google/gemini-2.5-flash"
+    m.analysis.cloud_requests = 60
+    m.analysis.cloud_cost_usd = 0.0312
+    out = tmp_path / "manifest.json"
+    m.save(out)
+
+    back = Manifest.load(out)
+    assert back.analysis.cloud_model == "google/gemini-2.5-flash"
+    assert back.analysis.cloud_requests == 60
+    assert back.analysis.cloud_cost_usd == 0.0312
+
+
+def test_a_caption_and_a_description_error_round_trip(tmp_path: Path) -> None:
+    from autocut.core.manifest import Tag
+
+    now = datetime.now(UTC)
+    m = Manifest(created_at=now, updated_at=now, sources=[Path("/footage")], output_dir=tmp_path)
+    m.segments["a:0"] = Segment(
+        id="a:0",
+        file_id="a",
+        start_s=0.0,
+        end_s=4.0,
+        caption="two people snorkeling over clear turquoise water",
+        description_error=None,
+        metrics=Metrics(
+            sharpness=1.0,
+            exposure_clipped=0.0,
+            motion=0.2,
+            stability=0.9,
+            colorfulness=0.3,
+            aesthetic=0.7,
+        ),
+        tags=[Tag(label="snorkeling", confidence=1.0, source="cloud", primary=True)],
+    )
+    out = tmp_path / "manifest.json"
+    m.save(out)
+
+    back = Manifest.load(out).segments["a:0"]
+    assert back.caption == "two people snorkeling over clear turquoise water"
+    assert back.metrics is not None
+    assert back.metrics.aesthetic == 0.7
+    assert back.tags[0].source == "cloud"
+    assert back.dominant_tag == "snorkeling"
+
+
 def test_selection_fields_roundtrip(tmp_path: Path) -> None:
     now = datetime.now(UTC)
     m = Manifest(created_at=now, updated_at=now, sources=[Path("/footage")], output_dir=tmp_path)

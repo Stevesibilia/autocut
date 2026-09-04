@@ -178,6 +178,11 @@ class Segment(BaseModel):
         description="Semantic labels, highest confidence first.",
     )
     caption: str | None = None
+    description_error: str | None = Field(
+        default=None,
+        description="Why a cloud description failed for this segment. Kept so a report "
+        "can show which clips a provider outage left without a caption.",
+    )
     embedding_ref: str | None = None
     cluster_id: int | None = None
     place_id: int | None = Field(
@@ -259,6 +264,12 @@ class Segment(BaseModel):
         primary = [tag for tag in self.tags if tag.primary]
         if not primary:
             return None
+        # A cloud tag wins when there is one, in the order the model returned them: a
+        # vision model looking at the picture is more specific than a zero-shot label
+        # set, and its first tag is its own answer to "what is this".
+        cloud = [tag for tag in primary if tag.source == "cloud"]
+        if cloud:
+            return cloud[0].label
         return max(primary, key=lambda tag: tag.confidence).label
 
     @property
@@ -290,6 +301,19 @@ class AnalysisRun(BaseModel):
         default="none",
         description="Which compute device embedded them, so a timing on the MacBook "
         "and one on the Linux box can be told apart.",
+    )
+    cloud_model: str = Field(
+        default="none",
+        description="Which hosted model described the segments, or 'none' when cloud "
+        "was switched off, no key was available or nothing needed describing.",
+    )
+    cloud_requests: int = Field(
+        default=0, description="Requests actually issued. A cached run issues none."
+    )
+    cloud_cost_usd: float = Field(
+        default=0.0,
+        description="Cost of those requests from the usage the provider reported, so a "
+        "project says what it cost without anyone opening a dashboard.",
     )
     warnings: list[str] = Field(default_factory=list)
 

@@ -31,7 +31,7 @@ from autocut.core.report import render_report
 from autocut.core.rules import EXCLUSIONS
 from autocut.gui.state import ProjectState
 from autocut.gui.widgets.groups import GroupsView
-from autocut.gui.widgets.montage import MontagePlayer
+from autocut.gui.widgets.montage import MontagePlayer, clip_labels
 from autocut.gui.widgets.preview import PreviewPanel
 from autocut.gui.widgets.sliders import SliderPanel
 from autocut.gui.widgets.thumb_grid import ThumbGrid
@@ -185,6 +185,9 @@ class ReviewScreen(QWidget):
         state.stage_started.connect(lambda _name: self._set_running(True))
         state.stage_finished.connect(self._stage_finished)
         state.stage_cancelled.connect(lambda _name: self._set_running(False))
+        # Also on error: a failed stage emits neither finished nor cancelled, and
+        # without this the screen stayed disabled until the next stage ran.
+        state.error.connect(lambda _message: self._set_running(False))
 
         self.reload()
 
@@ -485,7 +488,12 @@ class ReviewScreen(QWidget):
             return False
         path = Path(manifest.preview.path)
         index = Path(manifest.preview.index_path) if manifest.preview.index_path else None
-        if not self.montage.load(path, index, sound=manifest.preview.has_audio):
+        if not self.montage.load(
+            path,
+            index,
+            sound=manifest.preview.has_audio,
+            labels=clip_labels(manifest),
+        ):
             self.montage_note.setText("The montage file is gone. Press Play all to build it.")
             return False
         self.groups_toggle.setChecked(False)

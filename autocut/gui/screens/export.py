@@ -246,6 +246,9 @@ class ExportScreen(QWidget):
         state.stage_started.connect(lambda _name: self._set_running(True))
         state.stage_finished.connect(self._stage_finished)
         state.stage_cancelled.connect(self._stage_cancelled)
+        # Also on error: a failed stage emits neither finished nor cancelled, and
+        # without this the screen stayed disabled until the next stage ran.
+        state.error.connect(lambda _message: self._set_running(False))
 
         self._loading = False
         self.reload()

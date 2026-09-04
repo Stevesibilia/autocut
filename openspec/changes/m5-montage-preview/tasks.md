@@ -73,3 +73,13 @@
   **One more flake fixed while getting the gates green.** `make docker-test-gui` segfaulted after the last soundtrack test: a `QMediaPlayer` whose widget is garbage collected while it is still playing takes the process down, and in the container, where the audio backend is a stub, it does so reliably. The suite printed every test as passed and then died with exit 139, which is the same shape as the `QThread` flake from the previous change. An autouse fixture stops every player before teardown. Three consecutive container runs clean afterwards.
 
   Gates: `make lint` clean (ruff, format, mypy strict on 71 files). `make docker-test` **1089 passed, 61 skipped**. `make docker-test-gui` **262 passed**, three times. `make docker-test-ai` **8 passed, 13 skipped**. Both mypy passes hold: excluded on the Qt free image (47 files), full in `dev-gui` (71 files). In the venv, **1359 passed, 40 skipped**.
+
+## 5. Review fixes on pull request 41
+
+- [x] 5.1 Play with track follows `_synced_with_a_track()` rather than a loaded track, in both places that set it, so a sync that failed or was cancelled leaves the button off. The method refuses too and says why, because it is public and a montage of clips that are not on the grid is a preview of the wrong thing. A test patches `quantize_durations` to raise and asserts no segment carries beats, the button is off and the call returns False.
+
+  **That test found a defect of its own**, in all three screens rather than only this one. A failed stage emits neither `stage_finished` nor `stage_cancelled`, so `_set_running(False)` never ran and the Review, Soundtrack and Export screens stayed disabled until the next stage did. All three now hook `state.error` as well, and the test asserts the screen comes back.
+
+- [x] 5.2 The transport says the file name and the time, as the groups view does: `clip 3 of 29  DJI_0741.MP4  12.4 s`. `clip_labels(manifest)` builds the mapping and both screens hand it to the player, which has no manifest of its own; without labels the transport falls back to the id, which two tests pin down. Screenshots regenerated.
+
+  Gates after these fixes: `make lint` clean. `make docker-test` **1089 passed, 61 skipped**. `make docker-test-gui` **267 passed**. Venv **1364 passed, 40 skipped**.

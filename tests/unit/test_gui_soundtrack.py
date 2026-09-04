@@ -516,6 +516,91 @@ def test_play_with_track_renders_the_montage_with_audio(
 
 
 @pytest.mark.ffmpeg
+def test_a_sync_that_fails_leaves_play_with_track_off(
+    qtbot: Any, tmp_path: Path, synthetic_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A loaded track is not enough: without a finished sync there is nothing to hear."""
+    from autocut.gui.screens import soundtrack as module
+    from tests.unit.test_montage import CLIPS
+    from tests.unit.test_montage import project as montage_manifest
+
+    manifest = montage_manifest(tmp_path, CLIPS, synthetic_dir)
+    manifest.save(tmp_path / "edit" / "manifest.json")
+    state = ProjectState()
+    state.open_project(tmp_path / "edit")
+    state.config.cache.dir = tmp_path / "cache"
+    screen = SoundtrackScreen(state)
+    qtbot.addWidget(screen)
+    assert screen.generate()
+    assert screen.load_track(synthetic_dir / CLICK)
+    assert not screen.play_with_track_button.isEnabled()
+
+    def explode(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("the beat grid fell over")
+
+    monkeypatch.setattr(module, "quantize_durations", explode)
+    with qtbot.waitSignal(state.error, timeout=30_000) as blocker:
+        assert screen.apply_sync()
+    assert state.wait_for_stage(10_000)
+
+    assert "fell over" in blocker.args[0]
+    opened = state.manifest
+    assert opened is not None
+    assert all(segment.beats is None for segment in opened.segments.values())
+    assert not screen.play_with_track_button.isEnabled()
+    assert screen.play_with_track() is False
+    # The rest of the screen comes back: a failed stage emits neither finished nor
+    # cancelled, and the screen used to stay disabled until the next one ran.
+    assert screen.generate_button.isEnabled()
+    assert screen.apply_button.isEnabled()
+
+
+@pytest.mark.ffmpeg
+def test_a_cancelled_sync_leaves_play_with_track_off(
+    qtbot: Any, tmp_path: Path, synthetic_dir: Path
+) -> None:
+    from tests.unit.test_montage import CLIPS
+    from tests.unit.test_montage import project as montage_manifest
+
+    manifest = montage_manifest(tmp_path, CLIPS, synthetic_dir)
+    manifest.save(tmp_path / "edit" / "manifest.json")
+    state = ProjectState()
+    state.open_project(tmp_path / "edit")
+    state.config.cache.dir = tmp_path / "cache"
+    screen = SoundtrackScreen(state)
+    qtbot.addWidget(screen)
+    assert screen.generate()
+    assert screen.load_track(synthetic_dir / CLICK)
+
+    state.cancel()  # cleared by run_stage, so the sync still finishes
+    with qtbot.waitSignal(state.stage_finished, timeout=30_000):
+        assert screen.apply_sync()
+    assert state.wait_for_stage(10_000)
+
+    # A stale cancel does not stop a run, so this one synced and the button is on.
+    assert screen.play_with_track_button.isEnabled()
+
+
+@pytest.mark.ffmpeg
+def test_the_transport_names_the_clip_by_its_file_and_time(
+    qtbot: Any, tmp_path: Path, synthetic_dir: Path
+) -> None:
+    """The label showed a content hash, which identifies the clip and says nothing."""
+    from autocut.gui.widgets.montage import clip_labels
+    from tests.unit.test_montage import CLIPS
+    from tests.unit.test_montage import project as montage_manifest
+
+    manifest = montage_manifest(tmp_path, CLIPS, synthetic_dir)
+    labels = clip_labels(manifest)
+
+    assert set(labels) == set(manifest.segments)
+    for segment_id, label in labels.items():
+        assert label.endswith(" s")
+        assert ".mp4" in label
+        assert segment_id.split(":")[0] not in label
+
+
+@pytest.mark.ffmpeg
 def test_a_second_play_with_track_renders_nothing(
     qtbot: Any, tmp_path: Path, synthetic_dir: Path
 ) -> None:

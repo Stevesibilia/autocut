@@ -132,6 +132,33 @@ def test_the_timeline_draws_the_boundaries(qtbot: Any, tmp_path: Path) -> None:
 # --- the player ---------------------------------------------------------------
 
 
+def test_the_transport_names_the_clip_rather_than_hashing_it(
+    rendered: tuple[Path, Path, list[Part]], qtbot: Any
+) -> None:
+    """The label carried a content hash, which identifies a clip and tells you nothing."""
+    montage, index, _parts = rendered
+    widget = MontagePlayer()
+    qtbot.addWidget(widget)
+    labels = {"f0:0": "sharp_pan.mp4  0.0 s", "f1:0": "static.mp4  0.0 s"}
+
+    assert widget.load(montage, index, labels=labels)
+    part = widget.parts[0]
+
+    assert widget.describe(part) == "sharp_pan.mp4  0.0 s"
+    widget.seek_to_clip(part.order)
+    assert "sharp_pan.mp4" in widget.status.text()
+    assert part.segment_id not in widget.status.text()
+
+
+def test_without_labels_the_transport_falls_back_to_the_id(
+    player: MontagePlayer,
+) -> None:
+    """Better than nothing, only just, which is why the screens always pass labels."""
+    part = player.parts[0]
+
+    assert player.describe(part) == part.segment_id
+
+
 def test_the_montage_index_becomes_the_timeline(player: MontagePlayer) -> None:
     assert len(player.parts) == 3
     assert player.timeline.duration_s == pytest.approx(3.0, abs=0.3)

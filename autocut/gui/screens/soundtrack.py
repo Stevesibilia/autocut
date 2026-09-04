@@ -44,7 +44,7 @@ from autocut.core.providers import TextProvider, cloud_enabled, find_key
 from autocut.core.soundtrack.build import build_soundtrack, store_user_variant, write_prompt_file
 from autocut.core.soundtrack.prompt import MoodDirection, RoomDirection, apply_mood
 from autocut.gui.state import ProjectState
-from autocut.gui.widgets.montage import MontagePlayer
+from autocut.gui.widgets.montage import MontagePlayer, clip_labels
 from autocut.gui.widgets.prompt_editor import PromptEditor
 from autocut.gui.widgets.waveform import WaveformView, load_or_build_envelope
 
@@ -190,6 +190,9 @@ class SoundtrackScreen(QWidget):
         state.stage_started.connect(lambda _name: self._set_running(True))
         state.stage_finished.connect(self._stage_finished)
         state.stage_cancelled.connect(lambda _name: self._set_running(False))
+        # Also on error: a failed stage emits neither finished nor cancelled, and
+        # without this the screen stayed disabled until the next stage ran.
+        state.error.connect(lambda _message: self._set_running(False))
 
         self.reload()
 
@@ -575,7 +578,15 @@ class SoundtrackScreen(QWidget):
         """
         state = self._state
         manifest = state.manifest
-        if manifest is None or state.is_running or self._audio is None:
+        if manifest is None or state.is_running:
+            return False
+        # The button is disabled without a finished sync, and the method refuses too:
+        # it is public, and a montage of clips that are not on the grid would be a
+        # preview of the wrong thing.
+        if not self._synced_with_a_track():
+            self.distribution_label.setText(
+                "Apply sync first: the clips are not on the beat grid yet."
+            )
             return False
         track = self._audio
         if state.montage_is_current(track) and self._show_montage():
@@ -590,7 +601,12 @@ class SoundtrackScreen(QWidget):
             return False
         path = Path(manifest.preview.path)
         index = Path(manifest.preview.index_path) if manifest.preview.index_path else None
-        if not self.montage.load(path, index, sound=manifest.preview.has_audio):
+        if not self.montage.load(
+            path,
+            index,
+            sound=manifest.preview.has_audio,
+            labels=clip_labels(manifest),
+        ):
             return False
         self.montage.setVisible(True)
         return True
@@ -614,9 +630,10 @@ class SoundtrackScreen(QWidget):
                 f"Synced {result.clips} clips at {result.bpm:g} bpm, "
                 f"{result.total_after_s:.1f} s of edit, mean move {result.mean_shift_s:.2f} s"
             )
-        # Only after a sync: hearing the cuts against the music is the point, and
-        # before the sync the clips are not on the grid yet.
-        self.play_with_track_button.setEnabled(self._audio is not None)
+        # A finished sync, not merely a loaded track: hearing the cuts against the
+        # music is the point, and a sync that failed or was cancelled leaves the clips
+        # off the grid with nothing to hear.
+        self.play_with_track_button.setEnabled(self._synced_with_a_track())
         self.synced.emit()
 
     def _set_running(self, running: bool) -> None:

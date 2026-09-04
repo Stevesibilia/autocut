@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from autocut.core.manifest import Manifest
 from autocut.core.montage import Part, clip_at, read_index
 
 if TYPE_CHECKING:  # pragma: no cover - for the annotations only
@@ -36,6 +37,24 @@ TRACK_BED = QColor(45, 48, 54)
 CURRENT = QColor(240, 240, 240)
 
 TIMELINE_HEIGHT = 34
+
+
+def clip_labels(manifest: Manifest | None) -> dict[str, str]:
+    """A readable name per segment id: the file and where in it the clip starts.
+
+    ``segment_id`` carries a content hash, which identifies the clip exactly and tells
+    a reader nothing, so the transport says what the groups view says. Built by the
+    screens and handed to the player, which has no manifest of its own.
+    """
+    if manifest is None:
+        return {}
+    labels: dict[str, str] = {}
+    for segment in manifest.segments.values():
+        source = manifest.files.get(segment.file_id)
+        name = Path(source.path).name if source is not None else segment.file_id[:8]
+        start, _end = segment.effective_bounds
+        labels[segment.id] = f"{name}  {start:.1f} s"
+    return labels
 
 
 class MontageTimeline(QWidget):
@@ -132,6 +151,7 @@ class MontagePlayer(QWidget):
         super().__init__(parent)
         self._parts: list[Part] = []
         self._path: Path | None = None
+        self._labels: dict[str, str] = {}
         self._player: QMediaPlayer | None = None
         self._audio: Any | None = None
         self._current_order = 0
@@ -188,13 +208,24 @@ class MontagePlayer(QWidget):
         part = clip_at(self._parts, self.position_s())
         return part.segment_id if part is not None else ""
 
-    def load(self, montage: Path, index: Path | None = None, sound: bool = False) -> bool:
-        """Point the player at a rendered montage. False when the file is not there."""
+    def load(
+        self,
+        montage: Path,
+        index: Path | None = None,
+        sound: bool = False,
+        labels: dict[str, str] | None = None,
+    ) -> bool:
+        """Point the player at a rendered montage. False when the file is not there.
+
+        ``labels`` names the clips for the transport. Without it the transport falls
+        back to the segment id, which is a hash and is better than nothing only just.
+        """
         montage = Path(montage)
         if not montage.exists():
             self.status.setText(f"{montage.name} is not there any more.")
             return False
         self._path = montage
+        self._labels = dict(labels or {})
         self._parts = read_index(index) if index is not None else []
         self.timeline.set_parts(self._parts)
         player = self._build_player(None)
@@ -215,6 +246,7 @@ class MontagePlayer(QWidget):
         self.stop()
         self._parts = []
         self._path = None
+        self._labels = {}
         self.timeline.set_parts([])
         self.stack.setCurrentWidget(self.placeholder)
         self._set_enabled(False)
@@ -328,9 +360,13 @@ class MontagePlayer(QWidget):
         if part is not None and part.order != self._current_order:
             self._announce(part)
 
+    def describe(self, part: Part) -> str:
+        """What the transport says about one clip. The id is the last resort."""
+        return self._labels.get(part.segment_id, part.segment_id)
+
     def _announce(self, part: Part) -> None:
         self._current_order = part.order
-        self.status.setText(f"clip {part.order} of {len(self._parts)}  {part.segment_id}")
+        self.status.setText(f"clip {part.order} of {len(self._parts)}  {self.describe(part)}")
         self.clip_changed.emit(part.segment_id)
 
     def _state_changed(self, state: Any) -> None:

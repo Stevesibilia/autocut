@@ -107,6 +107,8 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Fixed
 
+- A failed stage left the Review, Soundtrack and Export screens disabled: it emits neither `stage_finished` nor `stage_cancelled`, and nothing else re-enabled them until the next stage ran.
+
 - The Review screen's Play showed nothing: the player had no video output, so Qt decoded every frame, discarded it and reported no error. The panel now holds a `QVideoWidget` the player draws into, with a muted `QAudioOutput` and a sound toggle, seeks to the in point only once the media reaches `LoadedMedia` because a position set before that is dropped, pauses at the out point, and falls back to the sprite strip only when the platform really has no video for the file. A test counts frames in a `QVideoSink` and asserts the pause, and it fails against the old code.
 - The preview says when a file ends before its out point instead of leaving "playing from the in point" under a still picture. Found on a 1.9 s clip from the real footage.
 

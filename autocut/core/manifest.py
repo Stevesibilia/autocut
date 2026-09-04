@@ -20,7 +20,7 @@ ANALYSIS_SCHEMA_VERSION = 1
 
 Outcome = Literal["candidate", "selected", "rejected"]
 TagSource = Literal["local", "cloud"]
-DurationReason = Literal["base", "hero", "alternation", "total", "clamped", "override"]
+DurationReason = Literal["base", "hero", "alternation", "total", "clamped", "override", "beat"]
 TelemetryKind = Literal["dji_embedded_srt", "dji_sidecar_srt", "gopro_gpmf", "none"]
 
 
@@ -163,6 +163,17 @@ class Segment(BaseModel):
         default=None,
         description="Which rule settled this clip's length, so the report can explain "
         "it in one word.",
+    )
+    beats: int | None = Field(
+        default=None,
+        description="How many beats of the track this clip lasts, once beat sync has "
+        "rounded its length. None until sync runs.",
+    )
+    grid_unreachable: bool = Field(
+        default=False,
+        description="Whether the trimmed span was too short to hold the final window on "
+        "a sampled instant, so the window keeps a bound of the shot instead. Staying "
+        "inside the shot wins over landing on a measured frame.",
     )
     snapped: bool = Field(
         default=False,
@@ -446,6 +457,14 @@ class Soundtrack(BaseModel):
     chosen_variant: int = 0
     refinement: Literal["off", "skipped", "accepted", "rejected", "failed"] = "off"
     refinement_note: str | None = None
+    comparison: str | None = Field(
+        default=None,
+        description="How the measured BPM compared to the proposed one: 'agreed', "
+        "'drifted', 'half', 'double', or 'no proposal'. Kept so the report can show it "
+        "without redoing the arithmetic.",
+    )
+    comparison_note: str | None = None
+    beatmap_path: Path | None = None
 
 
 class Manifest(BaseModel):

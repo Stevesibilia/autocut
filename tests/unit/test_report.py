@@ -844,3 +844,80 @@ def test_a_geocoded_place_is_named_in_the_header(project: Manifest) -> None:
 
     assert "Cala Goloritze" in html
     assert "Sardegna" in html
+
+
+def synced(project: Manifest) -> Manifest:
+    """A project after beat sync: one clip selected, cut to four beats."""
+    project.soundtrack.measured_bpm = 119.8
+    project.soundtrack.comparison = "agreed"
+    project.soundtrack.comparison_note = "measured 119.8 against a proposed 120"
+    project.soundtrack.beatmap_path = Path(project.output_dir) / "beatmap.txt"
+    first = project.segments[list(project.segments)[0]]
+    first.outcome = "selected"
+    first.order = 1
+    first.best_center_s = 3.0
+    first.beats = 4
+    first.duration_reason = "beat"
+    first.target_duration_s = 2.0
+    return project
+
+
+def test_a_synced_card_shows_its_beat_count(project: Manifest) -> None:
+    """The scenario from the modified clip-durations spec: 2.0 s, 4 beats, reason beat."""
+    cards = build_cards(synced(project), Path(project.output_dir))
+    card = next(c for c in cards if c.beats)
+
+    assert card.beats == 4
+    assert card.beats_label == "4 beats"
+    assert card.duration_reason == "beat"
+
+
+def test_a_clamped_clip_shows_no_beat_label(project: Manifest) -> None:
+    """A clip the span cut short is not on the beat, so the card must not claim it is."""
+    manifest = synced(project)
+    first = manifest.segments[list(manifest.segments)[0]]
+    first.beats = None
+    first.duration_reason = "clamped"
+    first.target_duration_s = 0.6
+
+    cards = build_cards(manifest, Path(project.output_dir))
+    card = next(c for c in cards if c.order == 1)
+    html = render_report(manifest, Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert card.beats is None
+    assert card.beats_label is None
+    assert card.duration_reason == "clamped"
+    assert " beats<" not in html
+
+
+def test_the_page_shows_the_beat_count_and_the_reason(project: Manifest) -> None:
+    html = render_report(synced(project), Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert "4 beats" in html
+    assert ">beat<" in html
+
+
+def test_the_header_shows_the_measured_bpm_and_the_comparison(project: Manifest) -> None:
+    html = render_report(synced(project), Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert "<h2>Beat sync</h2>" in html
+    assert "120" in html
+    assert "against a proposed 120" in html
+    assert 'href="beatmap.txt"' in html
+
+
+def test_the_header_says_when_the_bpm_was_forced(project: Manifest) -> None:
+    manifest = synced(project)
+    manifest.soundtrack.bpm_override = 124.0
+    html = render_report(manifest, Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert "Cut at 124 bpm as asked" in html
+
+
+def test_a_project_before_sync_shows_no_beat_panel(project: Manifest) -> None:
+    html = render_report(project, Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert "<h2>Beat sync</h2>" not in html
+    summary = build_summary(project, build_cards(project, Path(project.output_dir)))
+    assert summary.measured_bpm is None
+    assert summary.synced_count == 0

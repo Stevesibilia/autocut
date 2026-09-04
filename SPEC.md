@@ -296,9 +296,15 @@ The app generates 3 to 5 variants differing in mood or instrumentation while sha
 
 ### 7.6 Beat sync
 
-- **Beat tracking.** `librosa.beat.beat_track()` on the provided track gives BPM and beat positions. The user can override BPM, because Suno tracks often have a declared BPM and detection sometimes halves or doubles it.
-- **Durations on the beat.** Each clip is cut to a whole number of beats from the allowed set `{2, 4, 8}` beats. At 120 BPM that is 1, 2 and 4 s. A clip whose segment is too short for the chosen multiple drops to the next smaller one.
-- **Window placement.** The final window is centered on the stored best window center and clamped to the segment bounds.
+Built in M4.
+
+- **Beat tracking.** The track is decoded by ffmpeg to mono at 22050 Hz, because Suno exports containers librosa has no business opening, and `librosa.beat.beat_track()` gives the beat positions. The user can override BPM with `--bpm`, because detection sometimes halves or doubles a steady tempo.
+- **The BPM is the beat spacing, not the tracker's tempo scalar.** The two disagree: on a 120 BPM click librosa reports 117.5 while the beats it placed sit 0.5 s apart. The clip lengths are rounded onto the beat grid, so the number has to describe the grid. The spacing is a trimmed mean of the gaps, because librosa places beats on analysis frames 23 ms apart and the raw gaps therefore alternate around the truth, while a missed onset shows up as one doubled gap that the trim discards.
+- **Durations on the beat.** Each clip is cut to a whole number of beats from `soundtrack.beat_multiples`, by default `{2, 4, 6, 8, 12, 16}`: half a bar to four bars at 4/4. At 120 BPM that is 1, 2, 3, 4, 6 and 8 s. The set stopped at 8 in the first version, which left a 6 s hero clip four beats from anything legal at any tempo in range. A clip whose segment is too short for the chosen multiple drops to the next smaller one. A clip too short for even the smallest takes its length from the span, and then carries no beat count and the reason `clamped`, because that length is the shot's and not the music's.
+- **Window placement.** The final window is centered on the stored best window center, snapped to the analysis sampling grid so the cut lands on a frame that was actually measured, and shifted inside the segment bounds when it has to be. A window moved to a bound is snapped a second time, towards the inside of the span, because a trimmed bound is not a sampled instant unless the trim happens to be. A span with no sampled instant that holds the window keeps the bound instead and the clip records that the grid was out of reach: being inside the shot matters more than being on a measured frame. Export prefers these bounds over anything it would compute itself.
+- **`beatmap.txt`** lists the beat times and then each clip with its cumulative start in the edit, which is enough to line clips up by hand in CapCut if anything drifts. Nothing in AutoCut reads it back.
+
+**What it is worth.** Measured on the 29 clip Sardinia edit at 120 BPM, the distance of each clip's assigned length from a whole beat: a mean of 0.705 beats under the original multiples with 4 of 29 clips within a tenth of a beat, 0.419 and 6 of 29 after widening the set, and **zero across all 29** after quantising. Widening the set fixed one pathological clip; the requantisation is what puts the edit on the music. That is why varied durations and a beat grid are reconciled here rather than in section 7.4: they are different goals, and only one of them can be satisfied exactly.
 
 **Contract with clip durations.** Beat sync does not derive durations from the score. Selection has already assigned each clip a duration and a reason (section 7.4), and beat sync rounds the assigned duration to the nearest allowed beat multiple. A clip whose reason is `hero` keeps the longer multiple when a rounding lands exactly between two, so the shots given room to breathe keep it. Alternation is likewise already applied, so beat sync inherits the rhythm rather than recreating it.
 
@@ -415,7 +421,7 @@ autocut soundtrack ./edit-sardinia --variants 3   # --bpm and --genre override t
 autocut report     ./edit-sardinia
 
 # generate the track externally, then second pass
-autocut sync       ./edit-sardinia --audio track.mp3
+autocut sync       ./edit-sardinia --audio track.mp3   # --bpm overrides the measurement
 autocut export     ./edit-sardinia --no-audio
 ```
 
@@ -477,7 +483,7 @@ Tests run in Docker on Linux (`compose.yaml`, `python:3.12` image with ffmpeg). 
 - **M1, ingest and analysis** (done 2026-09-03). Scan, probe, proxy discovery, telemetry adapters (DJI embedded subtitle first), classification, classic metrics, manifest, global cache. Output: `report.html` only. Verifies scoring on real footage before building on it.
 - **M2, selection and export** (done 2026-09-03, plus per-clip durations and the place cap on 2026-09-03). Best window, rejection rules, deduplication with classic signals, cutting, normalization, naming. The tool is useful from here.
 - **M3, embeddings and diversity** (done 2026-09-04; the live cloud validation run is pending the user's key). CLIP or SigLIP, semantic similarity, greedy selection with penalty, tagging (local and cloud), captions.
-- **M4, soundtrack.** Template prompt, validation, variants, optional LLM refinement, place names. Beat tracking, beat durations, BPM check, `beatmap.txt`.
+- **M4, soundtrack.** Complete. Template prompt, validation, variants, optional LLM refinement, place names. Beat tracking, beat durations, BPM check, `beatmap.txt`.
 - **M4b, remaining AI.** Aesthetic scoring, face detection.
 - **M5, GUI.** Five screens on the existing core.
 - **M6, packaging.** macOS `.dmg` on CI, first run model download.

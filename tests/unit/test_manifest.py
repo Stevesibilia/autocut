@@ -243,6 +243,50 @@ def test_the_soundtrack_block_round_trips(tmp_path: Path) -> None:
     assert back.soundtrack.variants[0].source == "template"
 
 
+def test_the_beat_sync_fields_round_trip(tmp_path: Path) -> None:
+    now = datetime.now(UTC)
+    m = Manifest(created_at=now, updated_at=now, sources=[Path("/footage")], output_dir=tmp_path)
+    m.segments["a:0"] = Segment(
+        id="a:0",
+        file_id="a",
+        start_s=0.0,
+        end_s=20.0,
+        target_duration_s=2.0,
+        duration_reason="beat",
+        beats=4,
+        final_start_s=9.0,
+        final_end_s=11.0,
+    )
+    m.soundtrack.measured_bpm = 119.8
+    m.soundtrack.bpm_override = 120.0
+    m.soundtrack.beats_s = [0.0, 0.5, 1.0]
+    m.soundtrack.audio_path = Path("/tracks/suno.mp3")
+    m.soundtrack.comparison = "agreed"
+    m.soundtrack.comparison_note = "measured 119.8 against a proposed 120"
+    m.soundtrack.beatmap_path = tmp_path / "beatmap.txt"
+    out = tmp_path / "manifest.json"
+    m.save(out)
+
+    back = Manifest.load(out)
+    segment = back.segments["a:0"]
+    assert segment.beats == 4
+    assert segment.duration_reason == "beat"
+    assert segment.final_start_s == 9.0
+    assert segment.final_end_s == 11.0
+    assert back.soundtrack.measured_bpm == 119.8
+    assert back.soundtrack.bpm_override == 120.0
+    assert back.soundtrack.beats_s == [0.0, 0.5, 1.0]
+    assert back.soundtrack.comparison == "agreed"
+    assert back.soundtrack.beatmap_path is not None
+
+
+def test_a_segment_before_sync_carries_no_beats() -> None:
+    segment = Segment(id="a:0", file_id="a", start_s=0.0, end_s=1.0)
+
+    assert segment.beats is None
+    assert segment.final_start_s is None
+
+
 def test_a_place_without_a_name_falls_back_to_its_number() -> None:
     from autocut.core.manifest import PlaceInfo
 

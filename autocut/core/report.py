@@ -89,6 +89,8 @@ class Card:
     window_seconds: float | None
     duration_target_label: str | None
     duration_reason: str | None
+    beats: int | None
+    beats_label: str | None
     snapped: bool
     place_id: int | None
     place_label: str | None
@@ -170,6 +172,12 @@ class Summary:
     beat_distance: float | None
     prompt_link: str | None
     variant_count: int
+    measured_bpm: float | None
+    bpm_override: float | None
+    comparison: str | None
+    comparison_note: str | None
+    beatmap_link: str | None
+    synced_count: int
     export_mode: str | None
     export_fps: float | None
     export_failed: int
@@ -282,6 +290,8 @@ def _card(segment: Segment, source: SourceFile | None, index: int, out_dir: Path
             f"{segment.target_duration_s:.1f} s" if segment.target_duration_s else None
         ),
         duration_reason=segment.duration_reason,
+        beats=segment.beats,
+        beats_label=f"{segment.beats} beats" if segment.beats else None,
         snapped=segment.snapped,
         place_id=segment.place_id,
         place_label=f"place {segment.place_id}" if segment.place_id is not None else None,
@@ -467,6 +477,12 @@ def build_summary(manifest: Manifest, cards: list[Card], out_dir: Path | None = 
         beat_distance=manifest.soundtrack.beat_distance,
         prompt_link=relative_asset(manifest.soundtrack.prompt_path, out_dir),
         variant_count=len(manifest.soundtrack.variants),
+        measured_bpm=manifest.soundtrack.measured_bpm,
+        bpm_override=manifest.soundtrack.bpm_override,
+        comparison=manifest.soundtrack.comparison,
+        comparison_note=manifest.soundtrack.comparison_note,
+        beatmap_link=relative_asset(manifest.soundtrack.beatmap_path, out_dir),
+        synced_count=sum(1 for card in cards if card.beats),
         export_mode=manifest.export.mode,
         export_fps=manifest.export.target_fps,
         export_failed=manifest.export.failed,

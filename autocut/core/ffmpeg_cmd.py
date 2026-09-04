@@ -338,10 +338,18 @@ def plan_export(
     target_fps = resolve_target_fps(manifest, config, overrides)
     source_class = source.source_class
 
-    ratio = _slow_motion_ratio(source, target_fps, config)
-    out_duration = segment.target_duration_s or config.selection.target_duration_seconds
-    source_duration = out_duration / ratio
-    start = _window_start(segment, source, source_duration)
+    ratio = slow_motion_ratio(source, target_fps, config)
+    # Beat sync has the last word on the window when it has run: it rounded the length
+    # onto the track's grid and put the bounds where the good frames are, and recomputing
+    # either here would undo that.
+    bounds = _beat_bounds(segment)
+    if bounds is not None:
+        start, source_duration = bounds
+        out_duration = source_duration * ratio
+    else:
+        out_duration = segment.target_duration_s or config.selection.target_duration_seconds
+        source_duration = out_duration / ratio
+        start = _window_start(segment, source, source_duration)
 
     scale_w, scale_h = fit_inside(
         source.display_width, source.display_height, export.max_width, export.max_height
@@ -392,7 +400,7 @@ def _lut(path: Path | None) -> Path | None:
     return path
 
 
-def _slow_motion_ratio(source: SourceFile, target_fps: float, config: AutocutConfig) -> int:
+def slow_motion_ratio(source: SourceFile, target_fps: float, config: AutocutConfig) -> int:
     """The integer slowdown for this clip, or 1 for real time.
 
     Only whole ratios are used. Half speed from 50 to 25 shows every frame the camera
@@ -403,6 +411,14 @@ def _slow_motion_ratio(source: SourceFile, target_fps: float, config: AutocutCon
     if target_fps <= 0 or source.fps < 2 * target_fps:
         return 1
     return max(1, int(round(source.fps / target_fps)))
+
+
+def _beat_bounds(segment: Segment) -> tuple[float, float] | None:
+    """The source window beat sync set, or ``None`` when it has not run."""
+    start, stop = segment.final_start_s, segment.final_end_s
+    if start is None or stop is None or stop <= start:
+        return None
+    return start, stop - start
 
 
 def _window_start(segment: Segment, source: SourceFile, source_duration: float) -> float:

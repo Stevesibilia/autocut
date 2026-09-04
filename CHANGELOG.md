@@ -50,6 +50,10 @@ All notable changes to this project are documented in this file. The format foll
 - Optional prompt refinement through the OpenRouter text model, gated like the vision calls, sending only derived signals and the template prompt. Its answer is used only if it passes the validator; a rejection keeps the template and is recorded.
 - The review report header shows the genre, the matched row and why, the proposed BPM, the mean distance from a whole beat, and a link to the prompt file. Places are listed by name and region when geocoding found them.
 
+- Beat sync: `autocut sync --audio <track>` decodes the track through ffmpeg, measures its beat grid, rounds every selected clip to a whole number of beats, stores final bounds centred on the best window and snapped to the sampling grid, and writes `beatmap.txt`. Export cuts to those bounds. A span with no sampled instant that holds the window keeps the shot's own bound and records that the grid was out of reach; a span too short for even the smallest multiple gives the clip its length, no beat count and the reason `clamped`. Measured on the Sardinia edit, all 29 clips land exactly on the beat where 4 of 29 did before.
+- The BPM comparison names a drifted track and spots the half and double tempo cases, offering the `--bpm` flag that fixes them. Sync runs without the soundtrack step and says the comparison was skipped.
+- The review report shows each clip's beat count beside its duration and a header panel with the measured BPM, the comparison and a link to the beat map.
+
 ### Changed
 
 - The review report lists selected segments first, with their edit order, best window bounds, visual cluster and the near duplicate a candidate lost to.
@@ -58,6 +62,8 @@ All notable changes to this project are documented in this file. The format foll
 - Selected cards show the clip's target duration, the rule that settled it and whether its window was snapped to a motion boundary.
 - `export.remove_audio` defaults to true for every class: a default export is silent and the soundtrack carries the sound. Set a class to false in `autocut.toml` to keep its ambience.
 - The review report shows each segment's place, offers a filter by place, lists the places with their visits and clip counts, and names the clips that filled a visit on a card the place cap held back.
+- `soundtrack.beat_multiples` defaults to 2, 4, 6, 8, 12 and 16 beats, half a bar to four bars at 4/4. Stopping at 8 left a 6 s hero clip four beats from anything legal at any tempo in range.
+- The prompt's Structure varies its mood word per section from the genre row's alternates. It repeated one word in every section, wasting tags that are meant to cover different dimensions.
 - `cache.models_dir` is separate from `cache.dir`, so a project with its own analysis cache no longer downloads its own copy of the model weights. Weights belong to the machine and default to the platform cache directory.
 - `soundtrack.genres` is an ordered list of rows rather than a dictionary of profiles. The old shape had no way to say when a row applies.
 - The dominant tag prefers the first cloud tag when a segment has one, since a model that looked at the picture is more specific than a zero-shot label set. A local re-run replaces only local tags and leaves cloud tags alone.

@@ -27,6 +27,17 @@ from rich.progress import (
 
 from autocut import __version__
 from autocut.core.analyze import AnalysisCancelled, analyze_files
+from autocut.core.beatsync import (
+    AudioUnavailableError,
+    QuantizeResult,
+    Track,
+    compare_bpm,
+    decode_audio,
+    measure_track,
+    quantize_durations,
+    reset_final_bounds,
+    write_beatmap,
+)
 from autocut.core.cache import cache_stats, prune
 from autocut.core.config import AutocutConfig
 from autocut.core.describe import DescribeResult, describe_project
@@ -75,11 +86,6 @@ def _load_config(path: Path | None, no_cloud: bool = False) -> AutocutConfig:
     if no_cloud:
         config.providers.cloud = False
     return config
-
-
-def _not_implemented(stage: str) -> None:
-    console.print(f"[yellow]{stage}[/yellow] is not implemented yet. See SPEC.md section 15.")
-    raise typer.Exit(code=2)
 
 
 @app.callback(invoke_without_command=True)
@@ -707,8 +713,99 @@ def sync(
     no_cloud: NoCloudOpt = False,
 ) -> None:
     """Measure the track BPM and quantize clip durations to beats."""
-    _load_config(config, no_cloud)
-    _not_implemented("sync")
+    cfg = _load_config(config, no_cloud)
+    manifest = _open_project(project)
+    manifest.output_dir = project
+
+    selected = [s for s in manifest.segments.values() if s.outcome == "selected"]
+    if not selected:
+        console.print("[red]Nothing selected[/red]. Run autocut select first.")
+        raise typer.Exit(code=1)
+    if not audio.exists():
+        console.print(f"[red]No such track[/red]: {audio}")
+        raise typer.Exit(code=1)
+
+    # A re-run is a fresh measurement, not a drift on top of the last one.
+    reset_final_bounds(manifest)
+    try:
+        track = measure_track(decode_audio(audio))
+    except AudioUnavailableError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    effective = bpm if bpm is not None else track.bpm
+    comparison = compare_bpm(
+        manifest.soundtrack.proposed_bpm, effective, cfg.soundtrack.bpm_tolerance
+    )
+
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as bar:
+        task = bar.add_task("Quantizing", total=len(selected))
+
+        def on_event(event: ProgressEvent) -> None:
+            bar.update(task, completed=event.current, total=event.total)
+
+        result = quantize_durations(manifest, effective, cfg, on_event)
+
+    manifest.soundtrack.audio_path = audio
+    manifest.soundtrack.measured_bpm = track.bpm
+    manifest.soundtrack.bpm_override = bpm
+    manifest.soundtrack.beats_s = track.beats_s
+    manifest.soundtrack.comparison = comparison.status
+    manifest.soundtrack.comparison_note = comparison.note
+    beatmap = write_beatmap(manifest, track, project)
+    manifest.soundtrack.beatmap_path = beatmap
+    manifest.updated_at = datetime.now(UTC)
+    manifest.save(project / "manifest.json")
+
+    _print_sync(track, effective, comparison, result, beatmap, override=bpm is not None)
+
+
+def _print_sync(
+    track: Track,
+    effective: float,
+    comparison: object,
+    result: QuantizeResult,
+    beatmap: Path,
+    override: bool,
+) -> None:
+    status = getattr(comparison, "status", "")
+    note = getattr(comparison, "note", None)
+    console.print(
+        f"Measured [bold]{track.bpm:g}[/bold] bpm from {len(track.beats_s)} beats"
+        + (f", using [bold]{effective:g}[/bold] as asked" if override else "")
+    )
+    if track.tempo_estimate and abs(track.tempo_estimate - track.bpm) > 1:
+        console.print(
+            f"  librosa's own tempo estimate was {track.tempo_estimate:g}; the beat "
+            "spacing is what the clips are cut to"
+        )
+    if status in ("drifted", "half", "double"):
+        console.print(f"[yellow]{note}[/yellow]")
+    elif note:
+        console.print(f"  {note}")
+    console.print(
+        f"Quantized [bold]{result.clips}[/bold] clips, "
+        f"{result.total_before_s:.1f} s to [bold]{result.total_after_s:.1f} s[/bold] "
+        f"({result.drift_s:+.1f} s), mean move {result.mean_shift_s:.2f} s"
+    )
+    spread = ", ".join(f"{count}x{multiple}" for multiple, count in result.per_multiple.items())
+    console.print(f"  beats per clip: {spread}")
+    if result.clamped:
+        console.print(
+            f"  {result.clamped} clips were clamped to a shorter multiple by their own span"
+        )
+    if result.off_grid:
+        console.print(
+            f"  {result.off_grid} clips are too short to start on a sampled instant and "
+            "keep their own bounds instead"
+        )
+    console.print(f"Beat map written to {beatmap}")
 
 
 @app.command()

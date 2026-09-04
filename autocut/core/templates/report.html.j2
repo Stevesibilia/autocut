@@ -639,6 +639,25 @@
     </div>
     {% endif %}
 
+    {% if summary.measured_bpm %}
+    <div class="panel">
+      <h2>Beat sync</h2>
+      <p class="totals"><b>{{ summary.measured_bpm|round|int }}</b><span>measured bpm</span></p>
+      <p class="note">
+        {{ summary.synced_count }} clips cut to whole beats.
+        {% if summary.bpm_override %}
+        Cut at {{ summary.bpm_override|round|int }} bpm as asked.
+        {% endif %}
+        {% if summary.beatmap_link %}
+        <a href="{{ summary.beatmap_link }}">beatmap.txt</a>.
+        {% endif %}
+      </p>
+      {% if summary.comparison_note %}
+      <p class="note">{{ summary.comparison_note }}</p>
+      {% endif %}
+    </div>
+    {% endif %}
+
     {% if summary.cloud_model %}
     <div class="panel">
       <h2>Descriptions</h2>
@@ -791,6 +810,9 @@
         {% if card.height_label %}<span class="tag">min {{ card.height_label }}</span>{% endif %}
         {% if card.duration_target_label %}
         <span class="tag length">{{ card.duration_target_label }}</span>
+        {% endif %}
+        {% if card.beats_label %}
+        <span class="tag length" title="Whole beats of the measured track">{{ card.beats_label }}</span>
         {% endif %}
         {% if card.duration_reason %}
         <span class="tag reason-length">{{ card.duration_reason }}</span>

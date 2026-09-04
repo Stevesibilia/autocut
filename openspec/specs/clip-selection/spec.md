@@ -27,7 +27,7 @@ The system SHALL select candidates iteratively, at each step picking the candida
 
 ### Requirement: Caps and quotas
 
-Selection SHALL stop at `selection.max_clips`, itself bounded to `selection.max_candidate_share` (default 0.5) of the eligible candidates rounded up unless `--max-clips` was given explicitly. It SHALL select at most `selection.max_clips_per_file` for the candidate's class from one source file, at most `selection.max_clips_per_cluster` from one visual cluster, at most `selection.max_clips_per_place` (default 3) from one place visit while eligible candidates outside that visit remain, and SHALL ensure each class reaches at least `selection.min_share_per_class` of the final count when enough candidates of that class exist, by reserving slots for under-represented classes before filling the rest by penalized score. A candidate held back by the place cap SHALL stay `candidate` with reason `place_cap` and record the selected clips that filled its visit in `held_by`.
+Selection SHALL stop at `selection.max_clips`, itself bounded to `selection.max_candidate_share` (default 0.5) of the eligible candidates rounded up unless `--max-clips` was given explicitly. It SHALL select at most `selection.max_clips_per_file` for the candidate's class from one source file, at most `selection.max_clips_per_cluster` from one visual cluster, at most `selection.max_clips_per_place` (default 3) from one place visit while eligible candidates outside that visit remain, at most `selection.max_share_per_tag` (default 0.5) of the final count carrying the same dominant tag while eligible candidates with a different dominant tag or none remain, and SHALL ensure each class reaches at least `selection.min_share_per_class` of the final count when enough candidates of that class exist, by reserving slots for under-represented classes before filling the rest by penalized score. A candidate held back by the place cap SHALL stay `candidate` with reason `place_cap` and record the selected clips that filled its visit in `held_by`. The tag share cap SHALL be lifted, like the place cap and the temporal gap, only when nothing else is eligible, and the CLI SHALL say which of them was lifted.
 
 #### Scenario: Per-file cap
 
@@ -63,6 +63,26 @@ Selection SHALL stop at `selection.max_clips`, itself bounded to `selection.max_
 
 - **WHEN** `--max-clips 40` is passed on the same folder
 - **THEN** 40 clips are selected
+
+#### Scenario: Tag share cap
+
+- **WHEN** `max_share_per_tag` is 0.5, max clips is 10, twelve eligible candidates are tagged `beach` and eight are tagged `food`
+- **THEN** five beach clips and five food clips are selected
+
+#### Scenario: Tag share cap lifted last
+
+- **WHEN** `max_share_per_tag` is 0.5, max clips is 10, twelve candidates are tagged `beach` and only four are tagged `food`
+- **THEN** all four food clips are selected, the cap holds beach at five while they last, and the last slot goes to a sixth beach with the cap lifted
+
+#### Scenario: Only one tag available
+
+- **WHEN** every eligible candidate carries the same dominant tag
+- **THEN** the cap is lifted and selection fills to max clips
+
+#### Scenario: An untagged candidate is outside the cap
+
+- **WHEN** a candidate has no dominant tag
+- **THEN** the tag share cap never holds it back
 
 ### Requirement: Minimum temporal gap
 

@@ -359,6 +359,67 @@ class ExportRun(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class PlaceInfo(BaseModel):
+    """One place the footage was shot at, with the name reverse geocoding gave it.
+
+    Named ``PlaceInfo`` rather than ``Place`` because :mod:`autocut.core.places` already
+    has a ``Place`` for the grouping itself, and the two live in the same call stack.
+
+    Places are numbered by selection from GPS clusters; the name and region are added
+    later and separately, because geocoding needs the network and selection must not.
+    """
+
+    place_id: int
+    lat: float | None = None
+    lon: float | None = None
+    name: str | None = None
+    region: str | None = None
+    segments: int = 0
+    geocode_error: str | None = None
+
+    @property
+    def label(self) -> str:
+        """What to call this place in a prompt or a report, named or not."""
+        return self.name or f"place {self.place_id}"
+
+
+class SoundtrackSignals(BaseModel):
+    """What the edit is, as the numbers and words a prompt is written from.
+
+    Stored on the manifest so a prompt can be explained after the fact and so the
+    refinement step has something to send that is not the footage.
+    """
+
+    total_duration_s: float = 0.0
+    clip_count: int = 0
+    energy_curve: list[float] = Field(
+        default_factory=list, description="One smoothed value per clip in edit order, 0 to 1."
+    )
+    energy_band: str = "mid"
+    peak_third: int = Field(
+        default=1, description="Which third of the edit holds the highest energy, 0 to 2."
+    )
+    dominant_tag: str | None = None
+    dominant_tag_share: float = 0.0
+    tags: dict[str, int] = Field(default_factory=dict)
+    captions: list[str] = Field(default_factory=list)
+    class_mix: dict[str, float] = Field(default_factory=dict)
+    time_of_day: str = "daytime"
+    place_names: list[str] = Field(default_factory=list)
+    regions: list[str] = Field(default_factory=list)
+
+
+class PromptVariant(BaseModel):
+    """One Suno prompt, ready to paste into the two fields of custom mode."""
+
+    title: str
+    description: str
+    structure: list[str]
+    mood: list[str] = Field(default_factory=list)
+    instruments: list[str] = Field(default_factory=list)
+    source: Literal["template", "refined"] = "template"
+
+
 class Soundtrack(BaseModel):
     proposed_bpm: float | None = None
     measured_bpm: float | None = None
@@ -366,6 +427,25 @@ class Soundtrack(BaseModel):
     audio_path: Path | None = None
     beats_s: list[float] = Field(default_factory=list)
     prompt_path: Path | None = None
+    signals: SoundtrackSignals | None = None
+    matched_row: str | None = Field(
+        default=None,
+        description="Which genre row was chosen, so a surprising genre traces to one "
+        "line of configuration.",
+    )
+    matched_reason: str | None = Field(
+        default=None, description="Why that row matched, in the words of its conditions."
+    )
+    genre: str | None = None
+    beat_distance: float | None = Field(
+        default=None,
+        description="Mean distance of the clip lengths from a whole beat at the proposed "
+        "BPM, in beats. Zero means every clip lands on the grid.",
+    )
+    variants: list[PromptVariant] = Field(default_factory=list)
+    chosen_variant: int = 0
+    refinement: Literal["off", "skipped", "accepted", "rejected", "failed"] = "off"
+    refinement_note: str | None = None
 
 
 class Manifest(BaseModel):
@@ -379,6 +459,11 @@ class Manifest(BaseModel):
     output_dir: Path
     files: dict[str, SourceFile] = Field(default_factory=dict)
     segments: dict[str, Segment] = Field(default_factory=dict)
+    places: dict[str, PlaceInfo] = Field(
+        default_factory=dict,
+        description="Keyed by the place id as a string, because JSON object keys are "
+        "strings and a round trip must not change the type.",
+    )
     analysis: AnalysisRun = AnalysisRun()
     selection: SelectionRun = SelectionRun()
     export: ExportRun = ExportRun()

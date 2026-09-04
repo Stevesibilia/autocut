@@ -65,6 +65,31 @@ class ProviderError:
     attempts: int = 0
 
 
+@dataclass(slots=True)
+class TextAnswer:
+    """What a text model replied, and what the call cost."""
+
+    text: str = ""
+    model: str = ""
+    cost_usd: float = 0.0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    attempts: int = 0
+
+
+@runtime_checkable
+class TextProvider(Protocol):
+    """One hosted text model, seen from the refinement step."""
+
+    model: str
+
+    def complete_text(
+        self, system: str, user: str
+    ) -> TextAnswer | ProviderError:  # pragma: no cover - protocol
+        """Answer one prompt. Never raises for a provider side failure."""
+        ...
+
+
 @runtime_checkable
 class VisionProvider(Protocol):
     """One hosted vision model, seen from the describe step."""

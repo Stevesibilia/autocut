@@ -185,6 +185,70 @@ def test_analysis_run_defaults_and_roundtrip(tmp_path: Path) -> None:
     assert back.analysis.embedding_device == "mps"
 
 
+def test_the_soundtrack_block_round_trips(tmp_path: Path) -> None:
+    from autocut.core.manifest import PlaceInfo, PromptVariant, SoundtrackSignals
+
+    now = datetime.now(UTC)
+    m = Manifest(created_at=now, updated_at=now, sources=[Path("/footage")], output_dir=tmp_path)
+    m.places["0"] = PlaceInfo(
+        place_id=0, lat=40.1, lon=9.6, name="Cala Goloritze", region="Sardegna", segments=7
+    )
+    m.soundtrack.signals = SoundtrackSignals(
+        total_duration_s=76.5,
+        clip_count=29,
+        energy_curve=[0.1, 0.5, 0.9],
+        energy_band="mid",
+        peak_third=2,
+        dominant_tag="beach",
+        dominant_tag_share=0.52,
+        tags={"beach": 15},
+        captions=["two people snorkeling"],
+        class_mix={"actioncam": 0.66},
+        time_of_day="daytime",
+        place_names=["Cala Goloritze"],
+        regions=["Sardegna"],
+    )
+    m.soundtrack.matched_row = "surf rock"
+    m.soundtrack.matched_reason = "dominant tag is beach"
+    m.soundtrack.genre = "surf rock"
+    m.soundtrack.proposed_bpm = 128.0
+    m.soundtrack.beat_distance = 0.0125
+    m.soundtrack.refinement = "rejected"
+    m.soundtrack.refinement_note = "comma_in_tag"
+    m.soundtrack.variants = [
+        PromptVariant(
+            title="cala goloritze, daytime, surf rock",
+            description=(
+                "surf rock, twangy guitar, driving drums, sunny, 128 bpm, no vocals, instrumental"
+            ),
+            structure=["[sparse intro]", "[end]"],
+            mood=["sunny"],
+            instruments=["twangy guitar", "driving drums"],
+        )
+    ]
+    out = tmp_path / "manifest.json"
+    m.save(out)
+
+    back = Manifest.load(out)
+    assert back.places["0"].name == "Cala Goloritze"
+    assert back.places["0"].label == "Cala Goloritze"
+    assert back.soundtrack.signals is not None
+    assert back.soundtrack.signals.clip_count == 29
+    assert back.soundtrack.signals.place_names == ["Cala Goloritze"]
+    assert back.soundtrack.matched_row == "surf rock"
+    assert back.soundtrack.proposed_bpm == 128.0
+    assert back.soundtrack.beat_distance == 0.0125
+    assert back.soundtrack.refinement == "rejected"
+    assert len(back.soundtrack.variants) == 1
+    assert back.soundtrack.variants[0].source == "template"
+
+
+def test_a_place_without_a_name_falls_back_to_its_number() -> None:
+    from autocut.core.manifest import PlaceInfo
+
+    assert PlaceInfo(place_id=3).label == "place 3"
+
+
 def test_the_cloud_fields_of_a_run_round_trip(tmp_path: Path) -> None:
     now = datetime.now(UTC)
     m = Manifest(created_at=now, updated_at=now, sources=[Path("/footage")], output_dir=tmp_path)

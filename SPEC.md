@@ -281,14 +281,18 @@ The energy profile of the edit maps to the structure arc: calm opening on the fi
 
 #### Implementation
 
-Two levels:
+Built in M4. Two levels:
 
-- **Template generator**, always available. A mapping table from (dominant tags, color mood, energy) to (genre, instrumentation, BPM) plus a template based structure generator. The genre table lives in `autocut.toml` under `soundtrack.genres` with shipped defaults, so the user tunes taste without code changes.
-- **LLM refinement**, optional through OpenRouter. Takes the structured signals and captions and writes a more specific prompt.
+- **Template generator**, always available and the only one that is. `soundtrack.genres` is an ordered table of rows, each with a `when` block (dominant tags, tags present, class shares, energy band, time of day, place region), a genre, two or three instruments with adjectives, a BPM range and mood words. The first row whose every condition holds wins, `soundtrack.default_profile` names the fallback, and the row that matched is recorded with the condition that made it match, so a surprising genre traces to one line of configuration. Scoring every row and taking the best was rejected for being unexplainable.
+- **LLM refinement**, optional through OpenRouter, gated exactly like the vision calls. It receives the derived signals and the template prompt, never a frame and never a coordinate, and its answer is used only if it passes the same validator. A rejection keeps the template prompt and is recorded on the manifest.
 
-Both paths go through formal validation before display: Description length, one tag per line, no commas in brackets, valid section words, `[end]` present, no vocal tags. A malformed prompt produces wrong music and the error is invisible by eye.
+Both paths go through formal validation before display: Description length, descriptor count, no sentences, no repeats, the instrumental marker last, one tag per line, one modifier per tag, no commas in brackets, valid section words, 3 to 6 tags per section, no vocal tags, no production adjectives as modifiers, every named instrument covered twice, `[end]` last. Every violation is returned with its line, not the first, because a GUI has to mark them all. A malformed prompt produces wrong music and the error is invisible by eye.
 
-The app generates 3 to 5 variants with slightly different mood or instrumentation.
+The app generates 3 to 5 variants differing in mood or instrumentation while sharing genre and BPM, and writes only the ones that validate.
+
+**The proposed BPM is a fit, not a promise.** It is the integer in the row's range minimising the mean distance from each clip's assigned length to the nearest allowed beat count in `soundtrack.beat_multiples`. On the Sardinia edit that fit is poor by construction: the per-clip durations from M3 give 27 distinct lengths across 29 clips, no single BPM puts arbitrary lengths on a 2, 4 or 8 beat grid, and the best in range leaves a mean of 0.705 beats with only 4 clips within a tenth of a beat. Varied durations and a beat grid are two different goals, and reconciling them is what beat sync does by requantising against the measured track rather than hoping the lengths already land right.
+
+**Place names** come from Nominatim reverse geocoding, one request per place centroid, cached forever under the cache directory by coordinates rounded to three decimals, spaced by `places.min_interval_s` and carrying a real user agent as its usage policy requires. `places.geocode = false` or an unreachable network keeps places numeric and drops the names from the prompt with one warning.
 
 ### 7.6 Beat sync
 
@@ -407,7 +411,7 @@ autocut embed      ./edit-sardinia   # only when analyze ran without the ai extr
 autocut tag        ./edit-sardinia   # after editing the label set in autocut.toml
 autocut describe   ./edit-sardinia   # cloud tags, captions and aesthetics, needs a key
 autocut select     ./edit-sardinia --max-clips 40 --duration 3.0 --diversity 0.6
-autocut soundtrack ./edit-sardinia --variants 3
+autocut soundtrack ./edit-sardinia --variants 3   # --bpm and --genre override the fit
 autocut report     ./edit-sardinia
 
 # generate the track externally, then second pass
@@ -473,7 +477,7 @@ Tests run in Docker on Linux (`compose.yaml`, `python:3.12` image with ffmpeg). 
 - **M1, ingest and analysis** (done 2026-09-03). Scan, probe, proxy discovery, telemetry adapters (DJI embedded subtitle first), classification, classic metrics, manifest, global cache. Output: `report.html` only. Verifies scoring on real footage before building on it.
 - **M2, selection and export** (done 2026-09-03, plus per-clip durations and the place cap on 2026-09-03). Best window, rejection rules, deduplication with classic signals, cutting, normalization, naming. The tool is useful from here.
 - **M3, embeddings and diversity** (done 2026-09-04; the live cloud validation run is pending the user's key). CLIP or SigLIP, semantic similarity, greedy selection with penalty, tagging (local and cloud), captions.
-- **M4, soundtrack.** Template prompt, validation, variants, optional LLM refinement. Beat tracking, beat durations, BPM check, `beatmap.txt`.
+- **M4, soundtrack.** Template prompt, validation, variants, optional LLM refinement, place names. Beat tracking, beat durations, BPM check, `beatmap.txt`.
 - **M4b, remaining AI.** Aesthetic scoring, face detection.
 - **M5, GUI.** Five screens on the existing core.
 - **M6, packaging.** macOS `.dmg` on CI, first run model download.

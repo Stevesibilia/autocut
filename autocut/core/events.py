@@ -19,6 +19,7 @@ Stage = Literal[
     "embed",
     "tag",
     "describe",
+    "geocode",
     "select",
     "soundtrack",
     "sync",

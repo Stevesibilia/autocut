@@ -433,15 +433,21 @@ Commands are separate and re-runnable, reading and writing the same manifest. Tu
 
 ## 11. GUI
 
-Five screens with back and forward navigation. All strings in English.
+Five screens with back and forward navigation. All strings in English. Started in M5, built on PySide6 as a consumer of the core: every stage the window runs is the same function the CLI calls, and nothing in `autocut/core` knows the window exists.
 
-1. **Project and sources.** Drag and drop source folders, output folder, profile (drone, family, mixed). Open an existing manifest.
-2. **Analysis.** Progress with current file, estimated time left, cancel. Runs in a worker, the UI never blocks. Interruptible and resumable.
+**Shape.** One `ProjectState` per open project owns the manifest and the configuration, exposes a Qt signal for every change, and is the only object that writes `manifest.json`, on a debounced timer. Core stages run one at a time in a `CoreWorker` on a `QThread`, with the progress callback bound to a signal and cancellation through a flag that callback reads. Screens are thin: they bind to state signals and call state methods. See ADR 9.
+
+**Navigation.** A screen is reachable when the project has what it needs: Analysis once a project is open, Review once there are segments, Soundtrack and Export once something is selected. One function of the manifest decides all of it, so the rule is testable without building a window.
+
+1. **Project and sources.** Built in M5. Drag and drop source folders, or browse; a dropped file counts as the folder holding it. Clip counts per folder from the extension rule alone, so the number shown before a run is the number the run will consider. Output folder, and it says so when that folder already holds a project, offering to continue rather than start again. Profile (drone, family, mixed) applied as a diff the user sees first. Recent projects in the platform config directory, and the `doctor` report inline, so a missing ffmpeg is seen before a run rather than during one.
+2. **Analysis.** Built in M5. Stage steps, progress with the current file, elapsed and an estimate that stays blank until a second file has finished, because one file pays for every warm up there is. Cancel, which stops at the next progress report and keeps what was reached. Resume, which is a normal run made cheap by the analysis cache; the button says Resume when a probed file has neither a segment nor an error, which is what a cancel leaves behind. Runs in a worker, the UI never blocks.
 3. **Review.** The central screen. Thumbnail grid by chronology or score, hover scrubbing on sprite strips, keep and reject by click and keyboard, in and out adjustment with preview, filters by tag, class and score range, scoring weight sliders with live reordering, the diversity slider in the foreground, a similar-groups view where one click swaps the algorithm's pick, and a counter of selected clips and total duration.
 4. **Soundtrack.** First the generated prompt in three blocks with copy buttons, variant browsing, editable BPM that regenerates, mood controls (calmer or more energetic, cinematic or intimate), hand editing with live validation. Then track upload, waveform with beats, requested versus measured BPM with warning, duration strategy.
 5. **Export.** LUT per class, target fps and resolution, vertical strategy, slow motion, audio removal. Progress, then open the result folder.
 
-Cross cutting: no long operation on the UI thread, state saved continuously to the manifest, API keys stored in the OS keychain through `keyring`.
+Cross cutting: no long operation on the UI thread, state saved continuously to the manifest, API keys stored in the OS keychain through `keyring` and never written to `autocut.toml`. The settings dialog writes the fields it edits into `autocut.toml` next to the manifest, merged over what is already there, so the window and the command line share one project.
+
+**Testing.** Qt runs on the offscreen platform, under the `gui` marker, in a `dev-gui` Docker target and its own CI job. Offscreen tests prove a window builds and behaves and prove nothing about whether it is readable, so a marked test grabs one PNG per screen into `$AUTOCUT_GUI_SHOTS` for a reviewer. Those images are never committed and are only ever of the synthetic fixtures (ADR 8).
 
 ## 12. Performance
 

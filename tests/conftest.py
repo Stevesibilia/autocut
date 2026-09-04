@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import shutil
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -14,11 +15,23 @@ SYNTHETIC = FIXTURES / "synthetic"
 PRIVATE = FIXTURES / "private"
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    """Never open a real window from the test suite.
+
+    The ``gui`` tests build widgets, and on a developer machine with a display Qt
+    would happily map them, stealing focus for the length of the run. Offscreen is
+    what the Docker target and CI use, so the venv uses it too unless the platform
+    was chosen deliberately.
+    """
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     skip_private = pytest.mark.skip(reason="no clips in tests/fixtures/private")
     skip_real = pytest.mark.skip(reason="AUTOCUT_REAL_FOOTAGE not set")
     skip_ffmpeg = pytest.mark.skip(reason="ffmpeg not on PATH")
     skip_ai = pytest.mark.skip(reason="the ai extra is not installed")
+    skip_gui = pytest.mark.skip(reason="the gui extra is not installed")
     has_private = PRIVATE.exists() and any(
         p.suffix.lower() in {".mp4", ".mov"} for p in PRIVATE.iterdir()
     )
@@ -27,6 +40,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     # find_spec rather than an import: importing torch costs seconds and this runs
     # during collection, on every test session, extra installed or not.
     has_ai = importlib.util.find_spec("torch") is not None
+    has_gui = importlib.util.find_spec("PySide6") is not None
     for item in items:
         if "private" in item.keywords and not has_private:
             item.add_marker(skip_private)
@@ -36,6 +50,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             item.add_marker(skip_ffmpeg)
         if "ai" in item.keywords and not has_ai:
             item.add_marker(skip_ai)
+        if "gui" in item.keywords and not has_gui:
+            item.add_marker(skip_gui)
 
 
 @pytest.fixture(autouse=True)
@@ -53,6 +69,30 @@ def no_model_downloads(request: pytest.FixtureRequest, monkeypatch: pytest.Monke
     from autocut.core import embeddings
 
     monkeypatch.setattr(embeddings, "_probe", (False, "the ai extra is switched off for this test"))
+
+
+@pytest.fixture(autouse=True)
+def recent_projects_in_tmp(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Never let a test read or write the developer's own recent projects list.
+
+    The list lives in the platform config directory, so a GUI test that opens a
+    project would otherwise add it to the real one, and a screenshot of the Project
+    screen would show whatever folders this machine happens to have opened. Patched
+    for every test rather than in the GUI ones, because the file is outside the
+    repository and nothing in a test run has any business touching it.
+    """
+    if importlib.util.find_spec("PySide6") is None:
+        yield
+        return
+    from autocut.gui import recent
+
+    store = tmp_path_factory.mktemp("recent") / "recent.json"
+    original = recent.recent_path
+    recent.recent_path = lambda: store  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        recent.recent_path = original  # type: ignore[assignment]
 
 
 @pytest.fixture(autouse=True)

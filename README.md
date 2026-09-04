@@ -6,7 +6,7 @@ It is not an editor. Transitions, titles and the final render stay in CapCut.
 
 ## Status
 
-Milestone M0: specification, decisions and repository skeleton. No stage is implemented yet. See [the specification](SPEC.md) for the full design and [the ADRs](docs/adr/) for the reasoning behind the main choices.
+Milestones M1 to M4 are complete: the whole pipeline works from the command line, from scanning a card to clips cut on the beat of a real track. Milestone M5 is building the desktop window; its first change ships the project and analysis screens. See [the specification](SPEC.md) for the full design and [the ADRs](docs/adr/) for the reasoning behind the main choices.
 
 ## Requirements
 
@@ -27,8 +27,12 @@ make test
 Tests can also run in Docker without touching the host:
 
 ```bash
-make docker-test
+make docker-test        # the default suite
+make docker-test-ai     # the tests marked "ai", with the vision model
+make docker-test-gui    # the tests marked "gui", Qt on the offscreen platform
 ```
+
+Set `AUTOCUT_GUI_SHOTS` to a directory to have the GUI tests save one PNG per screen there for review. The images are of the synthetic fixtures only and are never committed.
 
 Set `AUTOCUT_REAL_FOOTAGE` to a folder of real clips to enable the integration tests that need them. Clips cut from real footage can be placed in `tests/fixtures/private/`, which git ignores.
 
@@ -47,6 +51,15 @@ autocut export     ./edit
 ```
 
 Configuration lives in `autocut.toml`. Start from `autocut.example.toml`.
+
+The same pipeline has a window, which needs the `gui` extra:
+
+```bash
+pip install -e ".[gui]"
+autocut gui               # or: autocut gui ./edit to open a project
+```
+
+The window reads and writes the same `manifest.json` and `autocut.toml` as the commands above, so the two can be used on one project in any order.
 
 ## Cloud features
 

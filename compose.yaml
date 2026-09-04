@@ -29,5 +29,21 @@ services:
       AUTOCUT_REAL_FOOTAGE: ${AUTOCUT_REAL_FOOTAGE:+/footage}
     command: pytest -q -m ai
 
+  # The gui extra, for the tests marked "gui". Offscreen, so no display is shared
+  # into the container and no X socket is needed. No /dev/dri either: Qt renders
+  # into memory here and the tests never decode video.
+  dev-gui:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      target: gui
+    volumes:
+      - .:/app
+      - ${AUTOCUT_REAL_FOOTAGE:-/dev/null}:/footage:ro
+    environment:
+      AUTOCUT_REAL_FOOTAGE: ${AUTOCUT_REAL_FOOTAGE:+/footage}
+      QT_QPA_PLATFORM: offscreen
+    command: pytest -q -m gui
+
 volumes:
   autocut-models:

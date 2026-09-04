@@ -47,6 +47,7 @@ class Description:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     raw: str = ""
+    attempts: int = 0
 
     @property
     def parsed(self) -> bool:
@@ -61,6 +62,7 @@ class ProviderError:
     message: str
     retryable: bool = False
     status: int | None = None
+    attempts: int = 0
 
 
 @runtime_checkable

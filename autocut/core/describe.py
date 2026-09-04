@@ -30,12 +30,17 @@ from autocut.core.config import AutocutConfig, DescribeScope
 from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
 from autocut.core.manifest import Manifest, Metrics, Segment, Tag
 from autocut.core.providers import Description, ProviderError, VisionProvider
+from autocut.core.providers.openrouter import bounded_int
 from autocut.core.score import score_metrics
 
 DESCRIPTIONS_DIRNAME = "descriptions"
 MAX_TAGS = 5
 MAX_CAPTION_WORDS = 20
 AESTHETIC_RANGE = (1, 10)
+#: An aesthetic is clamped into range, but a stored one has to be finite first. A cache
+#: file is written by this module and read back later, and a hand-edited one is a file
+#: like any other.
+MAX_STORED_AESTHETIC = 1_000_000
 
 CORRECTION = (
     "That was not a JSON object. Answer again with only the JSON object and the three "
@@ -150,7 +155,12 @@ def validate(description: Description) -> tuple[Description, str | None]:
         caption = " ".join(words[:MAX_CAPTION_WORDS]).rstrip(".").lower() or None
     aesthetic = description.aesthetic
     if aesthetic is not None:
-        aesthetic = max(AESTHETIC_RANGE[0], min(AESTHETIC_RANGE[1], int(aesthetic)))
+        # Bounded at the transport, clamped to the asked-for range here. A value that
+        # survived neither guard reads as no aesthetic rather than as an exception.
+        finite = bounded_int(aesthetic, MAX_STORED_AESTHETIC)
+        aesthetic = (
+            None if finite is None else max(AESTHETIC_RANGE[0], min(AESTHETIC_RANGE[1], finite))
+        )
     if not tags and caption is None and aesthetic is None:
         return description, "the answer carried none of the three fields"
     return (
@@ -311,8 +321,11 @@ def _run_requests(
                 pool.submit(_describe_one, segment, config, provider, labels) for segment in batch
             ]
             for segment, future in zip(batch, futures, strict=True):
-                outcome, requests = future.result()
-                result.requests += requests
+                outcome, attempts, wasted = future.result()
+                # Requests and cost are what the transport actually did, so a retry
+                # storm and an answer thrown away for being malformed both show up.
+                result.requests += attempts
+                result.cost_usd += wasted
                 done += 1
                 if isinstance(outcome, Description):
                     apply_description(segment, outcome)
@@ -343,29 +356,40 @@ def _describe_one(
     config: AutocutConfig,
     provider: VisionProvider,
     labels: list[str],
-) -> tuple[Description | ProviderError, int]:
-    """One segment's answer and how many requests it took. Runs in a pool thread."""
+) -> tuple[Description | ProviderError, int, float]:
+    """One segment's answer, the HTTP attempts it took, and the cost of any answer
+    that was paid for and then discarded. Runs in a pool thread.
+
+    The attempt count comes from the provider rather than from the number of calls made
+    here, because one call can be several requests once retries are involved.
+    """
     jpeg = thumbnail_bytes(segment, config)
     if jpeg is None:
-        return ProviderError(message="no thumbnail to describe", retryable=False), 0
+        return ProviderError(message="no thumbnail to describe", retryable=False), 0, 0.0
 
-    requests = 1
     outcome = provider.describe_frame(jpeg, labels)
+    attempts = max(outcome.attempts, 1)
     if isinstance(outcome, ProviderError):
-        return outcome, requests
+        return outcome, attempts, 0.0
     validated, reason = validate(outcome)
     if reason is None:
-        return validated, requests
-    # One correction, then it is a failure. The cost of the wasted answer is not lost:
-    # the caller adds the cost of whatever comes back.
-    requests += 1
+        return validated, attempts, 0.0
+
+    # One correction, then it is a failure. The first answer was billed even though it
+    # is thrown away, so its cost travels back separately.
+    wasted = outcome.cost_usd
     retry = provider.describe_frame(jpeg, labels, CORRECTION)
+    attempts += max(retry.attempts, 1)
     if isinstance(retry, ProviderError):
-        return retry, requests
+        return retry, attempts, wasted
     corrected, retry_reason = validate(retry)
     if retry_reason is None:
-        return corrected, requests
-    return ProviderError(message=f"invalid answer twice: {retry_reason}", retryable=False), requests
+        return corrected, attempts, wasted
+    return (
+        ProviderError(message=f"invalid answer twice: {retry_reason}", retryable=False),
+        attempts,
+        wasted + retry.cost_usd,
+    )
 
 
 def _rescore(manifest: Manifest, config: AutocutConfig) -> None:

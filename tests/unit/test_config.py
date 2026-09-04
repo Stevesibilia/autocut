@@ -60,6 +60,25 @@ def test_provider_defaults_match_the_spec() -> None:
     assert providers.prompt_version == 1
 
 
+def test_the_provider_bounds_reject_a_mistyped_file(tmp_path: Path) -> None:
+    """A bad autocut.toml should fail when it is loaded, not at the first request."""
+    import pytest
+    from pydantic import ValidationError
+
+    from autocut.core.config import ProvidersConfig
+
+    for bad in (
+        {"max_concurrency": 0},
+        {"max_concurrency": 999},
+        {"max_retries": -1},
+        {"max_retries": 100},
+        {"max_failures": 0},
+        {"prompt_version": 0},
+    ):
+        with pytest.raises(ValidationError):
+            ProvidersConfig(**bad)
+
+
 def test_the_shipped_example_lists_the_provider_settings() -> None:
     example = Path(__file__).resolve().parents[2] / "autocut.example.toml"
     assert AutocutConfig.load(example).providers == AutocutConfig().providers

@@ -155,7 +155,7 @@ def test_the_dominant_tag_is_the_first_cloud_tag(tmp_path: Path) -> None:
 
 def test_an_invalid_answer_earns_one_correction(tmp_path: Path) -> None:
     manifest = project_in(tmp_path, count=1)
-    prose = Description(model="fake/vision", cost_usd=0.0002, raw="I cannot")
+    prose = Description(model="fake/vision", cost_usd=0.0002, raw="I cannot", attempts=1)
     provider = FakeProvider([prose, good()])
 
     result = describe_project(manifest, config_in(tmp_path), provider)
@@ -164,6 +164,61 @@ def test_an_invalid_answer_earns_one_correction(tmp_path: Path) -> None:
     assert result.requests == 2
     assert [call[2] for call in provider.calls] == [None, CORRECTION]
     assert manifest.segments["aaa:0"].caption == "two people snorkeling"
+    # The discarded answer was billed, so its cost is counted beside the good one.
+    assert result.cost_usd == pytest.approx(0.0002 + 0.0006)
+
+
+def test_the_request_count_is_http_attempts_not_calls(tmp_path: Path) -> None:
+    """A retry storm inside one call must not be reported as one request."""
+    manifest = project_in(tmp_path, count=1)
+    retried = good()
+    retried.attempts = 4
+    provider = FakeProvider([retried])
+
+    result = describe_project(manifest, config_in(tmp_path), provider)
+
+    assert len(provider.calls) == 1
+    assert result.requests == 4
+
+
+def test_the_attempts_of_a_failure_are_counted(tmp_path: Path) -> None:
+    manifest = project_in(tmp_path, count=1)
+    outage = ProviderError(message="503", retryable=True, status=503, attempts=5)
+
+    result = describe_project(manifest, config_in(tmp_path), FakeProvider([outage]))
+
+    assert result.requests == 5
+    assert result.failed == 1
+
+
+def test_a_provider_that_reports_no_attempts_still_counts_one(tmp_path: Path) -> None:
+    """A stand-in provider that leaves the field at zero must not read as free."""
+    manifest = project_in(tmp_path, count=1)
+
+    result = describe_project(manifest, config_in(tmp_path), FakeProvider([good()]))
+
+    assert result.requests == 1
+
+
+def test_the_cost_of_two_bad_answers_is_still_counted(tmp_path: Path) -> None:
+    config = config_in(tmp_path)
+    config.providers.max_concurrency = 1
+    manifest = project_in(tmp_path, count=1)
+    prose = Description(model="fake/vision", cost_usd=0.0002, raw="I cannot", attempts=1)
+
+    result = describe_project(manifest, config, FakeProvider([prose, prose]))
+
+    assert result.failed == 1
+    assert result.cost_usd == pytest.approx(0.0004)
+
+
+def test_a_non_finite_aesthetic_from_the_cache_is_ignored(tmp_path: Path) -> None:
+    """A cache file is a file, and a hand-edited one must not take the run down."""
+    validated, reason = validate(Description(caption="x", aesthetic=float("inf")))  # type: ignore[arg-type]
+
+    assert reason is None
+    assert validated.aesthetic is None
+    assert validated.caption == "x"
 
 
 def test_prose_twice_is_a_failure_and_the_run_continues(tmp_path: Path) -> None:

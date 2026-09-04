@@ -18,8 +18,11 @@ from autocut.core.providers import Description, ProviderError
 from autocut.core.providers.openrouter import (
     BACKOFF_S,
     ENDPOINT,
+    MAX_TOKENS,
     SYSTEM_PROMPT,
     OpenRouterProvider,
+    bounded_float,
+    bounded_int,
     parse_answer,
     strip_fences,
 )
@@ -333,3 +336,164 @@ def test_parsing_an_answer() -> None:
     assert parse_answer('{"a": 1}') == {"a": 1}
     assert parse_answer("[1, 2]") is None
     assert parse_answer("not json") is None
+
+
+def raw_body(content: str, usage: str = '{"cost": 0.0006}') -> httpx.Response:
+    """A response built as bytes, so a test can put 1e400 or NaN on the wire.
+
+    json.dumps would refuse some of these and httpx would not let them through, but a
+    real provider can send anything and json.loads accepts both literals.
+    """
+    body = (
+        '{"model": "m", "choices": [{"message": {"content": '
+        + json.dumps(content)
+        + '}}], "usage": '
+        + usage
+        + "}"
+    )
+    return httpx.Response(200, content=body.encode(), headers={"content-type": "application/json"})
+
+
+def test_an_infinite_aesthetic_does_not_crash_the_run() -> None:
+    """json accepts 1e400, it decodes to infinity, and int(inf) raises OverflowError."""
+    provider, _, _ = provider_over([raw_body('{"tags": ["beach"], "aesthetic": 1e400}')])
+
+    outcome = provider.describe_frame(JPEG, LABELS)
+
+    assert isinstance(outcome, Description)
+    assert outcome.aesthetic is None
+    assert outcome.tags == ["beach"]
+
+
+def test_a_nan_aesthetic_does_not_crash_the_run() -> None:
+    """int(nan) raises ValueError, and a nan would poison every comparison after it."""
+    provider, _, _ = provider_over([raw_body('{"caption": "a beach", "aesthetic": NaN}')])
+
+    outcome = provider.describe_frame(JPEG, LABELS)
+
+    assert isinstance(outcome, Description)
+    assert outcome.aesthetic is None
+    assert outcome.caption == "a beach"
+
+
+def test_an_infinite_token_count_does_not_crash_the_run() -> None:
+    provider, _, _ = provider_over(
+        [
+            raw_body(
+                json.dumps(ANSWER),
+                usage='{"cost": 0.0006, "prompt_tokens": 1e400, "completion_tokens": NaN}',
+            )
+        ]
+    )
+
+    outcome = provider.describe_frame(JPEG, LABELS)
+
+    assert isinstance(outcome, Description)
+    assert outcome.prompt_tokens == 0
+    assert outcome.completion_tokens == 0
+
+
+def test_an_infinite_cost_counts_as_nothing() -> None:
+    """A cost of infinity would make every total after it infinite."""
+    provider, _, _ = provider_over([raw_body(json.dumps(ANSWER), usage='{"cost": 1e400}')])
+
+    outcome = provider.describe_frame(JPEG, LABELS)
+
+    assert isinstance(outcome, Description)
+    assert outcome.cost_usd == 0.0
+
+
+def test_a_nan_cost_counts_as_nothing() -> None:
+    provider, _, _ = provider_over([raw_body(json.dumps(ANSWER), usage='{"cost": NaN}')])
+
+    outcome = provider.describe_frame(JPEG, LABELS)
+
+    assert isinstance(outcome, Description)
+    assert outcome.cost_usd == 0.0
+
+
+def test_a_negative_cost_counts_as_nothing() -> None:
+    provider, _, _ = provider_over([raw_body(json.dumps(ANSWER), usage='{"cost": -5}')])
+
+    outcome = provider.describe_frame(JPEG, LABELS)
+
+    assert isinstance(outcome, Description)
+    assert outcome.cost_usd == 0.0
+
+
+def test_an_absurd_aesthetic_reads_as_none_rather_than_a_huge_integer() -> None:
+    provider, _, _ = provider_over([raw_body('{"caption": "x", "aesthetic": 1e300}')])
+
+    outcome = provider.describe_frame(JPEG, LABELS)
+
+    assert isinstance(outcome, Description)
+    assert outcome.aesthetic is None
+
+
+def test_a_negative_aesthetic_survives_to_be_clamped_later() -> None:
+    """Out of range is the describe step's business; not finite is the transport's."""
+    provider, _, _ = provider_over([raw_body('{"caption": "x", "aesthetic": -3}')])
+
+    outcome = provider.describe_frame(JPEG, LABELS)
+
+    assert isinstance(outcome, Description)
+    assert outcome.aesthetic == -3
+
+
+def test_an_answer_whose_only_field_was_a_bad_number_is_unparsed() -> None:
+    """Nothing usable came back, so describe.py spends its one correction."""
+    provider, _, _ = provider_over([raw_body('{"aesthetic": 1e400}')])
+
+    outcome = provider.describe_frame(JPEG, LABELS)
+
+    assert isinstance(outcome, Description)
+    assert not outcome.parsed
+
+
+def test_the_number_guards() -> None:
+    assert bounded_float("0.5", 10.0) == 0.5
+    assert bounded_float(float("inf"), 10.0) is None
+    assert bounded_float(float("nan"), 10.0) is None
+    assert bounded_float(-1.0, 10.0) is None
+    assert bounded_float(11.0, 10.0) is None
+    assert bounded_float(True, 10.0) is None
+    assert bounded_float(None, 10.0) is None
+    assert bounded_float([1], 10.0) is None
+
+    assert bounded_int(7, 10) == 7
+    assert bounded_int(-7, 10) == -7
+    assert bounded_int(7.9, 10) == 7
+    assert bounded_int(float("inf"), 10) is None
+    assert bounded_int(float("nan"), 10) is None
+    assert bounded_int(11, 10) is None
+    assert bounded_int(True, 10) is None
+    assert bounded_int("nope", 10) is None
+    assert bounded_int(MAX_TOKENS, MAX_TOKENS) == MAX_TOKENS
+
+
+def test_the_attempts_made_are_reported() -> None:
+    provider, _, _ = provider_over([httpx.Response(503), httpx.Response(429), ok()])
+
+    outcome = provider.describe_frame(JPEG, LABELS)
+
+    assert isinstance(outcome, Description)
+    assert outcome.attempts == 3
+
+
+def test_a_failure_reports_the_attempts_it_took() -> None:
+    config = AutocutConfig()
+    config.providers.max_retries = 2
+    provider, _, _ = provider_over([httpx.Response(503) for _ in range(3)], config)
+
+    outcome = provider.describe_frame(JPEG, LABELS)
+
+    assert isinstance(outcome, ProviderError)
+    assert outcome.attempts == 3
+
+
+def test_one_clean_request_reports_one_attempt() -> None:
+    provider, _, _ = provider_over([ok()])
+
+    outcome = provider.describe_frame(JPEG, LABELS)
+
+    assert outcome.attempts == 1

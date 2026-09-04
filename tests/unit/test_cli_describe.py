@@ -279,18 +279,43 @@ def test_the_key_never_appears_in_the_output(
     assert SECRET not in (project / "manifest.json").read_text(encoding="utf-8")
 
 
-def test_key_set_stores_the_value_in_the_keychain(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_there_is_no_way_to_pass_the_key_as_an_argument() -> None:
+    """An argument is visible in ps and in /proc, and lands in the shell history."""
+    result = runner.invoke(app, ["key", "set", "--help"])
+
+    assert result.exit_code == 0
+    assert "--value" not in result.stdout
+    assert "--stdin" in result.stdout
+
+    refused = runner.invoke(app, ["key", "set", "--value", SECRET])
+    assert refused.exit_code != 0
+
+
+def test_key_set_reads_the_key_from_a_hidden_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
     stored: dict[tuple[str, str], str] = {}
     monkeypatch.setattr(
         keyring, "set_password", lambda s, u, value: stored.__setitem__((s, u), value)
     )
 
-    result = runner.invoke(app, ["key", "set", "--value", SECRET])
+    result = runner.invoke(app, ["key", "set"], input=f"{SECRET}\n")
 
     assert result.exit_code == 0, result.stdout
     assert stored == {("autocut", "openrouter"): SECRET}
     assert "keychain" in result.stdout
-    # Storing a key must not print it back.
+    # Neither the prompt nor the confirmation echoes the key back.
+    assert SECRET not in result.stdout
+
+
+def test_key_set_reads_the_key_from_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    stored: dict[tuple[str, str], str] = {}
+    monkeypatch.setattr(
+        keyring, "set_password", lambda s, u, value: stored.__setitem__((s, u), value)
+    )
+
+    result = runner.invoke(app, ["key", "set", "--stdin"], input=f"{SECRET}\n")
+
+    assert result.exit_code == 0, result.stdout
+    assert stored == {("autocut", "openrouter"): SECRET}
     assert SECRET not in result.stdout
 
 
@@ -300,7 +325,7 @@ def test_key_set_refuses_an_empty_value(monkeypatch: pytest.MonkeyPatch) -> None
 
     monkeypatch.setattr(keyring, "set_password", refuse)
 
-    result = runner.invoke(app, ["key", "set", "--value", "   "])
+    result = runner.invoke(app, ["key", "set", "--stdin"], input="   \n")
 
     assert result.exit_code == 2
     assert "No key given" in result.stdout
@@ -312,7 +337,7 @@ def test_key_set_reports_a_backend_failure(monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setattr(keyring, "set_password", raises)
 
-    result = runner.invoke(app, ["key", "set", "--value", SECRET])
+    result = runner.invoke(app, ["key", "set", "--stdin"], input=f"{SECRET}\n")
 
     assert result.exit_code == 1
     assert "Could not store the key" in result.stdout

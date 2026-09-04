@@ -8,6 +8,7 @@ report that the stage is not implemented.
 from __future__ import annotations
 
 import json
+import sys
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
@@ -419,13 +420,19 @@ app.add_typer(key_app)
 
 @key_app.command("set")
 def key_set(
-    value: Annotated[
-        str | None,
-        typer.Option("--value", help="The key. Omitted, it is read without echoing."),
-    ] = None,
+    from_stdin: Annotated[
+        bool,
+        typer.Option("--stdin", help="Read the key from standard input, for a script or a pipe."),
+    ] = False,
 ) -> None:
-    """Store an OpenRouter key in the keychain. It never goes into autocut.toml."""
-    secret = value if value is not None else typer.prompt("OpenRouter key", hide_input=True)
+    """Store an OpenRouter key in the keychain. It never goes into autocut.toml.
+
+    There is deliberately no option to pass the key as an argument. An argument is
+    visible in ``ps`` and in ``/proc/*/cmdline`` to every other user on the machine, and
+    it lands in the shell history. Interactively the key is prompted for without echo;
+    a script pipes it in with ``--stdin``.
+    """
+    secret = sys.stdin.readline() if from_stdin else typer.prompt("OpenRouter key", hide_input=True)
     if not secret.strip():
         console.print("[red]No key given[/red]; nothing was stored.")
         raise typer.Exit(code=2)

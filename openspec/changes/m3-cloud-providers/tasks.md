@@ -29,16 +29,34 @@
   `usage: {"include": true}`, rather than from a price table in this repository that would
   go stale. A response with no usage block costs 0.0 rather than failing.
 
+  **Every number out of a response body is bounded before it is cast**, after the security
+  review found that it was not. `json.loads` accepts `1e400`, which decodes to infinity,
+  and `NaN`; `int()` on either raises, and nothing above `describe_frame` catches it, so
+  one field from any configurable model would have ended the run with a traceback against
+  the contract that it never raises. `bounded_float` and `bounded_int` reject a
+  non-finite or out of range value and the field reads as absent. An infinite cost is
+  worth guarding for its own reason: it would have made every total after it infinite.
+
+  The provider also reports the HTTP attempts it made, so the describe step counts
+  requests and cost from what the transport did rather than from how many times it was
+  called. A retry storm inside one call used to be reported as one request.
+
   `describe_frame` returns a `Description` even for an answer that did not parse, with
   `raw` set and the three fields empty: it was paid for, so its cost is counted, and
   whether it is worth a correction is the describe step's decision.
 
 - [x] 1.3 Add `autocut key set` and `autocut key clear` commands and extend `autocut doctor` with key presence and the configured vision model. Verify with `CliRunner` tests using a mocked keyring.
 
-  `autocut key set` reads the value without echoing when `--value` is not given, refuses
-  an empty one, and reports a missing keyring backend rather than raising. Neither command
-  prints the key. The doctor line now names the model and says when `providers.cloud` is
-  false despite a key being present, which is a common way to be confused.
+  `autocut key set` prompts for the key without echoing, or reads it from standard input
+  with `--stdin` for a script. It refuses an empty one and reports a missing keyring
+  backend rather than raising. Neither command prints the key.
+
+  There is deliberately **no option to pass the key as an argument**. The first version of
+  this command had `--value`, which the security review rejected: an argument is readable
+  in `ps` and in `/proc/*/cmdline` by any other local user and lands in the shell history.
+
+  The doctor line now names the model and says when `providers.cloud` is false despite a
+  key being present, which is a common way to be confused.
 
 ## 2. Descriptions
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 from collections.abc import Callable
 from typing import Any
 
@@ -26,6 +27,14 @@ TIMEOUT_S = 60.0
 
 #: Backoff before each retry. Four entries, so ``max_retries`` above 4 reuses the last.
 BACKOFF_S: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0)
+
+#: Everything in a response body is chosen by whatever model the user configured, so
+#: every number out of it is bounded before it is cast. ``json.loads`` accepts ``1e400``
+#: and ``NaN``, and ``int()`` on either of those raises: a field from a misbehaving model
+#: must not take the run down with a traceback.
+MAX_TOKENS = 100_000_000
+MAX_COST_USD = 1_000_000.0
+MAX_AESTHETIC = 1_000_000
 
 #: Bumping the wording means bumping ``providers.prompt_version``, which invalidates
 #: every cached response on purpose.
@@ -81,13 +90,16 @@ class OpenRouterProvider:
         retries = max(self._config.providers.max_retries, 0)
         for attempt in range(retries + 1):
             outcome = self._request(payload)
+            # The caller counts requests and cost from this, so a retry storm is
+            # reported as the several HTTP calls it was rather than as one.
+            outcome.attempts = attempt + 1
             if isinstance(outcome, Description):
                 return outcome
             if not outcome.retryable or attempt == retries:
                 return outcome
             self._sleep(BACKOFF_S[min(attempt, len(BACKOFF_S) - 1)])
         # Unreachable: the loop returns on the last attempt.
-        return ProviderError(message="no attempt was made", retryable=False)
+        return ProviderError(message="no attempt was made", retryable=False, attempts=0)
 
     def _payload(self, jpeg: bytes, labels: list[str], correction: str | None) -> dict[str, Any]:
         """The request body. Only the picture, the prompt and the model id go in it.
@@ -153,9 +165,9 @@ class OpenRouterProvider:
         usage = body.get("usage") or {}
         description = Description(
             model=str(body.get("model") or self.model),
-            cost_usd=_as_float(usage.get("cost")),
-            prompt_tokens=int(_as_float(usage.get("prompt_tokens"))),
-            completion_tokens=int(_as_float(usage.get("completion_tokens"))),
+            cost_usd=bounded_float(usage.get("cost"), MAX_COST_USD) or 0.0,
+            prompt_tokens=bounded_int(usage.get("prompt_tokens"), MAX_TOKENS) or 0,
+            completion_tokens=bounded_int(usage.get("completion_tokens"), MAX_TOKENS) or 0,
             raw=text,
         )
         answer = parse_answer(text)
@@ -168,17 +180,45 @@ class OpenRouterProvider:
         caption = answer.get("caption")
         if isinstance(caption, str):
             description.caption = caption
-        aesthetic = answer.get("aesthetic")
-        if isinstance(aesthetic, (int, float)) and not isinstance(aesthetic, bool):
-            description.aesthetic = int(aesthetic)
+        # A non-finite or absurd aesthetic reads as no aesthetic. When that leaves the
+        # answer with none of the three fields, describe.py records the failure.
+        description.aesthetic = bounded_int(answer.get("aesthetic"), MAX_AESTHETIC)
         return description
 
 
-def _as_float(value: object) -> float:
+def bounded_float(value: object, limit: float) -> float | None:
+    """``value`` as a finite non-negative float within ``limit``, or ``None``.
+
+    ``json.loads`` decodes ``1e400`` to infinity and ``NaN`` to a float nan, and both
+    of those poison any arithmetic they reach, so neither is accepted here.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
     try:
-        return float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return 0.0
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(number) or number < 0.0 or number > limit:
+        return None
+    return number
+
+
+def bounded_int(value: object, limit: int) -> int | None:
+    """``value`` as an int within plus or minus ``limit``, or ``None``.
+
+    Separate from :func:`bounded_float` because an aesthetic may legitimately arrive
+    negative from a confused model and is clamped later, while a cost or a token count
+    that is negative is nonsense.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(number) or abs(number) > limit:
+        return None
+    return int(number)
 
 
 def _default_sleep(seconds: float) -> None:

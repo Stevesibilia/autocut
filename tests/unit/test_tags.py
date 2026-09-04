@@ -414,3 +414,43 @@ def test_progress_reports_one_event_per_segment(tmp_path: Path) -> None:
 def test_an_empty_result_reports_nothing_tagged() -> None:
     assert TagResult().model == "none"
     assert not TagResult().skipped
+
+
+def test_a_cloud_tag_dominates_a_local_one(tmp_path: Path) -> None:
+    """The scenario from the spec: local beach 0.62 against cloud snorkeling, beach."""
+    manifest = project_with(tmp_path, np.stack([leaning(BEACH, SUBJECT_NULL, 0.62)]))
+    tag_project(manifest, config_in(tmp_path), encoder=FakeTextEncoder())
+    segment = manifest.segments["aaa:0"]
+    assert segment.dominant_tag == "beach"
+
+    segment.tags = [
+        Tag(label="snorkeling", confidence=1.0, source="cloud", primary=True),
+        Tag(label="beach", confidence=1.0, source="cloud", primary=True),
+        *segment.tags,
+    ]
+
+    assert segment.dominant_tag == "snorkeling"
+
+
+def test_re_tagging_locally_leaves_the_cloud_tags_alone(tmp_path: Path) -> None:
+    manifest = project_with(tmp_path, np.stack([leaning(BEACH, SUBJECT_NULL, 0.62)]))
+    segment = manifest.segments["aaa:0"]
+    segment.tags = [Tag(label="snorkeling", confidence=1.0, source="cloud", primary=True)]
+
+    tag_project(manifest, config_in(tmp_path), encoder=FakeTextEncoder())
+
+    by_source = {tag.source: tag.label for tag in segment.tags}
+    assert by_source["cloud"] == "snorkeling"
+    assert by_source["local"] == "beach"
+    # The cloud tag still names the clip after a local re-run.
+    assert segment.dominant_tag == "snorkeling"
+
+
+def test_a_local_tag_records_its_source_and_a_confidence_in_range(tmp_path: Path) -> None:
+    manifest = project_with(tmp_path, np.stack([leaning(BEACH, SUBJECT_NULL, 0.62)]))
+
+    tag_project(manifest, config_in(tmp_path), encoder=FakeTextEncoder())
+
+    tag = manifest.segments["aaa:0"].tags[0]
+    assert tag.source == "local"
+    assert 0.0 <= tag.confidence <= 1.0

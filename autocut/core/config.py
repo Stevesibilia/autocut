@@ -391,10 +391,39 @@ class ExportConfig(BaseModel):
     keep_rejects: bool = False
 
 
+DescribeScope = Literal["candidates", "selected"]
+
+
 class ProvidersConfig(BaseModel):
     cloud: bool = True
     vision_model: str = "google/gemini-2.5-flash"
     llm_model: str = "google/gemini-2.5-flash"
+    max_concurrency: int = Field(
+        default=4,
+        description="Requests in flight. The work is network bound and the frames are "
+        "already on disk, so a small thread pool is enough.",
+    )
+    max_retries: int = Field(
+        default=4,
+        description="Retries per request on 429 and 5xx, with backoff 1, 2, 4, 8 s. "
+        "Other 4xx fail immediately: a bad request does not get better.",
+    )
+    max_failures: int = Field(
+        default=8,
+        description="Consecutive failures that stop the run from issuing new requests. "
+        "The rule against retrying into an outage forever that ADR 4 asks for.",
+    )
+    prompt_version: int = Field(
+        default=1,
+        description="Bump this when the prompt wording changes. Cached responses are "
+        "keyed by it, so a new version invalidates them on purpose.",
+    )
+    describe_scope: DescribeScope = Field(
+        default="candidates",
+        description="Which segments to describe. 'candidates' is about 60 on a holiday "
+        "folder and costs a few cents; 'selected' is for large projects where only the "
+        "final clips need a caption for the soundtrack prompt.",
+    )
     local_embeddings: bool = True
     embedding_model: str = Field(
         default="ViT-B-32/laion2b_s34b_b79k",

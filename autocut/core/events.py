@@ -13,7 +13,16 @@ from pathlib import Path
 from typing import Literal
 
 Stage = Literal[
-    "scan", "probe", "analyze", "embed", "tag", "select", "soundtrack", "sync", "export"
+    "scan",
+    "probe",
+    "analyze",
+    "embed",
+    "tag",
+    "describe",
+    "select",
+    "soundtrack",
+    "sync",
+    "export",
 ]
 
 

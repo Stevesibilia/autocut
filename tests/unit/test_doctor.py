@@ -12,7 +12,7 @@ from typer.testing import CliRunner
 from autocut.cli.main import app
 from autocut.core import doctor as doctor_module
 from autocut.core.config import AutocutConfig
-from autocut.core.doctor import Check, DoctorReport, find_key, inspect_environment
+from autocut.core.doctor import Check, DoctorReport, inspect_environment
 from autocut.core.hwaccel import Hwaccel
 
 runner = CliRunner()
@@ -168,33 +168,22 @@ def test_the_key_is_reported_from_the_environment(
     report = inspect_environment(config_in(tmp_path))
 
     assert report.cloud_key.ok
-    assert report.cloud_key.detail == "OPENROUTER_API_KEY is set"
+    assert report.cloud_key.detail == "OPENROUTER_API_KEY is set, google/gemini-2.5-flash"
     # The value never reaches the report.
     assert "sk-secret-value" not in json.dumps(report.as_dict())
 
 
-def test_the_environment_wins_over_the_keychain(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(doctor_module.KEY_ENV_VAR, "from-env")
-    assert find_key() == "from-env"
+def test_the_key_line_says_when_cloud_is_switched_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A key and a false providers.cloud is a common way to be confused."""
+    minimal_machine(monkeypatch, key="sk-secret-value")
+    config = config_in(tmp_path)
+    config.providers.cloud = False
+    report = inspect_environment(config)
 
-
-def test_a_keychain_without_a_backend_is_no_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(doctor_module.KEY_ENV_VAR, raising=False)
-    import keyring
-
-    def raises(service: str, username: str) -> str | None:
-        raise RuntimeError("no backend available")
-
-    monkeypatch.setattr(keyring, "get_password", raises)
-    assert find_key() is None
-
-
-def test_a_keychain_entry_is_found(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(doctor_module.KEY_ENV_VAR, raising=False)
-    import keyring
-
-    monkeypatch.setattr(keyring, "get_password", lambda service, username: "from-keychain")
-    assert find_key() == "from-keychain"
+    assert report.cloud_key.ok
+    assert "providers.cloud is false" in report.cloud_key.detail
 
 
 def test_the_cache_line_reports_the_directory_and_the_size(

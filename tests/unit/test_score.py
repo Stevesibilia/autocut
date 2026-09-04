@@ -142,3 +142,56 @@ def test_class_grouping_preserves_input_order() -> None:
     assert len(scores) == 4
     assert scores[0] < scores[2]
     assert scores[1] < scores[3]
+
+
+def test_the_aesthetic_weight_changes_nothing_until_descriptions_exist() -> None:
+    """A weight on a metric no segment carries must not move a single score."""
+    from autocut.core.config import ScoringWeights
+    from autocut.core.manifest import Metrics
+
+    def described(sharpness: float, aesthetic: float | None) -> Metrics:
+        return Metrics(
+            sharpness=sharpness,
+            exposure_clipped=0.0,
+            motion=0.3,
+            stability=0.9,
+            colorfulness=0.2,
+            aesthetic=aesthetic,
+        )
+
+    plain = [("drone", described(10.0, None)), ("drone", described(20.0, None))]
+    weights_off = ScoringWeights(aesthetic=0.0)
+    # Above the sharpness weight, so the flip below is unambiguous: at an equal weight
+    # the two metrics cancel exactly and both segments score 0.5.
+    weights_on = ScoringWeights(aesthetic=3.0)
+
+    assert score_metrics(plain, weights_on) == score_metrics(plain, weights_off)
+
+    # With the descriptions in place the same weight reorders the pair: the weaker
+    # frame is the better looking one.
+    describedpair = [("drone", described(10.0, 0.9)), ("drone", described(20.0, 0.1))]
+    off = score_metrics(describedpair, weights_off)
+    on = score_metrics(describedpair, weights_on)
+    assert off[1] > off[0]
+    assert on[0] > on[1]
+
+
+def test_a_partly_described_class_leaves_the_aesthetic_out() -> None:
+    """Ranking a described segment against an undescribed one on a number only one has."""
+    from autocut.core.config import ScoringWeights
+    from autocut.core.manifest import Metrics
+
+    def described(sharpness: float, aesthetic: float | None) -> Metrics:
+        return Metrics(
+            sharpness=sharpness,
+            exposure_clipped=0.0,
+            motion=0.3,
+            stability=0.9,
+            colorfulness=0.2,
+            aesthetic=aesthetic,
+        )
+
+    partial = [("drone", described(10.0, 0.9)), ("drone", described(20.0, None))]
+    weights = ScoringWeights(aesthetic=1.0)
+
+    assert score_metrics(partial, weights) == score_metrics(partial, ScoringWeights(aesthetic=0.0))

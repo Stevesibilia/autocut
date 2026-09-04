@@ -23,6 +23,12 @@ All notable changes to this project are documented in this file. The format foll
 - `beatsync.envelope` reduces a decoded track to min and max pairs for the waveform, cached beside the manifest by the audio file's size and modification time.
 - `quantize_durations(..., dry_run=True)` reports what a tempo would do without touching a segment, so the preview and the run cannot disagree.
 
+- The montage preview: `autocut/core/montage.py` renders the selected clips in edit order into one 360 px file with the track muxed, keyed by a fingerprint of the edit so an untouched selection renders nothing and one changed clip re-renders only what moved, with `preview/montage.json` recording each clip's measured span.
+- Play all on the Review screen: the whole edit in one player with a timeline marked at every cut, the grid following the clip on screen, a click on a boundary jumping to that clip, and K, R, space and U applying to the clip playing so it can be rejected as it plays.
+- Play with track on the Soundtrack screen after Apply sync, which is how the beat grid is heard rather than inferred.
+- `gui.montage_height`, `gui.montage_preset` and `gui.montage_crf`; a `preview` block on the manifest.
+- The export screen offers to delete a montage preview built from an edit that no longer exists, alongside the stale clip files.
+
 ### Added
 
 - Project specification in English with the decisions from the 2026-09-03 review.

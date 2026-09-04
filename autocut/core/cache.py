@@ -5,10 +5,15 @@ project deleted by mistake, never triggers a re-analysis. The key carries the
 analysis schema version and the sampling parameters, so changing either simply
 misses and the entry is recomputed rather than silently reused.
 
-Each entry is one ``.npz`` with the metric arrays and the thumbnail frames, plus
-one ``.json`` with the probe result, telemetry samples and shot bounds. Writes go
-to a temporary file and are renamed into place, so an interrupted run never
-leaves a half written entry behind.
+Each entry is one ``.npz`` with the metric arrays, the thumbnail frames and the
+segment embeddings, plus one ``.json`` with the probe result, telemetry samples, shot
+bounds and the identifier of the model the embeddings came from. Writes go to a
+temporary file and are renamed into place, so an interrupted run never leaves a half
+written entry behind.
+
+Embeddings are versioned by model identifier rather than by the analysis schema: a
+different model has to be recomputed, but the metric arrays it sits beside cost a
+decode and stay valid, so a model change must not throw them away.
 """
 
 from __future__ import annotations
@@ -41,6 +46,8 @@ class CacheEntry:
     probe: dict[str, Any] = field(default_factory=dict)
     thumb_frames: np.ndarray | None = None
     sprites: list[np.ndarray] = field(default_factory=list)
+    embeddings: np.ndarray | None = None
+    embedding_model: str | None = None
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -67,8 +74,32 @@ def entry_path(file_key: str, config: AutocutConfig) -> Path:
     return cache_dir(config) / f"{entry_name(file_key, config)}.npz"
 
 
+def thumb_index(segment_id: str, count: int) -> int:
+    """Which cached frame belongs to a segment, or ``-1`` when the entry holds none.
+
+    One frame is cached per detected shot, and a segment is a span of a shot: an
+    altitude split makes two segments out of one shot and both describe the same frame.
+    The index is therefore the segment's suffix clamped into the array, and every
+    consumer of the frames, the hashes and the embeddings has to agree on it or a
+    similarity would compare one shot's thumbnail with another shot's vector.
+    """
+    if count <= 0:
+        return -1
+    _, _, suffix = segment_id.rpartition(":")
+    try:
+        index = int(suffix)
+    except ValueError:
+        index = 0
+    return min(max(index, 0), count - 1)
+
+
 def read_entry(file_key: str, config: AutocutConfig) -> CacheEntry | None:
-    """Load an entry, or ``None`` when it is missing, stale or unreadable."""
+    """Load an entry, or ``None`` when it is missing, stale or unreadable.
+
+    An entry whose embeddings were computed with another model comes back with none,
+    because the vectors are not comparable, while its metric arrays are handed over
+    untouched.
+    """
     arrays_path = entry_path(file_key, config)
     meta_path = arrays_path.with_suffix(".json")
     if not arrays_path.exists() or not meta_path.exists():
@@ -78,6 +109,7 @@ def read_entry(file_key: str, config: AutocutConfig) -> CacheEntry | None:
         with np.load(arrays_path) as payload:
             arrays = {name: payload[name] for name in ARRAY_NAMES if name in payload}
             thumbs = payload.get("thumb_frames")
+            embeddings = payload.get("embeddings")
             sprites = [
                 payload[name]
                 for name in sorted(
@@ -89,6 +121,9 @@ def read_entry(file_key: str, config: AutocutConfig) -> CacheEntry | None:
         return None
     if meta.get("analysis_schema_version") != ANALYSIS_SCHEMA_VERSION:
         return None
+    embedding_model = meta.get("embedding_model")
+    if embedding_model != config.providers.embedding_model:
+        embeddings, embedding_model = None, None
     return CacheEntry(
         file_key=file_key,
         source=str(meta.get("source", "original")),
@@ -98,6 +133,8 @@ def read_entry(file_key: str, config: AutocutConfig) -> CacheEntry | None:
         probe=dict(meta.get("probe", {})),
         thumb_frames=thumbs,
         sprites=sprites,
+        embeddings=embeddings,
+        embedding_model=embedding_model,
         warnings=list(meta.get("warnings", [])),
     )
 
@@ -109,6 +146,8 @@ def write_entry(entry: CacheEntry, config: AutocutConfig) -> Path:
     payload: dict[str, np.ndarray] = dict(entry.arrays)
     if entry.thumb_frames is not None:
         payload["thumb_frames"] = entry.thumb_frames
+    if entry.embeddings is not None:
+        payload["embeddings"] = entry.embeddings
     for index, sprite in enumerate(entry.sprites):
         payload[f"sprite_{index}"] = sprite
 
@@ -127,6 +166,7 @@ def write_entry(entry: CacheEntry, config: AutocutConfig) -> Path:
                 "sample_fps": config.analysis.sample_fps,
                 "sample_long_side": config.analysis.sample_long_side,
                 "shot_bounds": [[a, b] for a, b in entry.shot_bounds],
+                "embedding_model": entry.embedding_model,
                 "telemetry": entry.telemetry,
                 "probe": entry.probe,
                 "warnings": entry.warnings,

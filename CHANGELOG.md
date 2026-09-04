@@ -27,6 +27,11 @@ All notable changes to this project are documented in this file. The format foll
 - Places and visits from GPS and time, and a cap of three clips per visit, so one spot on one outing cannot fill the edit however different the pixels look. Candidates without GPS belong to no place and are never held back by it.
 - Candidate share ceiling: `max_clips` is bounded to half the eligible candidates unless `--max-clips` is passed, so a small folder produces a short edit.
 
+- One CLIP embedding per segment, local and optional, computed from the thumbnail frame already in the analysis cache so no video is decoded again. Stored in the cache entry with the model identifier, on CUDA, MPS or CPU in that order. `autocut embed` fills a project analyzed without the `ai` extra, and `autocut analyze` runs it at the end when the extra is installed. Without the extra analysis completes and prints one line.
+- Semantic similarity signal, the cosine between two segment embeddings stretched from `similarity.semantic_floor` onto 0 to 1. It replaces the perceptual hash for any pair where both candidates carry an embedding, and a pair missing one falls back to the hash.
+- `autocut doctor`, with `--json` and `--sample`: ffmpeg and ffprobe versions, the decoder `auto` would choose and whether it verified, whether the `ai` extra imports, the compute device, whether the model weights are present, whether an OpenRouter key is available, and the cache directory with its size. Exits non-zero only when ffmpeg or ffprobe is missing.
+- `ai` extra pinned to torch 2.13, torchvision 0.28 and open_clip_torch 3.3, a second `Dockerfile.dev` target and `dev-ai` compose service that install torch from the PyTorch CPU index, `make docker-test-ai`, an `ai` pytest marker that skips when torch does not import, and a CI job that runs the marked tests so the matrix job stays light.
+
 ### Changed
 
 - The review report lists selected segments first, with their edit order, best window bounds, visual cluster and the near duplicate a candidate lost to.
@@ -35,3 +40,4 @@ All notable changes to this project are documented in this file. The format foll
 - Selected cards show the clip's target duration, the rule that settled it and whether its window was snapped to a motion boundary.
 - `export.remove_audio` defaults to true for every class: a default export is silent and the soundtrack carries the sound. Set a class to false in `autocut.toml` to keep its ambience.
 - The review report shows each segment's place, offers a filter by place, lists the places with their visits and clip counts, and names the clips that filled a visit on a card the place cap held back.
+- A cache entry whose stored embedding model differs from the configured one reads back with no embeddings and with its metric arrays intact, so changing the model costs one forward pass per shot rather than a re-analysis.

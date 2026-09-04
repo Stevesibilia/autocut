@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
 from pathlib import Path
@@ -17,11 +18,15 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     skip_private = pytest.mark.skip(reason="no clips in tests/fixtures/private")
     skip_real = pytest.mark.skip(reason="AUTOCUT_REAL_FOOTAGE not set")
     skip_ffmpeg = pytest.mark.skip(reason="ffmpeg not on PATH")
+    skip_ai = pytest.mark.skip(reason="the ai extra is not installed")
     has_private = PRIVATE.exists() and any(
         p.suffix.lower() in {".mp4", ".mov"} for p in PRIVATE.iterdir()
     )
     has_real = bool(os.environ.get("AUTOCUT_REAL_FOOTAGE"))
     has_ffmpeg = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+    # find_spec rather than an import: importing torch costs seconds and this runs
+    # during collection, on every test session, extra installed or not.
+    has_ai = importlib.util.find_spec("torch") is not None
     for item in items:
         if "private" in item.keywords and not has_private:
             item.add_marker(skip_private)
@@ -29,6 +34,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             item.add_marker(skip_real)
         if "ffmpeg" in item.keywords and not has_ffmpeg:
             item.add_marker(skip_ffmpeg)
+        if "ai" in item.keywords and not has_ai:
+            item.add_marker(skip_ai)
 
 
 @pytest.fixture(autouse=True)

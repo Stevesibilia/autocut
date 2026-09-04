@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
@@ -11,6 +12,7 @@ from autocut.core.config import AutocutConfig
 from autocut.core.similarity import (
     CandidateFeatures,
     MotionSignal,
+    SemanticSignal,
     SimilarityMatrix,
     SpatialSignal,
     TemporalSignal,
@@ -56,6 +58,7 @@ def features(
     lon: float | None = None,
     when: datetime | None = None,
     motion: np.ndarray | None = None,
+    embedding: np.ndarray | None = None,
 ) -> CandidateFeatures:
     return CandidateFeatures(
         segment_id=segment_id,
@@ -65,12 +68,21 @@ def features(
         lon=lon,
         timestamp=when,
         motion=motion if motion is not None else np.zeros(0),
+        embedding=embedding,
     )
+
+
+def vectors_at(cosine: float) -> tuple[np.ndarray, np.ndarray]:
+    """Two unit vectors in the plane whose dot product is ``cosine``."""
+    angle = math.acos(cosine)
+    first = np.array([1.0, 0.0], dtype=np.float32)
+    second = np.array([math.cos(angle), math.sin(angle)], dtype=np.float32)
+    return first, second
 
 
 def only(config: AutocutConfig, *names: str) -> AutocutConfig:
     """Disable every signal except the named ones, so a test measures one thing."""
-    for name in ("visual_fallback", "spatial", "temporal", "motion"):
+    for name in ("visual_fallback", "visual_semantic", "spatial", "temporal", "motion"):
         setattr(config.similarity, name, name in names)
     return config
 
@@ -179,6 +191,95 @@ def test_combined_similarity_stays_in_range() -> None:
     )
     value = combined_similarity(a, b, config)
     assert 0.0 <= value <= 1.0
+
+
+def test_same_bay_from_two_angles() -> None:
+    """The scenario from the spec: cosine 0.88 against a floor of 0.5 gives 0.76."""
+    config = AutocutConfig()
+    assert config.similarity.semantic_floor == 0.5
+    first, second = vectors_at(0.88)
+    a, b = features("a", embedding=first), features("b", embedding=second)
+    assert SemanticSignal().value(a, b, config) == pytest.approx(0.76, abs=0.001)
+
+
+def test_sunset_and_dinner_score_zero() -> None:
+    config = AutocutConfig()
+    first, second = vectors_at(0.45)
+    a, b = features("a", embedding=first), features("b", embedding=second)
+    assert SemanticSignal().value(a, b, config) == 0.0
+
+
+def test_the_semantic_signal_needs_both_embeddings() -> None:
+    signal = SemanticSignal()
+    first, second = vectors_at(0.9)
+    assert not signal.available(features("a", embedding=first), features("b"))
+    assert signal.available(features("a", embedding=first), features("b", embedding=second))
+
+
+def test_the_semantic_signal_replaces_the_hash() -> None:
+    """Both signals judge the picture, so the mean must not hold two of them."""
+    config = only(AutocutConfig(), "visual_fallback", "visual_semantic")
+    first, second = vectors_at(0.9)
+    a = features("a", beach(), embedding=first)
+    b = features("b", dinner(), embedding=second)
+
+    combined = combined_similarity(a, b, config)
+    semantic = SemanticSignal().value(a, b, config)
+    hash_value = VisualSignal().value(a, b, config)
+    assert combined == pytest.approx(semantic)
+    assert combined != pytest.approx(hash_value)
+
+
+def test_one_missing_embedding_falls_back_to_the_hash() -> None:
+    config = only(AutocutConfig(), "visual_fallback", "visual_semantic")
+    first, _ = vectors_at(0.9)
+    a = features("a", beach(), embedding=first)
+    b = features("b", beach_panned())
+
+    combined = combined_similarity(a, b, config)
+    assert combined == pytest.approx(VisualSignal().value(a, b, config))
+
+
+def test_the_semantic_signal_joins_the_other_signals() -> None:
+    """It replaces the hash and nothing else: GPS and time still weigh in."""
+    config = only(AutocutConfig(), "visual_fallback", "visual_semantic", "temporal")
+    now = datetime(2025, 7, 14, 13, 37, tzinfo=UTC)
+    first, second = vectors_at(0.9)
+    a = features("a", beach(), when=now, embedding=first)
+    b = features("b", dinner(), when=now + timedelta(seconds=30), embedding=second)
+
+    weights = config.similarity.weights
+    expected = (
+        weights.semantic * SemanticSignal().value(a, b, config)
+        + weights.temporal * TemporalSignal().value(a, b, config)
+    ) / (weights.semantic + weights.temporal)
+    assert combined_similarity(a, b, config) == pytest.approx(expected)
+
+
+def test_a_disabled_semantic_signal_leaves_the_hash_in_place() -> None:
+    config = only(AutocutConfig(), "visual_fallback")
+    first, second = vectors_at(0.9)
+    a = features("a", beach(), embedding=first)
+    b = features("b", dinner(), embedding=second)
+    assert combined_similarity(a, b, config) == pytest.approx(VisualSignal().value(a, b, config))
+
+
+def test_a_zero_semantic_weight_leaves_the_hash_in_place() -> None:
+    """A weight of zero is a way of turning the signal off, so it cannot suppress."""
+    config = only(AutocutConfig(), "visual_fallback", "visual_semantic")
+    config.similarity.weights.semantic = 0.0
+    first, second = vectors_at(0.9)
+    a = features("a", beach(), embedding=first)
+    b = features("b", dinner(), embedding=second)
+    assert combined_similarity(a, b, config) == pytest.approx(VisualSignal().value(a, b, config))
+
+
+def test_a_floor_of_one_degrades_to_the_raw_cosine() -> None:
+    config = AutocutConfig()
+    config.similarity.semantic_floor = 1.0
+    first, second = vectors_at(0.6)
+    a, b = features("a", embedding=first), features("b", embedding=second)
+    assert SemanticSignal().value(a, b, config) == pytest.approx(0.6, abs=0.001)
 
 
 def test_matrix_is_symmetric_and_self_similar() -> None:

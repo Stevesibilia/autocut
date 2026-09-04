@@ -94,11 +94,13 @@ Data sent to cloud providers is limited to downscaled frames and derived signals
 
 Optional extras in `pyproject.toml`:
 
-- `autocut[ai]`: torch, open_clip, plus the aesthetic predictor weights loader.
+- `autocut[ai]`: torch 2.13, torchvision 0.28 and open_clip_torch 3.3, plus the aesthetic predictor weights loader. torch and torchvision are pinned as a pair because every torchvision release pins one exact torch version. The vision model is `ViT-B-32/laion2b_s34b_b79k`, 512 dimensions and about 350 MB, downloaded once into the platform cache directory under `models/` so later runs work offline. On Linux without an NVIDIA GPU, install torch from `https://download.pytorch.org/whl/cpu`: the PyPI wheel depends on the whole CUDA 13 stack and costs several gigabytes for nothing.
 - `autocut[gui]`: PySide6.
 - `autocut[dev]`: pytest, ruff, mypy, pre-commit.
 
 `exiftool` is not a dependency. Every field needed so far is exposed by ffprobe.
+
+`autocut doctor` reports what the machine provides, before a run rather than during one: the ffmpeg and ffprobe versions, the decoder `auto` would choose and whether it verified against a sample file, whether the `ai` extra imports, the compute device embeddings would use, whether the model weights are already downloaded, whether an OpenRouter key is available from the environment or the keychain, and the cache directory with its size. `--json` prints the same facts for scripts and the GUI. It exits non-zero only when ffmpeg or ffprobe is missing, since everything else is optional.
 
 ### 6.2 GUI
 
@@ -360,8 +362,8 @@ Models are allowed and in some places clearly better than classic heuristics. Ru
 
 Modules in order of value over complexity:
 
-1. **CLIP or SigLIP embeddings**, one frame per segment, local. The enabler for everything below and the first to implement.
-2. **Semantic similarity for deduplication.** The best similarity signal by far.
+1. **CLIP embeddings**, one per segment, local, computed from the 320 px thumbnail frame the analysis already cached, so no video is decoded a second time. `ViT-B-32/laion2b_s34b_b79k` through open_clip, on CUDA, MPS or CPU in that order. The vectors live in the file's cache entry beside the metric arrays together with the model identifier, so changing the model recomputes them and leaves the metrics alone. `autocut embed` fills a project that was analyzed without the extra, and `autocut analyze` calls it at the end when the extra is there. Without it analysis completes, records `embedding_model: none` and prints one line. Built in M3.
+2. **Semantic similarity for deduplication.** The best similarity signal by far. The cosine between two normalized vectors is stretched from `similarity.semantic_floor`, 0.5 by default, up to 1 onto 0 to 1, because two unrelated holiday shots still score around 0.5 against each other. It replaces the perceptual hash for any pair where both candidates carry a vector rather than being averaged with it, so the mean holds one visual opinion and not two; a pair missing one vector falls back to the hash on its own. Built in M3.
 3. **Semantic tagging.** Local zero-shot against a label set (`aerial`, `sunset`, `beach`, `mountain`, `people`, `food`, `city`, `underwater`, `indoor`, `street`), or cloud vision model. Feeds the filename tag, category balancing and the soundtrack prompt.
 4. **Captions**, cloud vision model only. One sentence per selected clip, feeds the soundtrack prompt.
 5. **Aesthetic scoring.** Predictor on CLIP embeddings (LAION weights) locally, or the cloud model's judgment.
@@ -378,8 +380,12 @@ Modules in order of value over complexity:
 ## 10. CLI
 
 ```bash
+# what this machine can do
+autocut doctor
+
 # first pass
 autocut analyze    ./footage --out ./edit-sardinia
+autocut embed      ./edit-sardinia   # only when analyze ran without the ai extra
 autocut select     ./edit-sardinia --max-clips 40 --duration 3.0 --diversity 0.6
 autocut soundtrack ./edit-sardinia --variants 3
 autocut report     ./edit-sardinia

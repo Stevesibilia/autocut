@@ -113,18 +113,24 @@ reflex = 0.0
 generic = 0.0
 
 [similarity]
-visual_semantic = true   # CLIP embeddings, milestone M3
+visual_semantic = true   # CLIP embeddings, needs the ai extra
 visual_fallback = true   # perceptual hash plus colour histogram
 spatial = true
 temporal = true
 motion = true
 spatial_radius_m = 200.0   # GPS distance at which the spatial signal reaches 0
 temporal_radius_s = 600.0  # time distance at which the temporal signal reaches 0
+# Cosine similarity mapped to 0. Two unrelated holiday shots still score around 0.5
+# against each other, so the useful range is the half above the floor.
+semantic_floor = 0.5
 
 # Relative weight of each similarity signal. A signal that cannot be computed for a
-# pair, because one of the two has no GPS fix, is left out of that pair's mean.
+# pair, because one of the two has no GPS fix or no embedding, is left out of that
+# pair's mean. The semantic signal replaces the visual hash for a pair rather than
+# joining it, which is why the two carry the same weight.
 [similarity.weights]
 visual = 0.5
+semantic = 0.5
 spatial = 0.2
 temporal = 0.2
 motion = 0.1
@@ -174,7 +180,11 @@ generic = false
 cloud = true          # uses OPENROUTER_API_KEY from env or keychain when present
 vision_model = "google/gemini-2.5-flash"
 llm_model = "google/gemini-2.5-flash"
-local_embeddings = true
+local_embeddings = true   # needs the ai extra; run "autocut doctor" to check
+# Vision model as architecture/pretrained. Changing it recomputes the embeddings from
+# the cached frames and leaves the metric arrays alone.
+embedding_model = "ViT-B-32/laion2b_s34b_b79k"
+embedding_batch_size = 16
 
 [soundtrack]
 variants = 3

@@ -33,6 +33,22 @@ def test_the_shipped_example_parses_and_matches_the_defaults() -> None:
     assert cfg.similarity == defaults.similarity
 
 
+def test_embedding_defaults_match_the_spec() -> None:
+    cfg = AutocutConfig()
+    assert cfg.providers.local_embeddings
+    assert cfg.providers.embedding_model == "ViT-B-32/laion2b_s34b_b79k"
+    assert cfg.providers.embedding_batch_size == 16
+    assert cfg.similarity.visual_semantic
+    assert cfg.similarity.semantic_floor == 0.5
+    # The semantic signal replaces the hash for a pair, so it carries the same weight.
+    assert cfg.similarity.weights.semantic == cfg.similarity.weights.visual == 0.5
+
+
+def test_the_shipped_example_lists_the_provider_defaults() -> None:
+    example = Path(__file__).resolve().parents[2] / "autocut.example.toml"
+    assert AutocutConfig.load(example).providers == AutocutConfig().providers
+
+
 def test_duration_defaults_match_the_spec() -> None:
     """The numbers in specs/clip-durations are the shipped defaults, not examples."""
     selection = AutocutConfig().selection

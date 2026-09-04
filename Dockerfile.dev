@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12-slim AS dev
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg libgl1 libglib2.0-0 \
@@ -10,3 +10,17 @@ COPY autocut ./autocut
 RUN pip install --no-cache-dir -e ".[dev]"
 
 CMD ["pytest", "-q"]
+
+# The ai extra for the tests marked "ai". torch's PyPI wheel for Linux depends on
+# CUDA 13, cuDNN, NCCL and triton, several gigabytes for a container that will only
+# ever run on the CPU, so torch and torchvision come from the PyTorch CPU index
+# first and the extra then finds them already satisfied. The versions match the
+# bounds in pyproject.toml and have to be raised with them.
+FROM dev AS ai
+
+RUN pip install --no-cache-dir \
+      --index-url https://download.pytorch.org/whl/cpu \
+      "torch==2.13.0+cpu" "torchvision==0.28.0+cpu" \
+ && pip install --no-cache-dir -e ".[dev,ai]"
+
+CMD ["pytest", "-q", "-m", "ai"]

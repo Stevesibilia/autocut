@@ -209,6 +209,16 @@ class AnalysisRun(BaseModel):
     files_failed: int = 0
     completed: bool = True
     hwaccel: str = "none"
+    embedding_model: str = Field(
+        default="none",
+        description="Which model produced the segment embeddings, or 'none' when the "
+        "ai extra was missing or embeddings were switched off.",
+    )
+    embedding_device: str = Field(
+        default="none",
+        description="Which compute device embedded them, so a timing on the MacBook "
+        "and one on the Linux box can be told apart.",
+    )
     warnings: list[str] = Field(default_factory=list)
 
 

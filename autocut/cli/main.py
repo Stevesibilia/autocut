@@ -7,6 +7,7 @@ report that the stage is not implemented.
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,12 +15,21 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
-from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeElapsedColumn
+from rich.progress import (
+    BarColumn,
+    Progress,
+    TaskID,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 
 from autocut import __version__
 from autocut.core.analyze import AnalysisCancelled, analyze_files
 from autocut.core.cache import cache_stats, prune
 from autocut.core.config import AutocutConfig
+from autocut.core.doctor import inspect_environment
+from autocut.core.embeddings import EmbedResult, embed_project
 from autocut.core.events import ProgressEvent
 from autocut.core.export import export_clips
 from autocut.core.ffmpeg_cmd import ExportOverrides
@@ -145,6 +155,7 @@ def analyze(
         except AnalysisCancelled:
             interrupted = True
 
+    embedded = _run_embed(manifest, cfg)
     manifest.updated_at = datetime.now(UTC)
     manifest.save(manifest_path)
 
@@ -160,6 +171,7 @@ def analyze(
     )
     for reason, count in sorted(rejected.items()):
         console.print(f"  {reason}: {count}")
+    _print_embed(embedded)
     console.print(f"Report written to {report_path}")
     if interrupted:
         console.print(
@@ -195,6 +207,93 @@ def _open_project(project: Path) -> Manifest:
         console.print(f"[red]No manifest found[/red] at {manifest_path}. Run analyze first.")
         raise typer.Exit(code=1)
     return Manifest.load(manifest_path)
+
+
+def _run_embed(manifest: Manifest, cfg: AutocutConfig) -> EmbedResult:
+    """Embed the project and record on the run what did it and where.
+
+    The progress bar is built on the first event rather than up front, so a project
+    that is already embedded, or a machine without the extra, prints one line and no
+    empty bar.
+    """
+    bar: Progress | None = None
+    task: TaskID | None = None
+
+    def on_event(event: ProgressEvent) -> None:
+        nonlocal bar, task
+        if bar is None:
+            bar = Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeElapsedColumn(),
+                console=console,
+            )
+            bar.start()
+            task = bar.add_task("Embedding", total=event.total)
+        assert task is not None
+        bar.update(task, completed=event.current, total=event.total)
+
+    try:
+        result = embed_project(manifest, cfg, on_event)
+    finally:
+        if bar is not None:
+            bar.stop()
+    manifest.analysis.embedding_model = result.model
+    manifest.analysis.embedding_device = result.device
+    return result
+
+
+def _print_embed(result: EmbedResult) -> None:
+    if result.skipped_reason is not None:
+        console.print(f"Embeddings skipped: {result.skipped_reason}")
+        return
+    console.print(
+        f"Embedded [bold]{result.segments}[/bold] segments with {result.model} "
+        f"on {result.device} ({result.files_embedded} files computed, "
+        f"{result.files_from_cache} from cache)"
+    )
+    for warning in result.warnings:
+        console.print(f"[yellow]{warning}[/yellow]")
+
+
+@app.command()
+def embed(
+    project: Annotated[Path, typer.Argument(help="Output folder holding manifest.json.")],
+    config: ConfigOpt = None,
+) -> None:
+    """Compute the missing segment embeddings from the analysis cache."""
+    cfg = _load_config(config)
+    manifest = _open_project(project)
+    result = _run_embed(manifest, cfg)
+    manifest.updated_at = datetime.now(UTC)
+    manifest.save(project / "manifest.json")
+    _print_embed(result)
+
+
+@app.command()
+def doctor(
+    config: ConfigOpt = None,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print the same facts as a JSON object.")
+    ] = False,
+    sample: Annotated[
+        Path | None,
+        typer.Option("--sample", help="Video file to verify the hardware decoder against."),
+    ] = None,
+) -> None:
+    """Report what this machine provides: binaries, decoder, extra, model, key, cache."""
+    report = inspect_environment(_load_config(config), sample)
+    if as_json:
+        # Written straight to stdout: Rich would soft wrap a long cache path and the
+        # output has to parse.
+        typer.echo(json.dumps(report.as_dict(), indent=2))
+    else:
+        for check in report.checks:
+            colour = "green" if check.ok else "yellow"
+            console.print(f"[{colour}]{check.marker:>7}[/{colour}] {check.name}: {check.detail}")
+    if not report.ok:
+        raise typer.Exit(code=1)
 
 
 @app.command()

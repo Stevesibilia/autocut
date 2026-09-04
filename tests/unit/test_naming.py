@@ -90,6 +90,31 @@ def test_the_dominant_tag_is_the_most_confident_one() -> None:
     assert clip_tag(tagged) == "people"
 
 
+def test_a_secondary_tag_does_not_name_a_clip() -> None:
+    """A view tag says how a shot was taken; the class field already says that."""
+    from autocut.core.manifest import Tag
+
+    aerial_only = segment()
+    aerial_only.tags = [
+        Tag(label="aerial", confidence=0.58, source="local", group="view", primary=False)
+    ]
+
+    assert clip_tag(aerial_only) == DEFAULT_TAG
+    assert clip_name(aerial_only, source(), 14, 4.0) == "014_20260812_drone_clip_4.0s.mp4"
+
+
+def test_a_subject_tag_names_the_clip_even_when_a_view_tag_is_surer() -> None:
+    from autocut.core.manifest import Tag
+
+    both = segment()
+    both.tags = [
+        Tag(label="aerial", confidence=0.58, source="local", group="view", primary=False),
+        Tag(label="beach", confidence=0.24, source="local", group="subject", primary=True),
+    ]
+
+    assert clip_tag(both) == "beach"
+
+
 def test_an_explicit_tag_wins_over_the_segment_tags() -> None:
     """The rejects folder passes the reason in place of the tag."""
     name = clip_name(segment(tags=["sunset"]), source(), 3, 2.0, "low_altitude")

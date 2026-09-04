@@ -34,6 +34,13 @@ All notable changes to this project are documented in this file. The format foll
 - Tags carry their confidence, their group and their source, and the dominant tag is the most confident one from the primary group. Exported clips are named after it, or `clip` when no subject label won.
 - `selection.max_share_per_tag`, a ceiling of 0.5 by default on the share of the edit carrying one dominant tag, lifted like the place cap when nothing else is eligible.
 - The review report shows every tag with its confidence and group, marks the one that names the clip, offers a filter by tag and counts the segments carrying each.
+- Cloud descriptions per segment through OpenRouter: tags from the configured label set plus free words, a one sentence caption and an aesthetic judgment from 1 to 10, in one request per segment. `autocut describe` runs them and `autocut analyze` calls it after tagging. Answers are cached under the analysis cache per model and prompt version, so a second run over the same project makes no request.
+- Cloud stays off unless `providers.cloud` is true, a key is available and `--no-cloud` was not passed. Any of the three disables every call in the run and the CLI names which one did it. `--no-cloud` is accepted by every command.
+- `autocut key set` and `autocut key clear` store and remove the OpenRouter key in the OS keychain. The key is read from `OPENROUTER_API_KEY` first, and never written to `autocut.toml`, the manifest, the cache or a log line.
+- Requests retry on 429 and 5xx with backoff 1, 2, 4, 8 s up to `providers.max_retries`, fail at once on any other 4xx, and stop the describe step after `providers.max_failures` consecutive failures. A failure is recorded on the segment and the run completes.
+- Each vision request carries the 320 px thumbnail, the fixed prompt and the model id, and nothing else. A unit test asserts the request body against that.
+- `Metrics.aesthetic` joins the composite score when `weights.aesthetic` is above zero, rank normalized per class like every other metric. A class where no segment carries one leaves the metric out, so the weight changes nothing until descriptions exist.
+- The review report shows the caption on the card, marks cloud tags apart from local ones, shows the aesthetic value, says why a description failed, and reports the model, the request count and the cost in USD in the header.
 - `ai` extra pinned to torch 2.13, torchvision 0.28 and open_clip_torch 3.3, a second `Dockerfile.dev` target and `dev-ai` compose service that install torch from the PyTorch CPU index, `make docker-test-ai`, an `ai` pytest marker that skips when torch does not import, and a CI job that runs the marked tests so the matrix job stays light.
 
 ### Changed
@@ -44,6 +51,7 @@ All notable changes to this project are documented in this file. The format foll
 - Selected cards show the clip's target duration, the rule that settled it and whether its window was snapped to a motion boundary.
 - `export.remove_audio` defaults to true for every class: a default export is silent and the soundtrack carries the sound. Set a class to false in `autocut.toml` to keep its ambience.
 - The review report shows each segment's place, offers a filter by place, lists the places with their visits and clip counts, and names the clips that filled a visit on a card the place cap held back.
+- The dominant tag prefers the first cloud tag when a segment has one, since a model that looked at the picture is more specific than a zero-shot label set. A local re-run replaces only local tags and leaves cloud tags alone.
 - `Segment.tags` is a list of `Tag` records rather than of strings. A manifest written before the change opens unchanged: a string list upgrades to local tags with confidence 1.0.
 - Tests that are not marked `ai` no longer touch the real vision model. With the extra installed, every CLI test running `analyze` was downloading the model into its own temporary cache.
 - A cache entry whose stored embedding model differs from the configured one reads back with no embeddings and with its metric arrays intact, so changing the model costs one forward pass per shot rather than a re-analysis.

@@ -71,12 +71,18 @@ autocut/
 Anything that can be done locally or through a paid service sits behind a provider interface with a local implementation that always exists:
 
 - **Frame embeddings** for similarity. Local CLIP or SigLIP only. No cloud provider planned, the local model is cheap and good enough.
-- **Semantic tagging, aesthetic score, captions.** Local zero-shot CLIP as baseline. Optional cloud vision model through OpenRouter, one 320 px JPEG per segment. Cloud is used when a key is present and not disabled.
+- **Semantic tagging, aesthetic score, captions.** Local zero-shot CLIP as baseline. Optional cloud vision model through OpenRouter, one 320 px JPEG per segment, one request per segment, cached forever per model and prompt version. Cloud is used when `providers.cloud` is true, a key is available and `--no-cloud` was not passed; any of the three disables every call in the run and the CLI says which. Built in M3.
 - **Prompt refinement.** Template generator as baseline. Optional LLM through OpenRouter.
 - **Music.** `MusicProvider` interface. The first implementation is "manual Suno": write the prompt, the user pastes it and brings the track back. API-driven providers can be added later without touching selection or sync.
 - **Reverse geocoding.** Online with on-disk cache. No offline dataset.
 
 Data sent to cloud providers is limited to downscaled frames and derived signals (tags, energy curve, place names, time of day). Full files never leave the machine. See ADR 4.
+
+The vision request carries the 320 px thumbnail, the fixed prompt and the model id, and nothing else: no file name, no path, no timestamp, no position, no telemetry, no segment id. The payload is built in one function so that boundary has one place to be audited, and a unit test asserts the body against it.
+
+The key comes from `OPENROUTER_API_KEY` or from the OS keychain entry `autocut/openrouter`, the environment winning so a script can set it for one run. `autocut key set` stores one and `autocut key clear` removes it. The key is never written to `autocut.toml`, the manifest, the cache or a log line, and `autocut doctor` reports its presence and the configured model, never its value.
+
+Failures are bounded twice. A request retries on 429 and 5xx with backoff 1, 2, 4, 8 s up to `providers.max_retries`, and any other 4xx fails at once. `providers.max_failures` consecutive failures stop the describe step for the run, so an outage costs about that many requests rather than one per segment. A failure is recorded on the segment and the run completes.
 
 ## 6. Technology stack
 
@@ -376,8 +382,8 @@ Modules in order of value over complexity:
 
    Only the **primary group** names a file. A view or a lighting tag says how a shot was taken, which the source class already says. On the Sardinia set 55 of 77 segments get a subject, 22 fall back to `clip`, every one of the 20 `aerial` tags is on a drone clip, and `autocut tag` runs in 5 s.
 
-4. **Captions**, cloud vision model only. One sentence per selected clip, feeds the soundtrack prompt.
-5. **Aesthetic scoring.** Predictor on CLIP embeddings (LAION weights) locally, or the cloud model's judgment.
+4. **Captions**, cloud vision model only. One lowercase sentence of at most twenty words per segment, stored on `Segment.caption`, shown on the report card and feeding the M4 soundtrack prompt. Asked for in the same request as the tags and the aesthetic, because three fields cost one call. Built in M3.
+5. **Aesthetic scoring.** The cloud model's judgment, an integer 1 to 10 stored on `Metrics.aesthetic` scaled to 0 to 1 so it rank normalizes beside the other metrics. It enters the composite score only when `weights.aesthetic` is above zero, which is not the default; a class where no segment has one leaves the metric out entirely, so the weight changes nothing until descriptions exist. `autocut describe` scores the project again after writing them, because scoring otherwise happens during analysis and would be stale. A local predictor on CLIP embeddings (LAION weights) remains the M4b option. Built in M3, cloud path only.
 6. **Face detection** (MediaPipe or InsightFace). Family scenes have value no sharpness metric sees. Raises the score, handled as a separate rule. Also protects deduplication: similar frames with different people are not duplicates.
 7. **LLM prompt refinement**, through OpenRouter, output always validated.
 8. **Narrative ordering by LLM**, low priority. Group by place from GPS instead of pure chronology.
@@ -393,11 +399,13 @@ Modules in order of value over complexity:
 ```bash
 # what this machine can do
 autocut doctor
+autocut key set                      # store an OpenRouter key in the keychain
 
 # first pass
 autocut analyze    ./footage --out ./edit-sardinia
 autocut embed      ./edit-sardinia   # only when analyze ran without the ai extra
 autocut tag        ./edit-sardinia   # after editing the label set in autocut.toml
+autocut describe   ./edit-sardinia   # cloud tags, captions and aesthetics, needs a key
 autocut select     ./edit-sardinia --max-clips 40 --duration 3.0 --diversity 0.6
 autocut soundtrack ./edit-sardinia --variants 3
 autocut report     ./edit-sardinia

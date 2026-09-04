@@ -336,11 +336,14 @@ class ProjectState(QObject):
         # Forced: this runs on the UI thread after the stage's callable returned, so
         # the manifest is no longer being written even though the thread may still be
         # winding down. One save per stage, here, rather than a debounced one.
+        # Recorded before the signal, not after: a screen reading ``last_result`` in
+        # its ``stage_finished`` handler is the normal case, and setting it afterwards
+        # handed every one of them the previous run's result.
+        self._last_result = result
         self.segments_changed.emit([])
         self.selection_changed.emit()
         self.save_now(force=True)
         self.stage_finished.emit(name)
-        self._last_result = result
 
     def _stage_cancelled(self, name: str) -> None:
         # Whatever the stage did reach is worth keeping: analysis is per file and the

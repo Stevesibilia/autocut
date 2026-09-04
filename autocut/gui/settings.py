@@ -17,6 +17,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -127,9 +128,27 @@ def write_config(config: AutocutConfig, path: Path, paths: tuple[str, ...] = EDI
         if value is None:
             table.pop(parts[-1], None)
         else:
-            table[parts[-1]] = str(value) if isinstance(value, Path) else value
+            table[parts[-1]] = _plain(value)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(dumps_toml(existing), encoding="utf-8")
+
+
+def _plain(value: Any) -> Any:
+    """A configuration value as TOML sees it.
+
+    A per class setting is a model, not a scalar: written as itself it would end up in
+    the file as the repr of a Python object, which reads back as a string and quietly
+    replaces the table.
+    """
+    if isinstance(value, BaseModel):
+        # Every key of a per class table has to be present when it is read back, so a
+        # ``None`` becomes an empty string rather than disappearing. The config reads
+        # that back as "nothing set for this class".
+        dumped = value.model_dump(mode="json")
+        return {key: ("" if item is None else item) for key, item in dumped.items()}
+    if isinstance(value, Path):
+        return str(value)
+    return value
 
 
 class SettingsDialog(QDialog):

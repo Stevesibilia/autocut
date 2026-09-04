@@ -102,23 +102,28 @@ def test_the_navigation_switches_the_visible_screen(window: MainWindow) -> None:
     assert window.stack.currentWidget() is window.screens["review"]
 
 
-def test_the_review_screen_is_no_longer_a_placeholder(window: MainWindow) -> None:
-    """It arrived with m5-gui-review, so the window holds the real screen now."""
-    screen = window.screens["review"]
-
-    assert not isinstance(screen, PlaceholderScreen)
-    assert screen.objectName() == "screen-review"
-
-
-def test_the_two_later_screens_name_the_change_that_fills_them(window: MainWindow) -> None:
-    for key, change in (
-        ("soundtrack", "m5-gui-soundtrack-export"),
-        ("export", "m5-gui-soundtrack-export"),
-    ):
+def test_no_screen_is_a_placeholder_any_more(window: MainWindow) -> None:
+    """M5 is complete: all five entries are real screens with their own objects."""
+    names = {
+        "project": "screen-project",
+        "analysis": "screen-analysis",
+        "review": "screen-review",
+        "soundtrack": "screen-soundtrack",
+        "export": "screen-export",
+    }
+    for key, object_name in names.items():
         screen = window.screens[key]
-        assert isinstance(screen, PlaceholderScreen)
-        labels = [child.text() for child in screen.findChildren(type(screen.children()[1]))]
-        assert any(change in text for text in labels), key
+        assert not isinstance(screen, PlaceholderScreen), key
+        assert screen.objectName() == object_name, key
+
+
+def test_the_placeholder_screen_still_works_on_its_own(qtbot: Any) -> None:
+    """Kept for the next milestone's screens rather than deleted with the last user."""
+    screen = PlaceholderScreen("Later", "arrives with m6-something")
+    qtbot.addWidget(screen)
+
+    labels = [child.text() for child in screen.findChildren(type(screen.children()[1]))]
+    assert any("m6-something" in text for text in labels)
 
 
 def test_the_title_names_the_open_project(window: MainWindow, tmp_path: Path) -> None:

@@ -213,6 +213,64 @@ def test_the_soundtrack_and_export_states_are_grabbed(
     assert export.summary.text()
 
 
+def test_the_montage_states_are_grabbed(tmp_path: Path, synthetic_dir: Path, qtbot: Any) -> None:
+    """The montage player, empty and playing, on the Review and Soundtrack screens."""
+    out = tmp_path / "edit"
+    state = ProjectState()
+    state.new_project([synthetic_dir], out)
+    state.config.cache.dir = tmp_path / "cache"
+    state.config.analysis.sprites = True
+
+    window = build_window(state)
+    qtbot.addWidget(window)
+    window.resize(1400, 880)
+    with qtbot.waitSignal(state.stage_finished, timeout=180_000):
+        assert window.screens["analysis"].run()  # type: ignore[attr-defined]
+    assert state.wait_for_stage(30_000)
+    assert state.run_selection()
+    window.refresh_navigation()
+
+    directory = shots_dir()
+    if directory is not None:
+        directory.mkdir(parents=True, exist_ok=True)
+
+    def grab(name: str) -> None:
+        qtbot.wait(80)
+        image = window.grab().toImage()
+        assert not image.isNull(), name
+        if directory is not None:
+            path = directory / f"{name}.png"
+            assert image.save(str(path)), path
+
+    window.go_to("review")
+    review = window.screens["review"]
+    assert isinstance(review, ReviewScreen)
+    grab("montage-before")
+
+    with qtbot.waitSignal(state.stage_finished, timeout=180_000):
+        assert review.play_all()
+    assert state.wait_for_stage(30_000)
+    qtbot.wait(400)
+    grab("montage-playing")
+    review.montage.pause()
+
+    # The same player on the Soundtrack screen, with the track muxed.
+    window.go_to("soundtrack")
+    soundtrack = window.screens["soundtrack"]
+    assert isinstance(soundtrack, SoundtrackScreen)
+    assert soundtrack.generate()
+    assert soundtrack.load_track(synthetic_dir / "click_120bpm.wav")
+    with qtbot.waitSignal(state.stage_finished, timeout=60_000):
+        assert soundtrack.apply_sync()
+    assert state.wait_for_stage(30_000)
+    with qtbot.waitSignal(state.stage_finished, timeout=180_000):
+        assert soundtrack.play_with_track()
+    assert state.wait_for_stage(30_000)
+    qtbot.wait(400)
+    grab("montage-with-track")
+    soundtrack.montage.pause()
+
+
 def test_the_screens_are_grabbed_before_a_project_exists(tmp_path: Path, qtbot: Any) -> None:
     """The empty window is what a first time user sees, so it is worth an image too."""
     window = build_window()

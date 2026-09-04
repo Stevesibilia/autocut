@@ -462,6 +462,92 @@ def test_nothing_is_editable_while_a_stage_runs(screen: SoundtrackScreen, qtbot:
     assert screen.generate_button.isEnabled()
 
 
+# --- play with track ----------------------------------------------------------
+
+
+def test_play_with_track_is_off_until_a_sync_has_run(screen: SoundtrackScreen) -> None:
+    """Hearing the cuts is the point, and before a sync the clips are not on the grid."""
+    assert not screen.play_with_track_button.isEnabled()
+    assert screen.play_with_track() is False
+
+
+@pytest.mark.ffmpeg
+def test_play_with_track_renders_the_montage_with_audio(
+    qtbot: Any, tmp_path: Path, synthetic_dir: Path
+) -> None:
+    """The scenario from the spec: after Apply sync, the montage plays with the track."""
+    from tests.unit.test_montage import CLIPS
+    from tests.unit.test_montage import project as montage_manifest
+
+    manifest = montage_manifest(tmp_path, CLIPS, synthetic_dir)
+    manifest.save(tmp_path / "edit" / "manifest.json")
+    state = ProjectState()
+    state.open_project(tmp_path / "edit")
+    state.config.cache.dir = tmp_path / "cache"
+    screen = SoundtrackScreen(state)
+    qtbot.addWidget(screen)
+    assert screen.generate()
+    assert screen.load_track(synthetic_dir / CLICK)
+
+    with qtbot.waitSignal(state.stage_finished, timeout=60_000):
+        assert screen.apply_sync()
+    assert state.wait_for_stage(10_000)
+    assert screen.play_with_track_button.isEnabled()
+
+    with qtbot.waitSignal(state.stage_finished, timeout=180_000) as blocker:
+        assert screen.play_with_track()
+    assert state.wait_for_stage(10_000)
+
+    assert blocker.args == ["montage"]
+    opened = state.manifest
+    assert opened is not None
+    assert opened.preview.has_audio
+    # isHidden rather than isVisible: the screen itself is never shown in a test, and
+    # a child of a hidden parent is not visible however it was set.
+    assert not screen.montage.isHidden()
+    assert screen.montage.path is not None
+    assert len(screen.montage.parts) == 3
+    # The track is in the file, which is the whole reason for this button.
+    from tests.unit.test_montage import _streams
+
+    kinds = [stream["codec_type"] for stream in _streams(screen.montage.path)]
+    assert kinds.count("audio") == 1
+    assert kinds.count("video") == 1
+
+
+@pytest.mark.ffmpeg
+def test_a_second_play_with_track_renders_nothing(
+    qtbot: Any, tmp_path: Path, synthetic_dir: Path
+) -> None:
+    from tests.unit.test_montage import CLIPS
+    from tests.unit.test_montage import project as montage_manifest
+
+    manifest = montage_manifest(tmp_path, CLIPS, synthetic_dir)
+    manifest.save(tmp_path / "edit" / "manifest.json")
+    state = ProjectState()
+    state.open_project(tmp_path / "edit")
+    state.config.cache.dir = tmp_path / "cache"
+    screen = SoundtrackScreen(state)
+    qtbot.addWidget(screen)
+    assert screen.generate()
+    screen.load_track(synthetic_dir / CLICK)
+    with qtbot.waitSignal(state.stage_finished, timeout=60_000):
+        screen.apply_sync()
+    state.wait_for_stage(10_000)
+    with qtbot.waitSignal(state.stage_finished, timeout=180_000):
+        screen.play_with_track()
+    state.wait_for_stage(10_000)
+    opened = state.manifest
+    assert opened is not None and opened.preview.path is not None
+    built = Path(opened.preview.path)
+    stamp = built.stat().st_mtime_ns
+
+    assert screen.play_with_track()
+
+    assert not state.is_running
+    assert built.stat().st_mtime_ns == stamp
+
+
 # --- the waveform widget ------------------------------------------------------
 
 

@@ -798,6 +798,157 @@ def test_the_report_is_not_written_while_a_stage_runs(screen: ReviewScreen, qtbo
     qtbot.wait(50)
 
 
+# --- the montage --------------------------------------------------------------
+
+
+@pytest.fixture
+def real_state(tmp_path: Path, synthetic_dir: Path, qtbot: Any) -> ProjectState:
+    """A selected project over three real synthetic clips."""
+    from tests.unit.test_montage import CLIPS
+    from tests.unit.test_montage import project as montage_project_manifest
+
+    assert qtbot is not None
+    manifest = montage_project_manifest(tmp_path, CLIPS, synthetic_dir)
+    manifest.save(tmp_path / "edit" / "manifest.json")
+    state = ProjectState()
+    state.open_project(tmp_path / "edit")
+    state.config.cache.dir = tmp_path / "cache"
+    # Off, or rejecting one of three clips would take the candidate ceiling to one and
+    # the test would be measuring the selection rather than the montage.
+    state.config.selection.max_candidate_share = 0.0
+    state.config.selection.min_temporal_gap_seconds = 0.0
+    return state
+
+
+@pytest.mark.ffmpeg
+def test_play_all_renders_once_and_plays(real_state: ProjectState, qtbot: Any) -> None:
+    """The scenario from the spec, at three clips: render, play, follow the clips."""
+    screen = ReviewScreen(real_state)
+    qtbot.addWidget(screen)
+    screen.resize(1200, 780)
+
+    with qtbot.waitSignal(real_state.stage_finished, timeout=180_000) as blocker:
+        assert screen.play_all()
+
+    assert blocker.args == ["montage"]
+    assert screen.stack.currentWidget() is screen.montage
+    assert len(screen.montage.parts) == 3
+    assert real_state.manifest is not None
+    assert real_state.manifest.preview.fingerprint is not None
+    assert "3 clips" in screen.montage_note.text()
+
+    # A second Play all on an untouched edit renders nothing at all.
+    stamp = Path(real_state.manifest.preview.path).stat().st_mtime_ns  # type: ignore[arg-type]
+    assert screen.play_all()
+    assert not real_state.is_running
+    assert Path(real_state.manifest.preview.path).stat().st_mtime_ns == stamp  # type: ignore[arg-type]
+
+
+@pytest.mark.ffmpeg
+def test_the_grid_follows_the_playing_clip(real_state: ProjectState, qtbot: Any) -> None:
+    screen = ReviewScreen(real_state)
+    qtbot.addWidget(screen)
+    with qtbot.waitSignal(real_state.stage_finished, timeout=180_000):
+        screen.play_all()
+    second = screen.montage.parts[1].segment_id
+
+    screen.montage.clip_changed.emit(second)
+
+    assert screen.grid.current_id() == second
+    assert screen.preview.segment_id == second
+
+
+@pytest.mark.ffmpeg
+def test_rejecting_while_playing_hits_the_clip_on_screen(
+    real_state: ProjectState, qtbot: Any
+) -> None:
+    """The scenario from the spec: R during clip 2 rejects clip 2, not the grid cursor."""
+    screen = ReviewScreen(real_state)
+    qtbot.addWidget(screen)
+    with qtbot.waitSignal(real_state.stage_finished, timeout=180_000):
+        screen.play_all()
+    playing = screen.montage.parts[1].segment_id
+    # The grid cursor is somewhere else on purpose.
+    screen.grid.select_segment(screen.montage.parts[0].segment_id)
+    screen.montage.seek_to_clip(2)
+    qtbot.waitUntil(
+        lambda: screen.montage.current_segment_id() == playing,
+        timeout=20_000,
+    )
+
+    screen._decide("reject")
+
+    segment = real_state.segment(playing)
+    assert segment is not None
+    assert segment.user_rejected
+    # Playback is not interrupted, and the montage is marked stale rather than rebuilt.
+    assert "no longer matches the edit" in screen.montage_note.text()
+    assert screen.montage.path is not None
+
+
+@pytest.mark.ffmpeg
+def test_a_decision_makes_the_montage_stale(real_state: ProjectState, qtbot: Any) -> None:
+    screen = ReviewScreen(real_state)
+    qtbot.addWidget(screen)
+    with qtbot.waitSignal(real_state.stage_finished, timeout=180_000):
+        screen.play_all()
+    assert real_state.montage_is_current(None)
+
+    screen.grid.select_segment(screen.montage.parts[0].segment_id)
+    screen._decide("reject")
+
+    assert not real_state.montage_is_current(None)
+    assert "no longer matches" in screen.montage_note.text()
+
+
+@pytest.mark.ffmpeg
+def test_play_all_again_after_a_decision_rebuilds(real_state: ProjectState, qtbot: Any) -> None:
+    screen = ReviewScreen(real_state)
+    qtbot.addWidget(screen)
+    with qtbot.waitSignal(real_state.stage_finished, timeout=180_000):
+        screen.play_all()
+    first = Path(real_state.manifest.preview.path)  # type: ignore[arg-type]
+    # The montage is on screen, so a decision applies to the clip playing, which is
+    # the first one: that is the behaviour this screen is built around.
+    rejected = screen.montage.current_segment_id() or screen.montage.parts[0].segment_id
+    screen._decide("reject")
+    assert real_state.segment(rejected).user_rejected  # type: ignore[union-attr]
+
+    with qtbot.waitSignal(real_state.stage_finished, timeout=180_000):
+        assert screen.play_all()
+
+    assert len(screen.montage.parts) == 2
+    assert first.exists()  # same path, rebuilt in place
+    assert real_state.montage_is_current(None)
+
+
+def test_play_all_with_nothing_selected_says_why(screen: ReviewScreen, qtbot: Any) -> None:
+    """The stage runs, finds nothing to render, and the screen reports the reason."""
+    state = screen._state
+    manifest = state.manifest
+    assert manifest is not None
+    for segment in manifest.segments.values():
+        segment.outcome = "candidate"
+        segment.order = None
+
+    with qtbot.waitSignal(state.stage_finished, timeout=30_000):
+        assert screen.play_all()
+
+    assert state.wait_for_stage(10_000)
+    assert "nothing is selected" in screen.montage_note.text()
+    assert screen.stack.currentWidget() is not screen.montage
+
+
+def test_switching_to_groups_pauses_the_montage(screen: ReviewScreen) -> None:
+    """Leaving the montage is what stops it: nobody watches a montage behind a grid."""
+    screen.groups_toggle.setChecked(True)
+
+    assert screen.stack.currentWidget() is screen.groups
+
+    screen.show_grid()
+    assert screen.stack.currentWidget() is screen.grid
+
+
 # --- opening another project --------------------------------------------------
 
 

@@ -39,10 +39,12 @@ from autocut.core.beatsync import (
 from autocut.core.config import GenreRow
 from autocut.core.events import ProgressCallback, ProgressEvent
 from autocut.core.manifest import PromptVariant
+from autocut.core.montage import MontageResult
 from autocut.core.providers import TextProvider, cloud_enabled, find_key
 from autocut.core.soundtrack.build import build_soundtrack, store_user_variant, write_prompt_file
 from autocut.core.soundtrack.prompt import MoodDirection, RoomDirection, apply_mood
 from autocut.gui.state import ProjectState
+from autocut.gui.widgets.montage import MontagePlayer
 from autocut.gui.widgets.prompt_editor import PromptEditor
 from autocut.gui.widgets.waveform import WaveformView, load_or_build_envelope
 
@@ -155,12 +157,18 @@ class SoundtrackScreen(QWidget):
         self.apply_button = QPushButton("Apply sync")
         self.apply_button.clicked.connect(self.apply_sync)
         self.apply_button.setEnabled(False)
+        self.play_with_track_button = QPushButton("Play with track")
+        self.play_with_track_button.clicked.connect(self.play_with_track)
+        self.play_with_track_button.setEnabled(False)
+        self.montage = MontagePlayer(self)
+        self.montage.setVisible(False)
 
         track_actions = QHBoxLayout()
         track_actions.addWidget(self.load_button)
         track_actions.addWidget(QLabel("Use BPM"))
         track_actions.addWidget(self.override_field)
         track_actions.addWidget(self.apply_button)
+        track_actions.addWidget(self.play_with_track_button)
         track_actions.addStretch(1)
 
         track_box = QGroupBox("Track")
@@ -170,6 +178,7 @@ class SoundtrackScreen(QWidget):
         track_layout.addLayout(track_actions)
         track_layout.addWidget(self.comparison_label)
         track_layout.addWidget(self.distribution_label)
+        track_layout.addWidget(self.montage, 1)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -493,6 +502,13 @@ class SoundtrackScreen(QWidget):
             self.override_field.setValue(float(proposed))
             self.override_field.blockSignals(False)
 
+    def _synced_with_a_track(self) -> bool:
+        """Whether there is something to watch: a track loaded and a sync applied."""
+        manifest = self._state.manifest
+        if manifest is None or self._audio is None:
+            return False
+        return any(segment.beats is not None for segment in manifest.segments.values())
+
     def effective_bpm(self) -> float:
         """What Apply would use: the override when set, otherwise the measurement."""
         override = self.override_field.value()
@@ -550,8 +566,46 @@ class SoundtrackScreen(QWidget):
 
     # --- reacting ----------------------------------------------------------
 
+    def play_with_track(self) -> bool:
+        """Watch the synced edit with the music on it, so the drift is heard.
+
+        The montage is rendered with the track muxed, which is the only way to hear
+        whether the cuts land: a beat grid that is subtly wrong looks right and sounds
+        wrong, and this screen exists to catch that before an export.
+        """
+        state = self._state
+        manifest = state.manifest
+        if manifest is None or state.is_running or self._audio is None:
+            return False
+        track = self._audio
+        if state.montage_is_current(track) and self._show_montage():
+            self.montage.play()
+            return True
+        self.distribution_label.setText("Building the montage with the track…")
+        return state.run_montage(track=track)
+
+    def _show_montage(self) -> bool:
+        manifest = self._state.manifest
+        if manifest is None or manifest.preview.path is None:
+            return False
+        path = Path(manifest.preview.path)
+        index = Path(manifest.preview.index_path) if manifest.preview.index_path else None
+        if not self.montage.load(path, index, sound=manifest.preview.has_audio):
+            return False
+        self.montage.setVisible(True)
+        return True
+
     def _stage_finished(self, name: str) -> None:
         self._set_running(False)
+        if name == "montage":
+            result = self._state.last_result
+            if isinstance(result, MontageResult) and result.ok and self._show_montage():
+                self.montage.play()
+            elif isinstance(result, MontageResult):
+                self.distribution_label.setText(
+                    result.skipped_reason or "The montage could not be built."
+                )
+            return
         if name != "sync":
             return
         result = self._state.last_result
@@ -560,6 +614,9 @@ class SoundtrackScreen(QWidget):
                 f"Synced {result.clips} clips at {result.bpm:g} bpm, "
                 f"{result.total_after_s:.1f} s of edit, mean move {result.mean_shift_s:.2f} s"
             )
+        # Only after a sync: hearing the cuts against the music is the point, and
+        # before the sync the clips are not on the grid yet.
+        self.play_with_track_button.setEnabled(self._audio is not None)
         self.synced.emit()
 
     def _set_running(self, running: bool) -> None:
@@ -568,9 +625,11 @@ class SoundtrackScreen(QWidget):
             self.save_edit_button,
             self.write_button,
             self.apply_button,
+            self.play_with_track_button,
             self.load_button,
             self.editor,
         ):
             widget.setEnabled(not running)
         if not running:
             self.apply_button.setEnabled(self._track is not None)
+            self.play_with_track_button.setEnabled(self._synced_with_a_track())

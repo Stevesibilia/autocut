@@ -16,6 +16,13 @@ All notable changes to this project are documented in this file. The format foll
 - `score.rescore` recomputes every segment's score from the metrics in the manifest, which is what a weight slider needs and what the CLI can now reuse.
 - `gui.slider_debounce_ms` (250), `gui.reselect_worker_threshold` (300) and `gui.grid_thumbnail_px` (196).
 
+- The Soundtrack screen: the three prompt blocks with copy buttons and live validation marking each violated rule on its line, a variant switcher, an editable BPM and genre row that regenerate, two mood controls that pick between the matched row's own words, a hand edited prompt kept as the chosen variant, the track's waveform with its beats, the tempo comparison with a pre-filled override for the half and double cases, a preview of what a tempo would do to the edit, and Apply sync through the worker.
+- The Export screen: every export option including a per class grid for audio, slow motion, lens correction and LUT files, written to `autocut.toml` as they change, a dry run of what the export would do, the run itself with progress and cancel, a summary with the folder size and the failures by clip, and the offer to delete the stale files an earlier selection left behind.
+- `soundtrack.prompt.apply_mood` moves a prompt along two mood axes inside the matched row, with `soundtrack.calm_to_energetic` and `soundtrack.intimate_to_cinematic` ordering the words the shipped rows use.
+- `soundtrack.build.store_user_variant` keeps a hand edited prompt when it validates, writes it first in `suno-prompt.md`, and keeps it there through a regeneration.
+- `beatsync.envelope` reduces a decoded track to min and max pairs for the waveform, cached beside the manifest by the audio file's size and modification time.
+- `quantize_durations(..., dry_run=True)` reports what a tempo would do without touching a segment, so the preview and the run cannot disagree.
+
 ### Added
 
 - Project specification in English with the decisions from the 2026-09-03 review.
@@ -68,6 +75,11 @@ All notable changes to this project are documented in this file. The format foll
 
 - `read_entry` no longer decompresses the sprite strips unless asked, and selection asks it not to. The strips are most of the bytes in an entry and selection never looks at them: on the Sardinia project this took a re-selection, which is what every slider move costs, from 1.5 s to 485 ms.
 - The review grid keeps the cursor on the clip it was on across the model reset that every re-selection causes, so working down the grid with the keyboard is possible.
+
+- The review grid's cards carry a coloured border and a corner badge for kept, rejected and selected, rather than only a number in a row of numbers.
+- The groups view labels each clip with its file name and time instead of the segment's content hash, and shows at most four alternatives with a count of the rest.
+- `ProjectState` records a stage's result before it emits `stage_finished`, so a screen reading it in that handler gets this run's result and not the previous one.
+- An empty string in a per class LUT table reads back as no LUT, which is how the GUI writes "nothing set" into a TOML table that has no null and needs every key.
 
 ### Changed
 

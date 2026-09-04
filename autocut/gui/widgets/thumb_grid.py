@@ -28,6 +28,15 @@ from autocut.gui.widgets.scrubber import StripCache, scaled_frame
 #: Room under the picture for two lines of labels.
 LABEL_HEIGHT = 42
 CARD_MARGIN = 6
+BADGE_HEIGHT = 18
+
+#: One colour per state a card can be in. Green for what the reviewer kept, red for
+#: what they threw out, blue for the machine's own picks, grey for what the rules
+#: rejected: the human decisions are the saturated ones on purpose.
+KEPT = QColor(60, 180, 100)
+USER_REJECTED = QColor(210, 80, 80)
+SELECTED = QColor(70, 140, 230)
+RULE_REJECTED = QColor(130, 130, 130)
 
 
 class ThumbnailCache:
@@ -94,14 +103,23 @@ class SegmentCardDelegate(QStyledItemDelegate):
 
         outcome = str(index.data(SegmentRole.OUTCOME) or "")
         decision = str(index.data(SegmentRole.USER_DECISION) or "")
+        order = int(index.data(SegmentRole.ORDER) or 0)
         # A human decision outranks the machine's: it is the one thing on the card that
-        # no automatic step is allowed to have changed.
+        # no automatic step is allowed to have changed. Each state gets a border and a
+        # badge rather than a line of text under the picture, because the question a
+        # reviewer scans the grid for is which clips are in the edit, and a number in a
+        # row of numbers does not answer it.
         if decision == "keep":
-            self._frame(painter, picture, QColor(80, 200, 120), 3)
+            self._frame(painter, picture, KEPT, 3)
+            self._badge(painter, picture, f"KEPT {order}" if order else "KEPT", KEPT)
         elif decision == "reject":
-            self._frame(painter, picture, QColor(220, 90, 90), 3)
+            self._frame(painter, picture, USER_REJECTED, 3)
+            self._badge(painter, picture, "OUT", USER_REJECTED)
         elif outcome == "selected":
-            self._frame(painter, picture, QColor(90, 160, 240), 2)
+            self._frame(painter, picture, SELECTED, 3)
+            self._badge(painter, picture, f"IN {order}" if order else "IN", SELECTED)
+        elif outcome == "rejected":
+            self._frame(painter, picture, RULE_REJECTED, 1)
 
         painter.setPen(
             QPen(
@@ -155,18 +173,14 @@ class SegmentCardDelegate(QStyledItemDelegate):
         return f"{duration:.1f} s  {source_class}"
 
     def _second_line(self, index: AnyIndex, decision: str) -> str:
+        """Score, tag and the reason a clip is out. The badge carries the state itself."""
         score = index.data(SegmentRole.SCORE)
         tag = str(index.data(SegmentRole.DOMINANT_TAG) or "")
-        order = int(index.data(SegmentRole.ORDER) or 0)
         parts: list[str] = []
-        if order:
-            parts.append(f"#{order}")
         if score is not None and score >= 0.0:
             parts.append(f"{float(score):.2f}")
         if tag:
             parts.append(tag)
-        if decision:
-            parts.append(f"user {decision}")
         reason = str(index.data(SegmentRole.REASON) or "")
         if reason and not decision:
             parts.append(reason)
@@ -178,6 +192,19 @@ class SegmentCardDelegate(QStyledItemDelegate):
         pen.setWidth(width)
         painter.setPen(pen)
         painter.drawRect(rect.adjusted(1, 1, -1, -1))
+
+    @staticmethod
+    def _badge(painter: QPainter, rect: QRect, text: str, color: QColor) -> None:
+        """A filled corner label. On the picture, because that is where the eye is."""
+        metrics = painter.fontMetrics()
+        width = metrics.horizontalAdvance(text) + 12
+        box = QRect(rect.x() + 3, rect.y() + 3, width, BADGE_HEIGHT)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        painter.drawRect(box)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(255, 255, 255)))
+        painter.drawText(box, int(Qt.AlignmentFlag.AlignCenter), text)
 
 
 class ThumbGrid(QListView):

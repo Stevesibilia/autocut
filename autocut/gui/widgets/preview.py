@@ -2,22 +2,32 @@
 
 Playback is a convenience; the decision is the point. So the panel is built to be
 useful without a working codec: the sprite strip and the bounds sliders answer "is
-this the moment" on their own, and the video appears above them when the platform can
+this the moment" on their own, and the video takes their place when the platform can
 decode the file. HEVC 10-bit from a drone plays on macOS and often does not on Linux
 (design note), and a panel that is empty in that case would make the screen useless
 on the machine this is developed on.
+
+A player needs somewhere to put its frames. Without ``setVideoOutput`` Qt decodes the
+file, discards every frame and reports no error, which is what issue 38 was: the logs
+showed the probe, the picture never changed, and nothing looked broken. So the video
+output is attached before the source is set, an audio output goes with it because a
+player with no audio output is silent whatever the file holds, and the seek waits for
+``LoadedMedia`` because a position set before that is dropped.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QSlider,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -26,9 +36,17 @@ from autocut.core.manifest import Segment
 from autocut.gui.state import ProjectState
 from autocut.gui.widgets.scrubber import StripCache
 
+if TYPE_CHECKING:  # pragma: no cover - imported for the annotations only
+    from PySide6.QtMultimedia import QMediaPlayer
+
 #: Bounds are integers in a slider, seconds in the manifest. A millisecond step is
 #: finer than the sampling grid, which is what the values are snapped to anyway.
 MS = 1000
+
+#: How far past the out point the player may run before it is paused. One frame at
+#: 25 fps: ``positionChanged`` does not fire on every frame, and stopping early would
+#: cut the last moment of the clip a reviewer is judging.
+OUT_TOLERANCE_MS = 40
 
 
 def snap(value: float, sample_fps: float) -> float:
@@ -63,6 +81,13 @@ class PreviewPanel(QWidget):
         self.frame.setStyleSheet("background: #222; color: #999;")
         self.frame.setText("no preview")
 
+        # The strip and the video take the same place rather than sitting one above
+        # the other: they answer the same question, and two pictures of one clip is
+        # one picture too many.
+        self.picture_stack = QStackedWidget()
+        self.picture_stack.addWidget(self.frame)
+        self.video: QWidget | None = None
+
         self.scrub = QSlider(Qt.Orientation.Horizontal)
         self.scrub.setRange(0, MS)
         self.scrub.valueChanged.connect(self._scrubbed)
@@ -83,17 +108,26 @@ class PreviewPanel(QWidget):
         self.clear_button = QPushButton("Use the automatic window")
         self.clear_button.clicked.connect(self._clear_bounds)
         self.play_button = QPushButton("Play")
-        self.play_button.clicked.connect(self._play)
+        self.play_button.clicked.connect(self.play)
+        self.stop_button = QPushButton("Stop")
+        self.stop_button.clicked.connect(self.stop)
+        self.stop_button.setEnabled(False)
+        # Muted by default: every clip is exported silent and the soundtrack carries
+        # the sound, so a preview that started making noise would be a surprise.
+        self.sound_box = QCheckBox("Sound")
+        self.sound_box.toggled.connect(self._sound_toggled)
 
         buttons = QHBoxLayout()
         buttons.addWidget(self.play_button)
+        buttons.addWidget(self.stop_button)
+        buttons.addWidget(self.sound_box)
         buttons.addWidget(self.clear_button)
         buttons.addStretch(1)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.title)
-        layout.addWidget(self.frame, 1)
+        layout.addWidget(self.picture_stack, 1)
         layout.addWidget(QLabel("Scrub"))
         layout.addWidget(self.scrub)
         layout.addWidget(QLabel("In"))
@@ -104,7 +138,11 @@ class PreviewPanel(QWidget):
         layout.addLayout(buttons)
         layout.addWidget(self.note)
 
-        self._player: object | None = None
+        self._player: QMediaPlayer | None = None
+        self._audio: Any | None = None
+        self._pending_seek_ms: int | None = None
+        self._out_ms: int | None = None
+        self.playing_segment_id = ""
         self.show_segment("")
 
     # --- what is on screen -------------------------------------------------
@@ -114,7 +152,13 @@ class PreviewPanel(QWidget):
         return self._segment_id
 
     def show_segment(self, segment_id: str) -> None:
-        """Point the panel at a segment, or clear it with an empty id."""
+        """Point the panel at a segment, or clear it with an empty id.
+
+        Moving to another clip stops the player: a preview of the clip before the one
+        on screen is worse than no preview, and the reviewer has already moved on.
+        """
+        if segment_id != self.playing_segment_id and self.playing_segment_id:
+            self.stop()
         self._segment_id = segment_id
         segment = self._state.segment(segment_id) if segment_id else None
         enabled = segment is not None
@@ -129,6 +173,7 @@ class PreviewPanel(QWidget):
         if segment is None:
             self.title.setText("Nothing selected")
             self.frame.setText("no preview")
+            self.show_strip()
             self.bounds_label.clear()
             self.note.clear()
             return
@@ -177,45 +222,178 @@ class PreviewPanel(QWidget):
         )
 
     def _scrubbed(self, value: int) -> None:
+        """Dragging the scrub bar is asking for the strip, not for the video."""
+        if self.playing_segment_id:
+            self.stop()
         self._show_frame(value / MS)
 
-    def _play(self) -> None:
-        """Try the platform's player, and say plainly when it cannot help.
+    def _build_player(self, video_output: Any | None) -> QMediaPlayer | None:
+        """The player, its audio output and somewhere to put the frames.
 
-        Nothing is imported until the button is pressed: ``QtMultimedia`` pulls in the
-        platform's media stack, which is a slow import and, on a machine without the
-        codecs, a noisy one.
+        Built on the first Play rather than with the panel: ``QtMultimedia`` pulls in
+        the platform's media stack, which is a slow import and, on a machine without
+        the codecs, a noisy one. Both outputs are attached before any source is set,
+        because a player with no video output decodes every frame and throws it away
+        without reporting anything wrong, which is what issue 38 was.
         """
-        segment = self._state.segment(self._segment_id)
-        manifest = self._state.manifest
-        if segment is None or manifest is None:
-            return
-        source = manifest.files.get(segment.file_id)
-        if source is None:
-            return
+        if self._player is not None:
+            if video_output is not None:
+                self._player.setVideoOutput(video_output)
+            return self._player
         try:
-            from PySide6.QtMultimedia import QMediaPlayer
+            from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+            from PySide6.QtMultimediaWidgets import QVideoWidget
         except ImportError:
             self.note.setText(
                 "Playback needs the Qt multimedia module, which this build does not "
                 "have. The strip above is the clip, frame by frame."
             )
-            return
+            return None
+
+        player = QMediaPlayer(self)
+        audio = QAudioOutput(self)
+        audio.setMuted(not self.sound_box.isChecked())
+        player.setAudioOutput(audio)
+        self._audio = audio
+
+        if video_output is None:
+            video = QVideoWidget()
+            video.setMinimumHeight(180)
+            self.video = video
+            self.picture_stack.addWidget(video)
+            video_output = video
+        player.setVideoOutput(video_output)
+
+        player.mediaStatusChanged.connect(self._media_status_changed)
+        player.positionChanged.connect(self._position_changed)
+        player.playbackStateChanged.connect(self._playback_state_changed)
+        player.errorOccurred.connect(self._playback_failed)
+        self._player = player
+        return player
+
+    def play(self, video_output: Any | None = None) -> bool:
+        """Play the current clip from its in point. False when there is nothing to play.
+
+        ``video_output`` is for a test that wants the frames in a ``QVideoSink`` it can
+        count; the window passes nothing and gets the panel's own video widget.
+        """
+        segment = self._state.segment(self._segment_id)
+        manifest = self._state.manifest
+        if segment is None or manifest is None:
+            return False
+        source = manifest.files.get(segment.file_id)
+        if source is None:
+            return False
         path = Path(source.proxy_path or source.path)
         if not path.exists():
             self.note.setText(f"{path} is not where the manifest says it is.")
-            return
-        player = self._player if isinstance(self._player, QMediaPlayer) else QMediaPlayer(self)
-        self._player = player
-        from PySide6.QtCore import QUrl
+            return False
+        player = self._build_player(video_output)
+        if player is None:
+            return False
 
+        start, end = segment.effective_bounds
+        # Kept rather than applied: a position set before the media reaches
+        # LoadedMedia is dropped, and the clip then plays from the top of the file.
+        self._pending_seek_ms = int(start * 1000)
+        self._out_ms = int(end * 1000)
+        self.playing_segment_id = self._segment_id
+        self.note.setText(f"Loading {path.name}…")
         player.setSource(QUrl.fromLocalFile(str(path)))
-        player.setPosition(int(segment.effective_bounds[0] * 1000))
-        player.play()
-        self.note.setText(
-            "Playing from the in point. If nothing appears, the platform has no decoder "
-            "for this file and the strip above is the clip."
+        if player.mediaStatus() in self._ready_states():
+            # Already loaded, which happens when the same file is played twice: the
+            # status will not change again, so there is no signal coming.
+            self._start_playing()
+        return True
+
+    def stop(self) -> None:
+        if self._player is not None:
+            self._player.stop()
+        self.playing_segment_id = ""
+        self.show_strip()
+
+    def show_strip(self) -> None:
+        """Put the sprite strip back in front of the video."""
+        self.picture_stack.setCurrentWidget(self.frame)
+
+    def show_video(self) -> None:
+        if self.video is not None:
+            self.picture_stack.setCurrentWidget(self.video)
+
+    @staticmethod
+    def _ready_states() -> tuple[Any, ...]:
+        from PySide6.QtMultimedia import QMediaPlayer
+
+        return (
+            QMediaPlayer.MediaStatus.LoadedMedia,
+            QMediaPlayer.MediaStatus.BufferedMedia,
+            QMediaPlayer.MediaStatus.BufferingMedia,
         )
+
+    def _media_status_changed(self, status: Any) -> None:
+        """Seek and start once the media is loaded, and only then judge the video."""
+        from PySide6.QtMultimedia import QMediaPlayer
+
+        if status in self._ready_states():
+            self._start_playing()
+        elif status == QMediaPlayer.MediaStatus.EndOfMedia:
+            # The file ran out before the out point, which happens when a segment's
+            # bounds came from a manifest written against a longer file. Saying so
+            # beats leaving "playing from the in point" under a still picture.
+            self.note.setText("The file ended before the out point.")
+        elif status == QMediaPlayer.MediaStatus.InvalidMedia:
+            self.show_strip()
+            self.note.setText(
+                "The platform could not open this file. The strip above is the clip, "
+                "frame by frame."
+            )
+
+    def _start_playing(self) -> None:
+        player = self._player
+        if player is None:
+            return
+        if self._pending_seek_ms is not None:
+            player.setPosition(self._pending_seek_ms)
+            self._pending_seek_ms = None
+        if player.hasVideo():
+            self.show_video()
+            self.note.setText("Playing from the in point. It pauses at the out point.")
+        else:
+            # Loaded, no video track the platform can give us: the strip is the clip.
+            self.show_strip()
+            self.note.setText(
+                "The platform has no decoder for this file, so the strip above is the "
+                "clip, frame by frame."
+            )
+        player.play()
+
+    def _position_changed(self, position_ms: int) -> None:
+        """Pause at the out point, so a preview shows the clip and not the rest of the file."""
+        player = self._player
+        if player is None or self._out_ms is None:
+            return
+        if position_ms >= self._out_ms - OUT_TOLERANCE_MS:
+            player.pause()
+            self.note.setText("Paused at the out point.")
+
+    def _playback_state_changed(self, state: Any) -> None:
+        from PySide6.QtMultimedia import QMediaPlayer
+
+        playing = state == QMediaPlayer.PlaybackState.PlayingState
+        self.stop_button.setEnabled(playing)
+        self.play_button.setText("Play" if not playing else "Playing…")
+
+    def _playback_failed(self, error: Any, message: str = "") -> None:
+        del error
+        self.show_strip()
+        self.note.setText(
+            f"Playback failed: {message or 'the platform would not open this file'}. "
+            "The strip above is the clip, frame by frame."
+        )
+
+    def _sound_toggled(self, on: bool) -> None:
+        if self._audio is not None:
+            self._audio.setMuted(not on)
 
     # --- the bounds --------------------------------------------------------
 

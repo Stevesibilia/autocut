@@ -37,6 +37,7 @@ Run `make -n <target>` to see what a target does. There is no Justfile; the proj
 
 - **Python**: ruff with `line-length = 100`, rules `E, F, I, UP, B, SIM, N`, target `py311`. Formatting by `ruff format`.
 - **Typing**: mypy strict with the pydantic plugin. All public functions are annotated.
+- **Typing the GUI package**: PySide6 ships no stubs mypy can use, so `ignore_missing_imports` makes every Qt base class `Any`, and strict mypy refuses to subclass `Any`. `autocut/gui` therefore type checks only where PySide6 is installed. `make lint` in the venv checks the whole package, because `make venv` installs the `gui` extra. The CI matrix job installs no Qt and runs `mypy autocut --exclude 'autocut/gui/'`; the `gui` job runs the full `mypy autocut` inside the `dev-gui` image. A GUI change is not type checked until one of those two has run it.
 - **Markdown**: format with prettier through the `auto-format-doc` skill after every edit.
 - Run `make lint` before committing.
 

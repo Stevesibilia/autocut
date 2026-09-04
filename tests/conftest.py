@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import shutil
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -68,6 +69,30 @@ def no_model_downloads(request: pytest.FixtureRequest, monkeypatch: pytest.Monke
     from autocut.core import embeddings
 
     monkeypatch.setattr(embeddings, "_probe", (False, "the ai extra is switched off for this test"))
+
+
+@pytest.fixture(autouse=True)
+def recent_projects_in_tmp(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Never let a test read or write the developer's own recent projects list.
+
+    The list lives in the platform config directory, so a GUI test that opens a
+    project would otherwise add it to the real one, and a screenshot of the Project
+    screen would show whatever folders this machine happens to have opened. Patched
+    for every test rather than in the GUI ones, because the file is outside the
+    repository and nothing in a test run has any business touching it.
+    """
+    if importlib.util.find_spec("PySide6") is None:
+        yield
+        return
+    from autocut.gui import recent
+
+    store = tmp_path_factory.mktemp("recent") / "recent.json"
+    original = recent.recent_path
+    recent.recent_path = lambda: store  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        recent.recent_path = original  # type: ignore[assignment]
 
 
 @pytest.fixture(autouse=True)

@@ -153,8 +153,16 @@ class ProjectState(QObject):
         self.schedule_save()
 
     def close_project(self) -> None:
-        """Save and forget. Called when the window closes or another project opens."""
-        self.save_now()
+        """Stop any stage, save, and forget.
+
+        The stage is cancelled and waited for rather than abandoned, because the save
+        that follows reads the manifest and the worker is still writing it. That wait
+        is also why this is the one place allowed to save during a run.
+        """
+        if self.is_running:
+            self.cancel()
+            self.wait_for_stage()
+        self.save_now(force=True)
         self.manifest = None
         self.output_dir = None
 
@@ -166,20 +174,35 @@ class ProjectState(QObject):
         self.schedule_save()
 
     def schedule_save(self) -> None:
-        """Save soon. Restarting the timer is what makes it a debounce."""
-        if self.is_open:
+        """Save soon. Restarting the timer is what makes it a debounce.
+
+        Nothing is scheduled during a stage: the worker is mutating the manifest and a
+        save is a full read of it.
+        """
+        if self.is_open and not self.is_running:
             self._save_timer.start()
 
-    def save_now(self) -> None:
-        """Write the manifest immediately and stop any pending save."""
+    def save_now(self, force: bool = False) -> bool:
+        """Write the manifest immediately and stop any pending save.
+
+        Refused while a stage runs, because serialising the manifest reads every
+        segment while the worker is still writing them, and a timer armed before the
+        run would otherwise fire straight into that. ``force`` is for the two callers
+        that know the writing has stopped: the stage's own completion handlers, which
+        run on the UI thread after the work returned, and ``close_project``, which
+        cancels and waits first.
+        """
         self._save_timer.stop()
+        if self.is_running and not force:
+            return False
         manifest = self.manifest
         path = self.manifest_path
         if manifest is None or path is None:
-            return
+            return False
         manifest.updated_at = datetime.now(UTC)
         manifest.save(path)
         self.saved.emit()
+        return True
 
     # --- running core stages ------------------------------------------------
 
@@ -193,6 +216,9 @@ class ProjectState(QObject):
         if self.is_running:
             self.error.emit(f"{self._worker.name if self._worker else 'A stage'} is still running")
             return False
+        # A save armed before this call would fire into the running worker, which is
+        # writing the manifest a save has to read.
+        self._save_timer.stop()
         self._flag.clear()
         worker = CoreWorker(name, work, self._flag, self)
         worker.progressed.connect(self.progress.emit)
@@ -201,6 +227,9 @@ class ProjectState(QObject):
         worker.failed.connect(self._stage_failed)
         worker.finished.connect(self._clear_worker)
         self._worker = worker
+        # Load bearing order: the signal goes out before the thread starts, so every
+        # screen has disabled its controls by the time anything can touch the manifest.
+        # Starting first would leave a window in which the UI still believes it is idle.
         self.stage_started.emit(name)
         worker.start()
         return True
@@ -217,17 +246,21 @@ class ProjectState(QObject):
         return bool(worker.wait(timeout_ms))
 
     def _stage_done(self, name: str, result: object) -> None:
+        # Forced: this runs on the UI thread after the stage's callable returned, so
+        # the manifest is no longer being written even though the thread may still be
+        # winding down. One save per stage, here, rather than a debounced one.
         self.segments_changed.emit([])
         self.selection_changed.emit()
-        self.save_now()
+        self.save_now(force=True)
         self.stage_finished.emit(name)
         self._last_result = result
 
     def _stage_cancelled(self, name: str) -> None:
         # Whatever the stage did reach is worth keeping: analysis is per file and the
-        # cache makes the rest of it cheap to resume.
+        # cache makes the rest of it cheap to resume. Forced for the same reason as in
+        # _stage_done: the callable has returned by the time this slot runs.
         self.segments_changed.emit([])
-        self.save_now()
+        self.save_now(force=True)
         self.stage_cancelled.emit(name)
 
     def _stage_failed(self, message: str) -> None:

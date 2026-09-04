@@ -211,6 +211,13 @@ class SettingsDialog(QDialog):
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
+        self.ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        # Applying during a run would change the configuration the worker is reading
+        # and then write a manifest snapshot of it while the worker owns the manifest.
+        self.ok_button.setEnabled(not state.is_running)
+        state.stage_started.connect(lambda _name: self.ok_button.setEnabled(False))
+        state.stage_finished.connect(lambda _name: self.ok_button.setEnabled(True))
+        state.stage_cancelled.connect(lambda _name: self.ok_button.setEnabled(True))
 
         layout = QVBoxLayout(self)
         layout.addLayout(form)
@@ -223,6 +230,13 @@ class SettingsDialog(QDialog):
 
     def accept(self) -> None:
         """Apply to the config, store the key if one was typed, write the file."""
+        if self._state.is_running:
+            QMessageBox.warning(
+                self,
+                "A stage is running",
+                "Wait for the analysis to finish or cancel it before changing the settings.",
+            )
+            return
         config = self._state.config
         config.providers.cloud = self.cloud.isChecked()
         write_path(config, "providers.describe_scope", self.scope.currentText())
@@ -246,4 +260,7 @@ class SettingsDialog(QDialog):
         path = self._state.config_path
         if path is not None:
             write_config(config, path)
+        # The manifest records the settings the project was built with, so it has to
+        # follow the dialog and not only the profile picker.
+        self._state.refresh_config_snapshot()
         super().accept()

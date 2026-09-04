@@ -12,23 +12,29 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QMimeData, QPoint, Qt, QUrl  # noqa: E402
 from PySide6.QtGui import QDropEvent  # noqa: E402
 
-from autocut.gui.screens.project import ProjectScreen, count_videos  # noqa: E402
+from autocut.gui.screens.project import (  # noqa: E402
+    ProjectScreen,
+    count_videos,
+    doctor_rows,
+    doctor_table,
+)
 from autocut.gui.state import ProjectState  # noqa: E402
 from tests.unit.test_gui_state import a_manifest  # noqa: E402
 
 pytestmark = pytest.mark.gui
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def recent_in_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    """Never touch the developer's own recent list from a test."""
+    """This test file's own recent list, so it can assert on the file's contents.
+
+    The session already redirects the list away from the developer's config directory
+    (see ``tests/conftest.py``); this narrows it to one known path per test.
+    """
     store = tmp_path / "recent.json"
     from autocut.gui import recent as recent_module
 
     monkeypatch.setattr(recent_module, "recent_path", lambda: store)
-    from autocut.gui.screens import project as project_module
-
-    monkeypatch.setattr(project_module, "load_recent", recent_module.load_recent)
     return store
 
 
@@ -229,12 +235,87 @@ def test_the_screen_shows_a_project_opened_from_somewhere_else(
     assert screen.output.text() == str(out)
 
 
+def test_the_project_cannot_be_changed_while_a_stage_runs(
+    screen: ProjectScreen, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, qtbot: Any
+) -> None:
+    """Opening another project mid run would leave the worker writing an orphan manifest."""
+    import threading
+
+    from autocut.gui.screens import project as project_module
+
+    warned: list[str] = []
+    monkeypatch.setattr(
+        project_module.QMessageBox,
+        "warning",
+        lambda _parent, _title, message: warned.append(message),
+    )
+    other = tmp_path / "other"
+    other.mkdir()
+    a_manifest(other).save(other / "manifest.json")
+    drop(screen.sources, [a_card_folder(tmp_path)])
+    screen.output.setText(str(tmp_path / "edit"))
+    state = screen._state
+    state.new_project(screen.sources.folders, tmp_path / "edit")
+    gate = threading.Event()
+    assert state.run_stage("analysis", lambda _progress: gate.wait(5.0))
+
+    assert screen.create_project() is False
+    assert screen.open_project(other) is False
+    assert not screen.create_button.isEnabled()
+    assert not screen.open_button.isEnabled()
+    assert not screen.sources.isEnabled()
+    assert not screen.profile.isEnabled()
+    assert len(warned) == 2
+
+    gate.set()
+    with qtbot.waitSignal(state.stage_finished, timeout=5000):
+        pass
+
+    assert screen.open_button.isEnabled()
+    assert screen.sources.isEnabled()
+    assert screen.create_button.isEnabled()
+
+
 def test_the_doctor_report_is_on_the_screen(screen: ProjectScreen) -> None:
     """A missing ffmpeg has to be visible before a run, not discovered during one."""
-    text = screen.doctor.text()
+    names = [name for _marker, name, _detail in doctor_rows(screen.doctor_report)]
 
-    assert "ffmpeg" in text
-    assert "ffprobe" in text
+    assert "ffmpeg" in names
+    assert "ffprobe" in names
+    assert all(marker in {"OK", "MISSING"} for marker, _n, _d in doctor_rows(screen.doctor_report))
+
+
+def test_the_doctor_report_is_a_table_and_not_padded_text(screen: ProjectScreen) -> None:
+    """Padded text wrapped long paths mid path and left the status column ragged."""
+    html = screen.doctor.text()
+
+    assert html.startswith("<table")
+    assert html.count("<tr>") == len(doctor_rows(screen.doctor_report))
+    assert "ffmpeg" in html
+    assert "  " not in html.replace("\n", "")
+
+
+def test_a_detail_with_markup_in_it_is_escaped() -> None:
+    """A path can hold an angle bracket, and a rich text label would read it as a tag."""
+    from autocut.core.doctor import Check, DoctorReport
+
+    check = Check(name="cache", ok=True, detail="/tmp/<odd> folder & co")
+    report = DoctorReport(
+        ffmpeg=check,
+        ffprobe=check,
+        hwaccel=check,
+        ai_extra=check,
+        compute_device=check,
+        model_weights=check,
+        cloud_key=check,
+        cache=check,
+    )
+
+    html = doctor_table(report)
+
+    assert "&lt;odd&gt;" in html
+    assert "&amp; co" in html
+    assert "<odd>" not in html
 
 
 def test_the_settings_button_asks_the_window(screen: ProjectScreen) -> None:

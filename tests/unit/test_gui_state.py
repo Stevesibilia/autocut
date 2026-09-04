@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -210,8 +212,6 @@ def test_a_second_stage_is_refused_while_one_runs(
     """Two stages over one manifest would race, so the second is refused, not queued."""
     out = tmp_path / "edit"
     state.new_project([tmp_path], out)
-    import threading
-
     gate = threading.Event()
 
     def slow(_progress: ProgressCallback) -> None:
@@ -228,6 +228,81 @@ def test_a_second_stage_is_refused_while_one_runs(
 
     assert refused is False
     assert errors == ["analysis is still running"]
+
+
+def test_an_armed_autosave_does_not_fire_into_a_running_stage(
+    state: ProjectState, tmp_path: Path, qtbot: Any
+) -> None:
+    """The save reads every segment; the worker is writing them. The two must not overlap.
+
+    A review edit arms the debounce, then a stage starts before it fires. The timer has
+    to be stopped, not left to go off mid run, and the one save has to be the stage's
+    own at the end.
+    """
+    out = tmp_path / "edit"
+    state.new_project([tmp_path], out)
+    saves: list[int] = []
+    state.saved.connect(lambda: saves.append(1))
+    gate = threading.Event()
+
+    state.touch(["f0:0"])  # arms the debounce
+    assert state.run_stage("analysis", lambda _progress: gate.wait(5.0))
+
+    # Well past the debounce, with the worker still holding the manifest.
+    qtbot.wait(AUTOSAVE_DEBOUNCE_MS + 400)
+    assert saves == []
+    assert not (out / "manifest.json").exists()
+    # A save asked for by hand is refused for the same reason.
+    assert state.save_now() is False
+
+    with qtbot.waitSignal(state.stage_finished, timeout=5000):
+        gate.set()
+
+    assert saves == [1]
+    assert (out / "manifest.json").exists()
+
+
+def test_nothing_new_is_scheduled_during_a_stage(
+    state: ProjectState, tmp_path: Path, qtbot: Any
+) -> None:
+    out = tmp_path / "edit"
+    state.new_project([tmp_path], out)
+    saves: list[int] = []
+    state.saved.connect(lambda: saves.append(1))
+    gate = threading.Event()
+    assert state.run_stage("analysis", lambda _progress: gate.wait(5.0))
+
+    state.touch(["f0:0"])
+    qtbot.wait(AUTOSAVE_DEBOUNCE_MS + 400)
+
+    assert saves == []
+    gate.set()
+    state.wait_for_stage(5000)
+    qtbot.wait(100)
+
+
+def test_closing_during_a_stage_cancels_waits_and_then_saves(
+    state: ProjectState, tmp_path: Path, qtbot: Any
+) -> None:
+    """The one save allowed during a run, and only because it cancels and waits first."""
+    out = tmp_path / "edit"
+    state.new_project([tmp_path], out)
+    started = threading.Event()
+
+    def work(progress: ProgressCallback) -> None:
+        started.set()
+        for index in range(200):
+            progress(ProgressEvent(stage="analyze", current=index, total=200))
+            time.sleep(0.01)
+
+    assert state.run_stage("analysis", work)
+    assert started.wait(5.0)
+
+    state.close_project()
+
+    assert not state.is_running
+    assert (out / "manifest.json").exists()
+    assert not state.is_open
 
 
 def test_a_failing_stage_reports_and_logs_the_traceback(
@@ -265,8 +340,6 @@ def test_a_cancelled_stage_keeps_what_it_reached(
     out = tmp_path / "edit"
     state.new_project([tmp_path], out)
     state.manifest.files.update(a_manifest(out).files) if state.manifest else None
-
-    import threading
 
     gate = threading.Event()
 
@@ -314,8 +387,6 @@ def test_selection_is_refused_while_a_stage_runs(
     out.mkdir()
     a_manifest(out).save(out / "manifest.json")
     state.open_project(out)
-    import threading
-
     gate = threading.Event()
     assert state.run_stage("analysis", lambda _progress: gate.wait(5.0))
 

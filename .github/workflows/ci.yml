@@ -22,8 +22,11 @@ jobs:
         run: pip install -e ".[dev]"
       - name: Lint
         run: ruff check . && ruff format --check .
+      # This job installs no Qt, so the GUI package's base classes would be Any and
+      # strict mypy forbids subclassing Any. The gui job below type checks it with
+      # PySide6 present; the venv checks everything at once.
       - name: Type check
-        run: mypy autocut
+        run: mypy autocut --exclude 'autocut/gui/'
       - name: Fixtures
         run: python scripts/make_fixtures.py
       - name: Tests
@@ -50,5 +53,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build the gui image
         run: docker compose build dev-gui
+      - name: Type check the GUI package
+        run: docker compose run --rm dev-gui sh -c "mypy autocut"
       - name: Fixtures and gui tests
         run: docker compose run --rm dev-gui sh -c "python scripts/make_fixtures.py && pytest -q -m gui"

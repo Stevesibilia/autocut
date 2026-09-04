@@ -72,4 +72,24 @@
 
   Section 11 now records the state and worker shape, the navigation rule, what screens 1 and 2 actually do, the settings file contract and how the GUI is tested. The README's status line was stale at M0 and now says where the project is, and gained the `gui` extra, the `autocut gui` command and the two new Docker targets.
 
-  Gates: `make lint` clean (ruff, `ruff format --check`, mypy strict on 58 source files). `make docker-test` **991 passed, 56 skipped**. `make docker-test-gui` **92 passed**. `make docker-test-ai` **8 passed, 8 skipped** (the skips are the GUI modules, which that image has no Qt for). In the venv, where both extras are installed, the whole suite is **1091 passed, 40 skipped**.
+  Gates after the review fixes: `make lint` clean (ruff, `ruff format --check`, mypy strict on 58 source files). `make docker-test` **991 passed, 56 skipped**. `make docker-test-gui` **100 passed**. `make docker-test-ai` **8 passed, 8 skipped** (the skips are the GUI modules, which that image has no Qt for). In the venv, where both extras are installed, the whole suite is **1099 passed, 40 skipped**.
+
+  **The type check is split, because PySide6 ships no stubs mypy can use.** With `ignore_missing_imports` every Qt base class resolves to `Any`, and strict mypy refuses to subclass `Any`, so `mypy autocut` fails with eleven `Class cannot subclass "QWidget" (has type "Any")` errors anywhere PySide6 is absent. The CI matrix job, which installs no Qt on purpose, runs `mypy autocut --exclude 'autocut/gui/'` (46 files); the `gui` job runs the full `mypy autocut` inside the `dev-gui` image (58 files); `make lint` in the venv stays full, because `make venv` installs the `gui` extra. Recorded in AGENTS.md under Code Style.
+
+## 5. Review fixes on pull request 32
+
+- [x] 5.1 The type check split described in 4.3: `--exclude 'autocut/gui/'` on the Qt free matrix job, a full `mypy autocut` step on the `gui` job, AGENTS.md updated. Verified all three ways: the `dev` image passes the excluded run, the `dev-gui` image passes the full one, and `make docker-test` is unaffected because it runs no mypy.
+
+- [x] 5.2 **The manifest is no longer read on the UI thread during a run.** The design accepted the worker mutating the manifest in place on the promise that nothing on the UI thread touches it while a stage runs, and three things broke that promise.
+
+  `save_now` now refuses while a stage is running and returns whether it wrote. `run_stage` stops the debounce timer before starting the thread, `schedule_save` refuses to arm one during a run, and the one save per stage is the forced one in the completion handlers, which run on the UI thread after the stage's callable has returned. `close_project` is the only other forced caller, and it cancels and waits first, which is what earns it the exception.
+
+  `ProjectScreen.create_project` and `open_project` refuse while a stage runs and say so, and the sources list, both browse buttons, the output field, the profile picker, the recent list and the create and open buttons are all disabled for the duration. `SettingsDialog.accept` refuses too, its Ok button is disabled while a stage runs, and it now calls `refresh_config_snapshot` so the manifest records the settings the dialog applied and not only the ones the profile picker did.
+
+  Five new tests. The one the review asked for arms the debounce with a review edit, starts a stage, waits well past the debounce interval with the worker still holding the manifest, and asserts no save happened and no manifest exists, that a hand called `save_now` is refused, and that exactly one save lands when the stage finishes.
+
+- [x] 5.3 The ordering comment: `stage_started` is emitted before `worker.start()` so every screen has disabled its controls before anything can touch the manifest, and starting the thread first would leave a window in which the UI still believes it is idle. Recorded in `run_stage` as load bearing.
+
+- [x] 5.4 The This machine panel is a rich text table: status, check name and detail in three columns, wrapping inside the detail column instead of mid path, with the status in line down the left. Every value is escaped, because a path can hold an angle bracket and a rich text label would read it as a tag. `doctor_rows` returns the same content as data, which is what the tests assert on. Screenshots regenerated.
+
+- [x] 5.5 Beyond the review: no test can touch the developer's own recent projects list any more. It lives in the platform config directory, so a GUI test that opened a project was adding to the real one and the Project screen screenshot showed this machine's own folders. An autouse fixture in `tests/conftest.py` redirects it for every test.

@@ -207,6 +207,51 @@ def test_a_machine_without_a_keychain_says_so_instead_of_crashing(
     assert warned == ["no keyring backend"]
 
 
+def test_the_manifest_snapshot_follows_the_dialog(state: ProjectState, qtbot: Any) -> None:
+    """The manifest records the settings the project was built with, dialog included."""
+    dialog = SettingsDialog(state)
+    qtbot.addWidget(dialog)
+
+    dialog.max_clips.setValue(31)
+    dialog.accept()
+
+    assert state.manifest is not None
+    assert state.manifest.config_snapshot["selection"]["max_clips"] == 31
+
+
+def test_the_dialog_will_not_apply_while_a_stage_runs(
+    state: ProjectState, qtbot: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Applying mid run would change the config the worker is reading."""
+    import threading
+
+    from autocut.gui import settings as settings_module
+
+    warned: list[str] = []
+    monkeypatch.setattr(
+        settings_module.QMessageBox,
+        "warning",
+        lambda _parent, _title, message: warned.append(message),
+    )
+    gate = threading.Event()
+    dialog = SettingsDialog(state)
+    qtbot.addWidget(dialog)
+    before = state.config.selection.max_clips
+    assert state.run_stage("analysis", lambda _progress: gate.wait(5.0))
+    qtbot.wait(50)
+
+    assert not dialog.ok_button.isEnabled()
+    dialog.max_clips.setValue(77)
+    dialog.accept()
+
+    assert state.config.selection.max_clips == before
+    assert warned == ["Wait for the analysis to finish or cancel it before changing the settings."]
+    gate.set()
+    with qtbot.waitSignal(state.stage_finished, timeout=5000):
+        pass
+    assert dialog.ok_button.isEnabled()
+
+
 def test_the_key_field_hides_what_is_typed(state: ProjectState, qtbot: Any) -> None:
     from PySide6.QtWidgets import QLineEdit
 

@@ -7,6 +7,7 @@ count is the normal case, not an exception to a flow.
 
 from __future__ import annotations
 
+from html import escape
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
@@ -26,11 +27,36 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from autocut.core.doctor import inspect_environment
+from autocut.core.doctor import DoctorReport, inspect_environment
 from autocut.core.ingest import ACCEPTED_EXTENSIONS
 from autocut.gui.profiles import PROFILES, PROFILES_BY_KEY, apply_profile, diff
 from autocut.gui.recent import load_recent, remember
 from autocut.gui.state import MANIFEST_NAME, ProjectState
+
+
+def doctor_rows(report: DoctorReport) -> list[tuple[str, str, str]]:
+    """The report as status, name and detail, so the table is testable as data."""
+    return [(check.marker, check.name, check.detail) for check in report.checks]
+
+
+def doctor_table(report: DoctorReport) -> str:
+    """The report as a small rich text table.
+
+    A table rather than padded text: the details are file paths and sentences of
+    different lengths, and a label full of leading spaces wrapped them mid path and
+    left the status column ragged. Cells wrap inside their own column instead, and
+    the status stays in line down the left. Every value is escaped, because a path
+    with an angle bracket in it would otherwise be read as markup.
+    """
+    rows = "".join(
+        f"<tr>"
+        f'<td style="padding-right:10px; white-space:nowrap;"><b>{escape(marker)}</b></td>'
+        f'<td style="padding-right:8px; white-space:nowrap;">{escape(name)}</td>'
+        f"<td>{escape(detail)}</td>"
+        f"</tr>"
+        for marker, name, detail in doctor_rows(report)
+    )
+    return f'<table width="100%" cellspacing="0" cellpadding="2">{rows}</table>'
 
 
 def count_videos(folder: Path) -> int:
@@ -124,11 +150,12 @@ class ProjectScreen(QWidget):
         self.setObjectName("screen-project")
         self._state = state
 
+        self._running = False
         self.sources = SourceList()
         self.sources.folders_changed.connect(self._refresh_counts)
-        add_button = QPushButton("Add folder…")
+        add_button = self.add_button = QPushButton("Add folder…")
         add_button.clicked.connect(self._browse_source)
-        remove_button = QPushButton("Remove")
+        remove_button = self.remove_button = QPushButton("Remove")
         remove_button.clicked.connect(self.sources.remove_selected)
         self.count_label = QLabel("No source folders yet")
 
@@ -146,7 +173,7 @@ class ProjectScreen(QWidget):
         self.output = QLineEdit()
         self.output.setPlaceholderText("Where the clips and manifest.json go")
         self.output.textChanged.connect(self._refresh_output_note)
-        output_button = QPushButton("Choose…")
+        output_button = self.output_button = QPushButton("Choose…")
         output_button.clicked.connect(self._browse_output)
         output_row = QHBoxLayout()
         output_row.addWidget(self.output, 1)
@@ -171,7 +198,7 @@ class ProjectScreen(QWidget):
 
         self.create_button = QPushButton("Create project")
         self.create_button.clicked.connect(self.create_project)
-        open_button = QPushButton("Open existing…")
+        open_button = self.open_button = QPushButton("Open existing…")
         open_button.clicked.connect(self._browse_open)
         settings_button = QPushButton("Settings…")
         settings_button.clicked.connect(self.settings_requested.emit)
@@ -185,7 +212,8 @@ class ProjectScreen(QWidget):
 
         self.doctor = QLabel()
         self.doctor.setWordWrap(True)
-        self.doctor.setTextFormat(Qt.TextFormat.PlainText)
+        self.doctor.setTextFormat(Qt.TextFormat.RichText)
+        self.doctor.setAlignment(Qt.AlignmentFlag.AlignTop)
         doctor_box = QGroupBox("This machine")
         doctor_layout = QVBoxLayout(doctor_box)
         doctor_layout.addWidget(self.doctor)
@@ -213,9 +241,30 @@ class ProjectScreen(QWidget):
         layout.addLayout(right, 2)
 
         state.project_changed.connect(self.show_open_project)
+        state.stage_started.connect(lambda _name: self._set_running(True))
+        state.stage_finished.connect(lambda _name: self._set_running(False))
+        state.stage_cancelled.connect(lambda _name: self._set_running(False))
 
         self._refresh_counts()
         self._refresh_profile_note()
+
+    def _set_running(self, running: bool) -> None:
+        """Nothing that changes the project while a stage is running it.
+
+        Opening another project mid analysis would leave the worker writing a manifest
+        the window no longer holds, and changing the sources under a run would make the
+        summary describe files that are not in the project any more.
+        """
+        self._running = running
+        self.sources.setEnabled(not running)
+        self.add_button.setEnabled(not running)
+        self.remove_button.setEnabled(not running)
+        self.output.setEnabled(not running)
+        self.output_button.setEnabled(not running)
+        self.profile.setEnabled(not running)
+        self.open_button.setEnabled(not running)
+        self.recent.setEnabled(not running)
+        self._refresh_create_enabled()
 
     def show_open_project(self) -> None:
         """Put the state's project on this screen, whoever opened it.
@@ -281,7 +330,7 @@ class ProjectScreen(QWidget):
     def _refresh_create_enabled(self) -> None:
         has_sources = bool(self.sources.folders)
         has_output = bool(self.output.text().strip())
-        self.create_button.setEnabled(has_sources and has_output)
+        self.create_button.setEnabled(has_sources and has_output and not self._running)
 
     def _refresh_profile_note(self) -> None:
         profile = PROFILES_BY_KEY[str(self.profile.currentData())]
@@ -294,9 +343,8 @@ class ProjectScreen(QWidget):
 
     def refresh_doctor(self) -> None:
         """The doctor report, so a missing ffmpeg is seen before a run, not during one."""
-        report = inspect_environment(self._state.config)
-        lines = [f"{check.marker:>7}  {check.name}: {check.detail}" for check in report.checks]
-        self.doctor.setText("\n".join(lines))
+        self.doctor_report = inspect_environment(self._state.config)
+        self.doctor.setText(doctor_table(self.doctor_report))
 
     def refresh_recent(self) -> None:
         self.recent.clear()
@@ -309,6 +357,8 @@ class ProjectScreen(QWidget):
         """Apply the profile, open or create the project in the output folder."""
         text = self.output.text().strip()
         if not text or not self.sources.folders:
+            return False
+        if self._refuse_while_running():
             return False
         out = Path(text)
         profile = PROFILES_BY_KEY[str(self.profile.currentData())]
@@ -325,8 +375,26 @@ class ProjectScreen(QWidget):
         self.project_opened.emit()
         return True
 
+    def _refuse_while_running(self) -> bool:
+        """True when a stage is running, having said so. Belt and braces to the disabling.
+
+        The buttons are disabled during a run, but both methods are public and are
+        called directly by tests and by the window, so the refusal is checked here as
+        well as shown in the widgets.
+        """
+        if not self._state.is_running:
+            return False
+        QMessageBox.warning(
+            self,
+            "A stage is running",
+            "Wait for the analysis to finish or cancel it before changing the project.",
+        )
+        return True
+
     def open_project(self, folder: Path) -> bool:
         """Open an analyzed project and put its sources back on this screen."""
+        if self._refuse_while_running():
+            return False
         try:
             self._state.open_project(folder)
         except (FileNotFoundError, ValueError) as error:

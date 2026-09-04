@@ -153,13 +153,18 @@ def test_a_short_span_falls_back_to_a_smaller_multiple(tmp_path: Path) -> None:
 
 
 def test_a_span_shorter_than_the_smallest_multiple_gives_the_span(tmp_path: Path) -> None:
+    """The length is the shot's, not the music's, so it claims no beats."""
     manifest = project(tmp_path)
     segment = add_clip(manifest, 1, target=2.0, span=(0.0, 0.6))
 
     result = quantize_durations(manifest, 120.0, settings())
 
     assert segment.target_duration_s == pytest.approx(0.6)
+    assert segment.beats is None
+    assert segment.duration_reason == "clamped"
     assert result.clamped == 1
+    # Counted as clamped and nowhere else: it is not a clip cut to a whole beat count.
+    assert result.per_multiple == {}
 
 
 def test_the_alternation_survives_the_rounding(tmp_path: Path) -> None:
@@ -208,6 +213,74 @@ def test_final_bounds_sit_on_the_sampling_grid(tmp_path: Path) -> None:
     grid = 1.0 / config.analysis.sample_fps
     assert segment.final_start_s is not None
     assert segment.final_start_s / grid == pytest.approx(round(segment.final_start_s / grid))
+
+
+def test_a_shifted_window_is_snapped_again_towards_the_inside(tmp_path: Path) -> None:
+    """A trimmed end off the grid must not drag the window off it.
+
+    Moving the window back so it ends at the trimmed end puts the start wherever that
+    bound happens to be, which is not a sampled instant when the trim is not. The second
+    snap goes down, towards the inside of the span, so the window stays in the shot.
+    """
+    manifest = project(tmp_path)
+    config = settings()
+    segment = add_clip(manifest, 1, target=2.2, span=(0.0, 3.3), centre=3.0)
+
+    quantize_durations(manifest, 120.0, config)
+
+    grid = 1.0 / config.analysis.sample_fps
+    assert segment.beats == 4
+    # Centred it would start at 2.0 and end at 4.0, past the 3.3 end.
+    assert segment.final_start_s == pytest.approx(1.0)
+    assert segment.final_end_s == pytest.approx(3.0)
+    assert segment.final_start_s / grid == pytest.approx(round(segment.final_start_s / grid))
+    assert not segment.grid_unreachable
+
+
+def test_a_window_pushed_off_the_start_is_snapped_up_to_the_grid(tmp_path: Path) -> None:
+    """The other bound: a trimmed start off the grid snaps up, which is also inwards."""
+    manifest = project(tmp_path)
+    config = settings()
+    segment = add_clip(manifest, 1, target=2.2, span=(0.3, 20.0), centre=0.4)
+
+    quantize_durations(manifest, 120.0, config)
+
+    grid = 1.0 / config.analysis.sample_fps
+    assert segment.final_start_s == pytest.approx(0.5)
+    assert segment.final_start_s / grid == pytest.approx(round(segment.final_start_s / grid))
+    assert not segment.grid_unreachable
+
+
+def test_a_span_with_no_room_for_the_grid_keeps_the_shot_and_says_so(tmp_path: Path) -> None:
+    """Inside the shot beats on the grid, and the segment records which it gave up.
+
+    The span holds the two second window with 0.1 s to spare, so the length is still a
+    whole four beats, but there is no sampled instant in that 0.1 s to start on.
+    """
+    manifest = project(tmp_path)
+    segment = add_clip(manifest, 1, target=2.2, span=(0.1, 2.2))
+
+    result = quantize_durations(manifest, 120.0, settings())
+
+    assert segment.beats == 4
+    assert segment.target_duration_s == pytest.approx(2.0)
+    assert segment.final_start_s == pytest.approx(0.1)
+    assert segment.final_end_s == pytest.approx(2.1)
+    assert segment.grid_unreachable
+    assert result.off_grid == 1
+    # It kept the window inside the shot, which is the point of giving up the grid.
+    assert segment.final_start_s >= 0.1
+    assert segment.final_end_s <= 2.2
+
+
+def test_a_reachable_grid_is_not_reported_as_unreachable(tmp_path: Path) -> None:
+    manifest = project(tmp_path)
+    segment = add_clip(manifest, 1, target=2.0, span=(0.0, 20.0), centre=10.0)
+
+    result = quantize_durations(manifest, 120.0, settings())
+
+    assert not segment.grid_unreachable
+    assert result.off_grid == 0
 
 
 def test_a_slowed_clip_reads_less_source_than_it_plays(tmp_path: Path) -> None:
@@ -408,12 +481,14 @@ def test_resetting_forgets_a_previous_sync(tmp_path: Path) -> None:
     segment = add_clip(manifest, 1, target=2.2)
     quantize_durations(manifest, 120.0, settings())
     assert segment.final_start_s is not None
+    segment.grid_unreachable = True
 
     reset_final_bounds(manifest)
 
     assert segment.final_start_s is None
     assert segment.final_end_s is None
     assert segment.beats is None
+    assert not segment.grid_unreachable
 
 
 def test_the_beat_seconds_of_a_track() -> None:

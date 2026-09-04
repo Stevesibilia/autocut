@@ -800,6 +800,11 @@ def _print_sync(
         console.print(
             f"  {result.clamped} clips were clamped to a shorter multiple by their own span"
         )
+    if result.off_grid:
+        console.print(
+            f"  {result.off_grid} clips are too short to start on a sampled instant and "
+            "keep their own bounds instead"
+        )
     console.print(f"Beat map written to {beatmap}")
 
 

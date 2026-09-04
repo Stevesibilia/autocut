@@ -17,6 +17,7 @@ librosa has no business opening.
 
 from __future__ import annotations
 
+import math
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,13 +28,17 @@ from autocut.core.config import AutocutConfig
 from autocut.core.durations import heroes, trimmed_span
 from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
 from autocut.core.ffmpeg_cmd import resolve_target_fps, slow_motion_ratio
-from autocut.core.manifest import Manifest, Segment
+from autocut.core.manifest import DurationReason, Manifest, Segment
 
 #: librosa works on mono at a modest rate, and a beat tracker gains nothing from more.
 SAMPLE_RATE = 22050
 DECODE_TIMEOUT_S = 300.0
 
 BEATMAP_FILENAME = "beatmap.txt"
+
+#: Times are in seconds and the grid is coarse, so a hair of float noise must not
+#: cost a whole step in either direction.
+GRID_EPSILON = 1e-9
 
 #: Half and double are the two mistakes a beat tracker actually makes, because a
 #: four-on-the-floor bar reads equally well at either tempo.
@@ -78,6 +83,8 @@ class QuantizeResult:
     bpm: float = 0.0
     clips: int = 0
     clamped: int = 0
+    off_grid: int = 0
+    """Clips whose span could not hold the window on a sampled instant."""
     total_before_s: float = 0.0
     total_after_s: float = 0.0
     per_multiple: dict[int, int] = field(default_factory=dict)
@@ -280,21 +287,29 @@ def quantize_durations(
             multiple = smaller[-1]
             clamped = True
         duration = multiple * beat
+        beats: int | None = multiple
+        reason: DurationReason = "beat"
         if duration / ratio > span > 0:
             # Not even the smallest legal count fits, so the shot decides the length.
+            # That length is not a whole number of beats, so the clip is not synced and
+            # must not claim to be: the reason is the span, and there is no beat count.
             duration = span * ratio
+            beats = None
+            reason = "clamped"
             clamped = True
 
         # Not rounded: the whole point is that the length is exactly this many beats,
         # and the report formats it for display.
         segment.target_duration_s = duration
-        segment.beats = multiple
-        segment.duration_reason = "beat"
+        segment.beats = beats
+        segment.duration_reason = reason
         _set_final_bounds(segment, duration / ratio, config)
         result.clips += 1
         result.clamped += int(clamped)
+        result.off_grid += int(segment.grid_unreachable)
         result.total_after_s += duration
-        result.per_multiple[multiple] = result.per_multiple.get(multiple, 0) + 1
+        if beats is not None:
+            result.per_multiple[beats] = result.per_multiple.get(beats, 0) + 1
         shifts.append(abs(duration - before))
         progress(ProgressEvent(stage="sync", current=position, total=len(selected)))
 
@@ -305,18 +320,54 @@ def quantize_durations(
     return result
 
 
+def _floor_to_grid(value: float, sample_fps: float) -> float:
+    """The last sampled instant at or before ``value``."""
+    if sample_fps <= 0:
+        return value
+    return math.floor(value * sample_fps + GRID_EPSILON) / sample_fps
+
+
+def _ceil_to_grid(value: float, sample_fps: float) -> float:
+    """The first sampled instant at or after ``value``."""
+    if sample_fps <= 0:
+        return value
+    return math.ceil(value * sample_fps - GRID_EPSILON) / sample_fps
+
+
 def _set_final_bounds(segment: Segment, source_duration: float, config: AutocutConfig) -> None:
-    """Centre the window on the best frames, snap it to the grid, keep it in the shot."""
+    """Centre the window on the best frames, snap it to the grid, keep it in the shot.
+
+    The centred start is rounded to the nearest sampled instant, but a window that then
+    runs past the trimmed end, or begins before the trimmed start, has to move, and the
+    position it moves to is a bound of the shot rather than a point on the grid. So it
+    is snapped a second time, towards the inside of the span: down when the end pushed
+    it back, up when the start pushed it forward, since either direction keeps the whole
+    window inside the shot.
+
+    A span shorter than the duration plus one grid step has no sampled instant that
+    holds the window. Staying inside the shot matters more than landing on a measured
+    frame, so the window keeps the bound and the segment records that the grid was out
+    of reach.
+    """
     start = segment.trimmed_start_s if segment.trimmed_start_s is not None else segment.start_s
     stop = segment.trimmed_end_s if segment.trimmed_end_s is not None else segment.end_s
     centre = segment.best_center_s if segment.best_center_s is not None else (start + stop) / 2.0
+    sample_fps = config.analysis.sample_fps
+    latest = stop - source_duration
 
-    begin = snap_to_grid(centre - source_duration / 2.0, config.analysis.sample_fps)
-    if begin + source_duration > stop:
-        begin = stop - source_duration
-    begin = max(begin, start)
+    begin = snap_to_grid(centre - source_duration / 2.0, sample_fps)
+    unreachable = False
+    if begin > latest:
+        begin = _floor_to_grid(latest, sample_fps)
+    if begin < start:
+        begin = _ceil_to_grid(start, sample_fps)
+        if begin > latest:
+            begin = start
+            unreachable = True
+
     segment.final_start_s = begin
     segment.final_end_s = min(begin + source_duration, stop)
+    segment.grid_unreachable = unreachable
 
 
 def reset_final_bounds(manifest: Manifest) -> None:
@@ -325,6 +376,7 @@ def reset_final_bounds(manifest: Manifest) -> None:
         segment.final_start_s = None
         segment.final_end_s = None
         segment.beats = None
+        segment.grid_unreachable = False
 
 
 def write_beatmap(manifest: Manifest, track: Track, output_dir: Path) -> Path:

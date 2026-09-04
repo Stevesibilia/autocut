@@ -872,6 +872,24 @@ def test_a_synced_card_shows_its_beat_count(project: Manifest) -> None:
     assert card.duration_reason == "beat"
 
 
+def test_a_clamped_clip_shows_no_beat_label(project: Manifest) -> None:
+    """A clip the span cut short is not on the beat, so the card must not claim it is."""
+    manifest = synced(project)
+    first = manifest.segments[list(manifest.segments)[0]]
+    first.beats = None
+    first.duration_reason = "clamped"
+    first.target_duration_s = 0.6
+
+    cards = build_cards(manifest, Path(project.output_dir))
+    card = next(c for c in cards if c.order == 1)
+    html = render_report(manifest, Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert card.beats is None
+    assert card.beats_label is None
+    assert card.duration_reason == "clamped"
+    assert " beats<" not in html
+
+
 def test_the_page_shows_the_beat_count_and_the_reason(project: Manifest) -> None:
     html = render_report(synced(project), Path(project.output_dir)).read_text(encoding="utf-8")
 

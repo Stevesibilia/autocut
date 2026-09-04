@@ -169,6 +169,12 @@ class Segment(BaseModel):
         description="How many beats of the track this clip lasts, once beat sync has "
         "rounded its length. None until sync runs.",
     )
+    grid_unreachable: bool = Field(
+        default=False,
+        description="Whether the trimmed span was too short to hold the final window on "
+        "a sampled instant, so the window keeps a bound of the shot instead. Staying "
+        "inside the shot wins over landing on a measured frame.",
+    )
     snapped: bool = Field(
         default=False,
         description="Whether the window start was moved onto a motion minimum, so the "

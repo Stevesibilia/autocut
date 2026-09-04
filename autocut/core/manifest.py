@@ -481,6 +481,11 @@ class SoundtrackSignals(BaseModel):
     regions: list[str] = Field(default_factory=list)
 
 
+#: Where a prompt came from. Named so the GUI can pass one around without repeating
+#: the literal and drifting from it.
+PromptSource = Literal["template", "refined", "user"]
+
+
 class PromptVariant(BaseModel):
     """One Suno prompt, ready to paste into the two fields of custom mode."""
 
@@ -489,7 +494,12 @@ class PromptVariant(BaseModel):
     structure: list[str]
     mood: list[str] = Field(default_factory=list)
     instruments: list[str] = Field(default_factory=list)
-    source: Literal["template", "refined"] = "template"
+    source: PromptSource = Field(
+        default="template",
+        description="Where this prompt came from. 'user' is a prompt edited by hand in "
+        "the Soundtrack screen, which is written first in the prompt file and is never "
+        "replaced by a regeneration.",
+    )
 
 
 class Soundtrack(BaseModel):

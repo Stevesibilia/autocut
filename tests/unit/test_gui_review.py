@@ -370,6 +370,9 @@ def test_no_decisions_while_a_stage_runs(screen: ReviewScreen, qtbot: Any) -> No
     gate.set()
     with qtbot.waitSignal(state.stage_finished, timeout=5000):
         pass
+    # The signal comes from inside the thread's run, so the thread is still winding
+    # down: a QThread collected while running makes Qt abort the process.
+    assert state.wait_for_stage(10_000)
     assert screen.keep_button.isEnabled()
 
 
@@ -791,7 +794,7 @@ def test_the_report_is_not_written_while_a_stage_runs(screen: ReviewScreen, qtbo
     assert screen.export_report() is None
 
     gate.set()
-    state.wait_for_stage(5000)
+    assert state.wait_for_stage(10_000)
     qtbot.wait(50)
 
 

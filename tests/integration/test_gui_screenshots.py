@@ -20,7 +20,9 @@ import pytest
 pytest.importorskip("PySide6")
 
 from autocut.gui.app import SCREENS, build_window  # noqa: E402
+from autocut.gui.screens.export import ExportScreen  # noqa: E402
 from autocut.gui.screens.review import ReviewScreen  # noqa: E402
+from autocut.gui.screens.soundtrack import SoundtrackScreen  # noqa: E402
 from autocut.gui.state import ProjectState  # noqa: E402
 
 pytestmark = [pytest.mark.gui, pytest.mark.ffmpeg]
@@ -138,6 +140,77 @@ def test_every_review_state_is_grabbed(tmp_path: Path, synthetic_dir: Path, qtbo
     review.groups_toggle.setChecked(True)
     grab("groups")
     review.groups_toggle.setChecked(False)
+
+
+def test_the_soundtrack_and_export_states_are_grabbed(
+    tmp_path: Path, synthetic_dir: Path, qtbot: Any
+) -> None:
+    """The last two screens in the states the music loop and the export put them in.
+
+    The click fixture stands in for a Suno track, which is the only reproducible way to
+    have a real tempo on a synthetic project.
+    """
+    out = tmp_path / "edit"
+    state = ProjectState()
+    state.new_project([synthetic_dir], out)
+    state.config.cache.dir = tmp_path / "cache"
+
+    window = build_window(state)
+    qtbot.addWidget(window)
+    window.resize(1400, 880)
+    with qtbot.waitSignal(state.stage_finished, timeout=180_000):
+        assert window.screens["analysis"].run()  # type: ignore[attr-defined]
+    assert state.run_selection()
+    window.refresh_navigation()
+
+    directory = shots_dir()
+    if directory is not None:
+        directory.mkdir(parents=True, exist_ok=True)
+
+    def grab(name: str) -> None:
+        qtbot.wait(60)
+        image = window.grab().toImage()
+        assert not image.isNull(), name
+        if directory is not None:
+            path = directory / f"{name}.png"
+            assert image.save(str(path)), path
+            assert path.stat().st_size > 0
+
+    # --- the soundtrack screen -------------------------------------------
+    window.go_to("soundtrack")
+    soundtrack = window.screens["soundtrack"]
+    assert isinstance(soundtrack, SoundtrackScreen)
+    grab("soundtrack-empty")
+
+    assert soundtrack.generate()
+    grab("soundtrack-prompt")
+
+    lines = soundtrack.editor.structure_lines()
+    lines[1] = "[slow, dark intro]"
+    soundtrack.editor.structure.setPlainText("\n".join(lines))
+    soundtrack.editor.revalidate()
+    grab("soundtrack-invalid-edit")
+    soundtrack.editor.show_variant(soundtrack._state.manifest.soundtrack.variants[0])
+
+    assert soundtrack.load_track(synthetic_dir / "click_120bpm.wav")
+    grab("soundtrack-track")
+
+    with qtbot.waitSignal(state.stage_finished, timeout=60_000):
+        assert soundtrack.apply_sync()
+    grab("soundtrack-synced")
+
+    # --- the export screen ------------------------------------------------
+    window.go_to("export")
+    export = window.screens["export"]
+    assert isinstance(export, ExportScreen)
+    export.reload()
+    grab("export-options")
+
+    with qtbot.waitSignal(state.stage_finished, timeout=180_000):
+        assert export.run()
+    grab("export-done")
+
+    assert export.summary.text()
 
 
 def test_the_screens_are_grabbed_before_a_project_exists(tmp_path: Path, qtbot: Any) -> None:

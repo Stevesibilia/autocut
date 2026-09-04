@@ -138,14 +138,23 @@ class GroupCard(QFrame):
         score = f"{segment.score:.2f}" if segment.score is not None else "unscored"
         state = "in the edit" if chosen else ("rejected" if segment.user_rejected else "behind")
         column.addWidget(QLabel(f"{score}  {state}"))
-        column.addWidget(QLabel(self._file_name(segment)))
+        name = QLabel(self.describe(segment))
+        name.setToolTip(segment.id)
+        column.addWidget(name)
         return holder
 
-    def _file_name(self, segment: Segment) -> str:
-        """The clip's file name. ``file_id`` is a content hash and means nothing to a reader."""
+    def describe(self, segment: Segment) -> str:
+        """The clip's file name and where in it, which is how a person finds a shot.
+
+        ``file_id`` is a content hash: it identifies the file exactly and tells a reader
+        nothing. The id is still on the tooltip, for the case where somebody is
+        comparing the screen with a manifest.
+        """
         manifest = self._state.manifest
         source = manifest.files.get(segment.file_id) if manifest is not None else None
-        return Path(source.path).name if source is not None else segment.id
+        name = Path(source.path).name if source is not None else segment.file_id[:8]
+        start, _ = segment.effective_bounds
+        return f"{name}  {start:.1f} s"
 
     def _clicked(self, segment_id: str) -> None:
         """Clicking a clip behind the pick swaps the two. Clicking the pick does nothing.

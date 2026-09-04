@@ -24,7 +24,7 @@ from autocut.core.soundtrack.genres import Match, match_row
 from autocut.core.soundtrack.prompt import build_prompt, energy_shape, propose_bpm
 from autocut.core.soundtrack.refine import refine_prompt
 from autocut.core.soundtrack.signals import clip_durations, derive_signals
-from autocut.core.soundtrack.validate import validate_prompt
+from autocut.core.soundtrack.validate import Validation, validate_prompt
 
 PROMPT_FILENAME = "suno-prompt.md"
 
@@ -184,13 +184,40 @@ def _refine_first(
         result.variants.insert(0, outcome.prompt)
 
 
+def store_user_variant(
+    manifest: Manifest, variant: PromptVariant, config: AutocutConfig
+) -> Validation:
+    """Keep a hand edited prompt, if it validates, and make it the chosen one.
+
+    Stored first in the list rather than appended, so it is the prompt the file opens
+    with and the one every later step reads. An invalid prompt is not stored at all:
+    the point of the validator is that nothing unusable reaches Suno, and a prompt kept
+    "for later" would be exactly that.
+
+    Any earlier user variant is replaced. A person editing twice means the second one.
+    """
+    verdict = validate_prompt(
+        variant.description, variant.structure, config, tuple(variant.instruments)
+    )
+    if not verdict.ok:
+        return verdict
+    stored = variant.model_copy(update={"source": "user"})
+    generated = [item for item in manifest.soundtrack.variants if item.source != "user"]
+    manifest.soundtrack.variants = [stored, *generated]
+    manifest.soundtrack.chosen_variant = 0
+    return verdict
+
+
 def _record(manifest: Manifest, result: SoundtrackResult, matched: Match) -> None:
     manifest.soundtrack.matched_row = matched.row.name
     manifest.soundtrack.matched_reason = matched.reason
     manifest.soundtrack.genre = matched.row.genre
     manifest.soundtrack.proposed_bpm = float(result.bpm)
     manifest.soundtrack.beat_distance = round(result.beat_distance, 4)
-    manifest.soundtrack.variants = list(result.variants)
+    # A hand edited prompt survives a regeneration and stays first: the user wrote it
+    # after seeing what the template produced, so the template does not get to win.
+    kept = [item for item in manifest.soundtrack.variants if item.source == "user"]
+    manifest.soundtrack.variants = [*kept, *result.variants]
     manifest.soundtrack.chosen_variant = 0
     manifest.soundtrack.refinement = result.refinement  # type: ignore[assignment]
     manifest.soundtrack.refinement_note = result.refinement_note
@@ -219,8 +246,11 @@ def write_prompt_file(manifest: Manifest, result: SoundtrackResult) -> Path:
         "Suno custom mode: Description goes in the style field, Structure in the lyrics field.",
         "",
     ]
-    for number, variant in enumerate(result.variants, start=1):
-        label = "refined" if variant.source == "refined" else "template"
+    written = manifest.soundtrack.variants or list(result.variants)
+    for number, variant in enumerate(written, start=1):
+        label = {"refined": "refined", "user": "yours, edited by hand"}.get(
+            variant.source, "template"
+        )
         lines += [f"## Variant {number} ({label})", "", "**Title**", "", variant.title, ""]
         lines += ["**Description**", "", variant.description, "", "**Structure**", "", "```"]
         lines += list(variant.structure)

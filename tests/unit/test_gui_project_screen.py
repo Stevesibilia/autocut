@@ -270,6 +270,9 @@ def test_the_project_cannot_be_changed_while_a_stage_runs(
     gate.set()
     with qtbot.waitSignal(state.stage_finished, timeout=5000):
         pass
+    # The signal comes from inside the thread's run, so the thread is still winding
+    # down: a QThread collected while running makes Qt abort the process.
+    assert state.wait_for_stage(10_000)
 
     assert screen.open_button.isEnabled()
     assert screen.sources.isEnabled()

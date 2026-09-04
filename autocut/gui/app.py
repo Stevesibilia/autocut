@@ -30,9 +30,10 @@ from PySide6.QtWidgets import (
 
 from autocut.core.manifest import Manifest
 from autocut.gui.screens.analysis import AnalysisScreen
-from autocut.gui.screens.placeholder import PlaceholderScreen
+from autocut.gui.screens.export import ExportScreen
 from autocut.gui.screens.project import ProjectScreen
 from autocut.gui.screens.review import ReviewScreen
+from autocut.gui.screens.soundtrack import SoundtrackScreen
 from autocut.gui.settings import SettingsDialog
 from autocut.gui.state import ProjectState
 
@@ -96,14 +97,8 @@ class MainWindow(QMainWindow):
             "project": ProjectScreen(self.state),
             "analysis": AnalysisScreen(self.state),
             "review": ReviewScreen(self.state),
-            "soundtrack": PlaceholderScreen(
-                "Soundtrack",
-                "The prompt, its variants and the beat sync arrive with m5-gui-soundtrack-export.",
-            ),
-            "export": PlaceholderScreen(
-                "Export",
-                "The export queue and the CapCut hand off arrive with m5-gui-soundtrack-export.",
-            ),
+            "soundtrack": SoundtrackScreen(self.state),
+            "export": ExportScreen(self.state),
         }
         for spec in SCREENS:
             self.stack.addWidget(self.screens[spec.key])

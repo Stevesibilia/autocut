@@ -249,6 +249,9 @@ def test_the_dialog_will_not_apply_while_a_stage_runs(
     gate.set()
     with qtbot.waitSignal(state.stage_finished, timeout=5000):
         pass
+    # The signal comes from inside the thread's run, so the thread is still winding
+    # down: a QThread collected while running makes Qt abort the process.
+    assert state.wait_for_stage(10_000)
     assert dialog.ok_button.isEnabled()
 
 

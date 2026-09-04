@@ -14,6 +14,7 @@ thing SPEC.md section 7.5 is emphatic about.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from autocut.core.config import AutocutConfig, GenreRow
 from autocut.core.manifest import PromptVariant, SoundtrackSignals
@@ -213,6 +214,83 @@ def build_structure(
             lines.append(f"[{modifier} {section}]")
     lines.append("[end]")
     return lines
+
+
+#: The three positions of a mood control. Named rather than numeric because a caller
+#: reading ``apply_mood(..., calm=-1)`` has to look up what -1 meant.
+MoodDirection = Literal["calmer", "keep", "energetic"]
+RoomDirection = Literal["intimate", "keep", "cinematic"]
+
+
+def _pick_by_scale(pool: list[str], scale: list[str], toward_end: bool) -> str:
+    """The word from ``pool`` furthest along ``scale``, or furthest back.
+
+    A word missing from the scale is neutral: it takes the middle position rather than
+    an end, because the scales are a way of choosing between words a row already offers
+    and not a claim to rank every word in English. With nothing to go on the first word
+    of the pool wins, which is the row's own default.
+    """
+    if not pool:
+        return ""
+    middle = len(scale) / 2.0
+
+    def position(word: str) -> float:
+        return float(scale.index(word)) if word in scale else middle
+
+    ranked = sorted(pool, key=lambda word: (position(word), pool.index(word)))
+    return ranked[-1] if toward_end else ranked[0]
+
+
+def apply_mood(
+    variant: PromptVariant,
+    row: GenreRow,
+    bpm: int,
+    signals: SoundtrackSignals,
+    config: AutocutConfig,
+    calm: MoodDirection = "keep",
+    room: RoomDirection = "keep",
+) -> PromptVariant:
+    """The same prompt with a different mood word, chosen inside the matched row.
+
+    The two controls of SPEC.md section 11, calmer to more energetic and cinematic to
+    intimate, pick between the mood words the row already carries and never change the
+    genre: a row is a claim about what this footage sounds like, and a slider is not the
+    place to overrule it. Both axes read the same pool, so asking for calmer and
+    intimate at once can land on one word that is both, which is the honest answer
+    rather than two words fighting.
+
+    Rebuilt rather than patched, because the Structure spreads the mood across its
+    sections and editing the Description alone would leave the two blocks disagreeing.
+
+    A variant whose source was ``user`` comes back as ``template``. Every word of both
+    blocks has just been regenerated from the row, so what comes out is the template's
+    prompt at a different mood and not the one the person wrote; keeping the label
+    would credit them with text they never typed, and would make it survive the next
+    regeneration as if it had been theirs. The Soundtrack screen therefore leaves a
+    hand edited variant alone rather than calling this on it.
+    """
+    pool = [*row.mood, *row.mood_alternates] or [variant.mood[0] if variant.mood else "warm"]
+    chosen = variant.mood[0] if variant.mood else pool[0]
+    if calm != "keep":
+        chosen = _pick_by_scale(pool, config.soundtrack.calm_to_energetic, calm == "energetic")
+    if room != "keep":
+        # The room axis reads the pool the first axis narrowed to, so two moves compose
+        # instead of the second one throwing the first away.
+        candidates = [chosen] if calm != "keep" else pool
+        chosen = _pick_by_scale(
+            candidates or pool, config.soundtrack.intimate_to_cinematic, room == "cinematic"
+        )
+    shape = energy_shape(signals)
+    skeleton = SKELETONS.get(shape, SKELETONS["flat"])
+    moods = _section_moods(row, chosen, len(skeleton))
+    return PromptVariant(
+        title=variant.title,
+        description=build_description(row, bpm, variant.instruments, chosen),
+        structure=build_structure(shape, variant.instruments, chosen, moods),
+        mood=moods,
+        instruments=variant.instruments,
+        source=variant.source if variant.source != "user" else "template",
+    )
 
 
 def build_prompt(

@@ -37,6 +37,7 @@ from autocut.core.events import ProgressCallback, ProgressEvent
 from autocut.core.export import ExportResult, export_clips
 from autocut.core.ffmpeg_cmd import ExportOverrides, resolve_target_fps, slow_motion_ratio
 from autocut.core.manifest import Manifest
+from autocut.core.montage import clear_preview, is_current
 from autocut.core.naming import SELECTS_DIR, STALE_DIR
 from autocut.gui.settings import write_config
 from autocut.gui.state import ProjectState
@@ -245,6 +246,9 @@ class ExportScreen(QWidget):
         state.stage_started.connect(lambda _name: self._set_running(True))
         state.stage_finished.connect(self._stage_finished)
         state.stage_cancelled.connect(self._stage_cancelled)
+        # Also on error: a failed stage emits neither finished nor cancelled, and
+        # without this the screen stayed disabled until the next stage ran.
+        state.error.connect(lambda _message: self._set_running(False))
 
         self._loading = False
         self.reload()
@@ -487,30 +491,58 @@ class ExportScreen(QWidget):
             return []
         return sorted(path for path in stale.iterdir() if path.is_file())
 
+    def stale_preview(self) -> bool:
+        """Whether the montage preview describes an edit that no longer exists.
+
+        A montage built from a selection three decisions ago is as stale as a clip file
+        from a dropped pick, and it is bigger than all of them put together.
+        """
+        manifest = self._state.manifest
+        if manifest is None or manifest.preview.path is None:
+            return False
+        track = (
+            Path(manifest.soundtrack.audio_path)
+            if manifest.soundtrack.audio_path is not None
+            else None
+        )
+        return not is_current(manifest, self._state.config, track)
+
     def refresh_stale(self) -> None:
         """Say how many stale files are waiting, and offer to remove them."""
         files = self.stale_files()
-        self.stale_button.setEnabled(bool(files) and not self._state.is_running)
-        if files:
+        preview = self.stale_preview()
+        self.stale_button.setEnabled((bool(files) or preview) and not self._state.is_running)
+        if files and preview:
+            self.stale_button.setText(f"Delete {len(files)} stale files and the old preview")
+        elif files:
             self.stale_button.setText(f"Delete {len(files)} stale files")
+        elif preview:
+            self.stale_button.setText("Delete the old montage preview")
         else:
             self.stale_button.setText("Delete the stale files")
 
     def delete_stale(self, confirm: bool = True) -> int:
         """Delete what a re-selection left behind. Offered, never automatic.
 
-        Only files directly under ``_selects/_stale/``: this is a delete button in a
-        folder the user chose, and the narrowest possible reading of what it may remove
-        is the only safe one.
+        Only files directly under ``_selects/_stale/``, plus the montage preview when
+        it describes an edit that no longer exists: this is a delete button in a folder
+        the user chose, and the narrowest possible reading of what it may remove is the
+        only safe one.
         """
         files = self.stale_files()
-        if not files:
+        preview = self.stale_preview()
+        if not files and not preview:
             return 0
         if confirm:
+            what = []
+            if files:
+                what.append(f"{len(files)} files in {STALE_DIR}")
+            if preview:
+                what.append("the montage preview")
             answer = QMessageBox.question(
                 self,
                 "Delete the stale files?",
-                f"{len(files)} files in {STALE_DIR} are from an earlier selection.\nDelete them?",
+                f"{' and '.join(what)} are from an earlier selection.\nDelete them?",
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return 0
@@ -521,6 +553,10 @@ class ExportScreen(QWidget):
                 removed += 1
             except OSError as error:
                 self.problems.setText(f"could not delete {path.name}: {error}")
+        manifest = self._state.manifest
+        if preview and manifest is not None:
+            removed += clear_preview(manifest)
+            self._state.schedule_save()
         self.refresh_stale()
         return removed
 

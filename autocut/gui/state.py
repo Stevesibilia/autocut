@@ -29,6 +29,7 @@ from autocut.core.embeddings import EmbedResult, embed_project
 from autocut.core.events import ProgressCallback, ProgressEvent
 from autocut.core.ingest import ingest
 from autocut.core.manifest import Manifest, Segment, UserDecision
+from autocut.core.montage import MontageResult, build_montage, is_current
 from autocut.core.providers import cloud_enabled, find_key
 from autocut.core.providers.openrouter import OpenRouterProvider
 from autocut.core.score import rescore
@@ -519,6 +520,31 @@ class ProjectState(QObject):
         """
         threshold = self.config.gui.reselect_worker_threshold
         return threshold > 0 and self.candidate_count() > threshold
+
+    def run_montage(self, track: Path | None = None, force: bool = False) -> bool:
+        """Render the montage preview on the worker. False when one is already running.
+
+        Through the worker because it is ffmpeg over every selected clip, which is the
+        one thing on this screen that takes real time. The fingerprint check happens
+        inside, so pressing Play all on an untouched edit returns a result without
+        rendering and the worker finishes immediately.
+        """
+        manifest = self.manifest
+        config = self.config
+        if manifest is None or self.is_running:
+            return False
+
+        def work(progress: ProgressCallback) -> MontageResult:
+            return build_montage(manifest, config, progress, track=track, force=force)
+
+        return self.run_stage("montage", work)
+
+    def montage_is_current(self, track: Path | None = None) -> bool:
+        """Whether the montage on disk still describes this edit."""
+        manifest = self.manifest
+        if manifest is None:
+            return False
+        return bool(is_current(manifest, self.config, track))
 
     def run_selection(
         self,

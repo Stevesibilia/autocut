@@ -395,6 +395,52 @@ def test_deleting_asks_first(screen: ExportScreen, monkeypatch: pytest.MonkeyPat
     assert (stale / "old.mp4").exists()
 
 
+def test_a_montage_from_an_old_edit_is_offered_for_deletion(screen: ExportScreen) -> None:
+    """A stale montage is bigger than every stale clip put together."""
+    manifest = screen._state.manifest
+    assert manifest is not None
+    preview = Path(manifest.output_dir) / "preview"
+    preview.mkdir(parents=True)
+    montage = preview / "montage.mp4"
+    montage.write_bytes(b"an old edit")
+    manifest.preview.path = montage
+    manifest.preview.fingerprint = "from another selection"
+
+    screen.refresh_stale()
+
+    assert screen.stale_preview()
+    assert screen.stale_button.isEnabled()
+    assert "montage preview" in screen.stale_button.text()
+
+    removed = screen.delete_stale(confirm=False)
+
+    assert removed >= 1
+    assert not montage.exists()
+    assert manifest.preview.fingerprint is None
+    assert not screen.stale_preview()
+
+
+def test_a_current_montage_is_not_stale(screen: ExportScreen, tmp_path: Path) -> None:
+    from autocut.core.montage import montage_fingerprint
+
+    state = screen._state
+    manifest = state.manifest
+    assert manifest is not None
+    preview = Path(manifest.output_dir) / "preview"
+    preview.mkdir(parents=True)
+    montage = preview / "montage.mp4"
+    montage.write_bytes(b"this edit")
+    manifest.preview.path = montage
+    manifest.preview.fingerprint = montage_fingerprint(manifest, state.config, None)
+
+    screen.refresh_stale()
+
+    assert not screen.stale_preview()
+    assert not screen.stale_button.isEnabled()
+    assert screen.delete_stale(confirm=False) == 0
+    assert montage.exists()
+
+
 def test_no_stale_files_means_nothing_to_delete(screen: ExportScreen) -> None:
     assert screen.stale_files() == []
     assert screen.delete_stale(confirm=False) == 0

@@ -96,6 +96,32 @@ def recent_projects_in_tmp(tmp_path_factory: pytest.TempPathFactory) -> Iterator
 
 
 @pytest.fixture(autouse=True)
+def stop_media_players() -> Iterator[None]:
+    """Stop every player before the widgets holding it are collected.
+
+    A ``QMediaPlayer`` whose widget is garbage collected while it is still playing
+    takes the process down: the Qt ffmpeg backend keeps a thread on the file, and in
+    the container, where the audio backend is a stub, it segfaults on the way out.
+    The suite reports every test as passed and then dies, which is the same shape of
+    problem as the GUI worker threads had.
+    """
+    yield
+    if importlib.util.find_spec("PySide6") is None:
+        return
+    from PySide6.QtWidgets import QApplication
+
+    application = QApplication.instance()
+    if application is None:
+        return
+    from autocut.gui.widgets.montage import MontagePlayer
+    from autocut.gui.widgets.preview import PreviewPanel
+
+    for widget in application.allWidgets():
+        if isinstance(widget, PreviewPanel | MontagePlayer):
+            widget.stop()
+
+
+@pytest.fixture(autouse=True)
 def plain_cli_output(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make Rich render CLI output as plain, unwrapped text.
 

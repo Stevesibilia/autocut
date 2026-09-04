@@ -26,10 +26,12 @@ from PySide6.QtWidgets import (
 
 from autocut.core.durations import total_duration
 from autocut.core.manifest import Manifest
+from autocut.core.montage import MontageResult
 from autocut.core.report import render_report
 from autocut.core.rules import EXCLUSIONS
 from autocut.gui.state import ProjectState
 from autocut.gui.widgets.groups import GroupsView
+from autocut.gui.widgets.montage import MontagePlayer, clip_labels
 from autocut.gui.widgets.preview import PreviewPanel
 from autocut.gui.widgets.sliders import SliderPanel
 from autocut.gui.widgets.thumb_grid import ThumbGrid
@@ -54,9 +56,11 @@ class ReviewScreen(QWidget):
 
         self.grid = ThumbGrid(state, self)
         self.groups = GroupsView(state, self)
+        self.montage = MontagePlayer(self)
         self.stack = QStackedWidget()
         self.stack.addWidget(self.grid)
         self.stack.addWidget(self.groups)
+        self.stack.addWidget(self.montage)
 
         self.preview = PreviewPanel(state, self)
         self.sliders = SliderPanel(state, self)
@@ -97,6 +101,12 @@ class ReviewScreen(QWidget):
         self.groups_toggle = QCheckBox("Similar groups")
         self.groups_toggle.toggled.connect(self._mode_changed)
 
+        self.play_all_button = QPushButton("Play all")
+        self.play_all_button.clicked.connect(self.play_all)
+        self.montage_note = QLabel()
+        self.montage_note.setWordWrap(True)
+        self.montage_note.setStyleSheet("color: palette(mid);")
+
         self.keep_button = QPushButton("Keep (K)")
         self.reject_button = QPushButton("Reject (R)")
         self.clear_button = QPushButton("Clear")
@@ -128,6 +138,7 @@ class ReviewScreen(QWidget):
         filters.addWidget(self.groups_toggle)
 
         actions = QHBoxLayout()
+        actions.addWidget(self.play_all_button)
         actions.addWidget(self.keep_button)
         actions.addWidget(self.reject_button)
         actions.addWidget(self.clear_button)
@@ -151,6 +162,7 @@ class ReviewScreen(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.addWidget(self.counts)
         layout.addWidget(self.warning)
+        layout.addWidget(self.montage_note)
         layout.addLayout(filters)
         layout.addWidget(splitter, 1)
         layout.addLayout(actions)
@@ -164,13 +176,18 @@ class ReviewScreen(QWidget):
         self.grid.activated_segment.connect(self._activate)
         self.preview.bounds_committed.connect(self._bounds_committed)
         self.groups.swap_requested.connect(self._swap)
+        self.montage.clip_changed.connect(self._montage_clip_changed)
+        self.montage.boundary_clicked.connect(self._montage_clip_changed)
 
         state.selection_changed.connect(self._selection_changed)
         state.segments_changed.connect(lambda _ids: self.refresh_header())
         state.project_changed.connect(self.reload)
         state.stage_started.connect(lambda _name: self._set_running(True))
-        state.stage_finished.connect(lambda _name: self._set_running(False))
+        state.stage_finished.connect(self._stage_finished)
         state.stage_cancelled.connect(lambda _name: self._set_running(False))
+        # Also on error: a failed stage emits neither finished nor cancelled, and
+        # without this the screen stayed disabled until the next stage ran.
+        state.error.connect(lambda _message: self._set_running(False))
 
         self.reload()
 
@@ -300,7 +317,19 @@ class ReviewScreen(QWidget):
     # --- decisions ---------------------------------------------------------
 
     def _current(self, segment_id: str = "") -> str:
-        return segment_id or self.grid.current_id()
+        """Which clip a decision is about.
+
+        The clip on screen wins while the montage is playing: pressing R during
+        playback is a judgement about what is being watched, not about whatever the
+        grid cursor was left on.
+        """
+        if segment_id:
+            return segment_id
+        if self.stack.currentWidget() is self.montage:
+            playing = self.montage.current_segment_id()
+            if playing:
+                return playing
+        return self.grid.current_id()
 
     def _decide(self, decision: str | None, segment_id: str = "") -> None:
         target = self._current(segment_id)
@@ -313,6 +342,7 @@ class ReviewScreen(QWidget):
         # Keep the cursor where the hand is: after a decision the grid reorders, and a
         # reviewer working through it should land on the next card, not back at the top.
         self._restore_cursor(target, row)
+        self._montage_stale()
 
     def _toggle(self, segment_id: str) -> None:
         target = self._current(segment_id)
@@ -387,6 +417,9 @@ class ReviewScreen(QWidget):
         self.refresh_header()
 
     def _mode_changed(self, groups: bool) -> None:
+        """Groups replaces the grid. Leaving the montage is what stops it."""
+        if self.stack.currentWidget() is self.montage:
+            self.montage.pause()
         self.stack.setCurrentWidget(self.groups if groups else self.grid)
         if groups:
             self.groups.refresh()
@@ -399,10 +432,102 @@ class ReviewScreen(QWidget):
             self.clear_button,
             self.undo_button,
             self.report_button,
+            self.play_all_button,
             self.sliders,
             self.grid,
         ):
             widget.setEnabled(not running)
+
+    def _stage_finished(self, name: str) -> None:
+        self._set_running(False)
+        if name != "montage":
+            return
+        result = self._state.last_result
+        if isinstance(result, MontageResult) and result.ok:
+            if self._show_montage():
+                self.montage.play()
+            return
+        reason = ""
+        if isinstance(result, MontageResult):
+            reason = result.skipped_reason or "; ".join(
+                f"{segment_id}: {error}" for segment_id, error in result.errors
+            )
+        self.montage_note.setText(reason or "The montage could not be built.")
+
+    # --- the montage -------------------------------------------------------
+
+    def play_all(self) -> bool:
+        """Watch the whole edit. Renders it first when the edit has changed.
+
+        The montage is the only thing on this screen that costs real time, so it goes
+        through the worker; when the fingerprint still matches, the stage finds the
+        file already there and returns without rendering.
+        """
+        state = self._state
+        if state.manifest is None or state.is_running:
+            return False
+        track = self._track_path()
+        if state.montage_is_current(track) and self._show_montage():
+            self.montage.play()
+            return True
+        self.montage_note.setText("Building the montage from the selected clips…")
+        return state.run_montage(track=track)
+
+    def _track_path(self) -> Path | None:
+        """The track the project loaded, when there is one, so the montage carries it."""
+        manifest = self._state.manifest
+        if manifest is None or manifest.soundtrack.audio_path is None:
+            return None
+        path = Path(manifest.soundtrack.audio_path)
+        return path if path.exists() else None
+
+    def _show_montage(self) -> bool:
+        """Load the rendered montage into the player and bring it to the front."""
+        manifest = self._state.manifest
+        if manifest is None or manifest.preview.path is None:
+            return False
+        path = Path(manifest.preview.path)
+        index = Path(manifest.preview.index_path) if manifest.preview.index_path else None
+        if not self.montage.load(
+            path,
+            index,
+            sound=manifest.preview.has_audio,
+            labels=clip_labels(manifest),
+        ):
+            self.montage_note.setText("The montage file is gone. Press Play all to build it.")
+            return False
+        self.groups_toggle.setChecked(False)
+        self.stack.setCurrentWidget(self.montage)
+        self.montage_note.setText(
+            f"{manifest.preview.clips} clips, {manifest.preview.duration_s:.1f} s"
+            + (" with the track" if manifest.preview.has_audio else "")
+            + ". K, R, space and U apply to the clip playing."
+        )
+        return True
+
+    def show_grid(self) -> None:
+        self.montage.pause()
+        self.groups_toggle.setChecked(False)
+        self.stack.setCurrentWidget(self.grid)
+
+    def _montage_clip_changed(self, segment_id: str) -> None:
+        """Follow the montage in the grid, so a decision lands on what is on screen."""
+        if not segment_id:
+            return
+        self.grid.select_segment(segment_id)
+        self.preview.show_segment(segment_id)
+
+    def _montage_stale(self) -> None:
+        """Say that the montage no longer matches the edit, without interrupting it.
+
+        Stopping playback on a decision would make reviewing while watching useless,
+        which is the whole point of routing the keys to the playing clip.
+        """
+        if self.montage.path is None:
+            return
+        self.montage_note.setText(
+            "The montage no longer matches the edit. Press Play all to build it again."
+        )
 
     # --- the report --------------------------------------------------------
 

@@ -20,7 +20,12 @@ ANALYSIS_SCHEMA_VERSION = 1
 
 Outcome = Literal["candidate", "selected", "rejected"]
 TagSource = Literal["local", "cloud"]
-DurationReason = Literal["base", "hero", "alternation", "total", "clamped", "override", "beat"]
+DurationReason = Literal[
+    "base", "hero", "alternation", "total", "clamped", "override", "beat", "user"
+]
+
+#: What a person said about a segment. Absent means the machine decides.
+UserDecision = Literal["keep", "reject"]
 TelemetryKind = Literal["dji_embedded_srt", "dji_sidecar_srt", "gopro_gpmf", "none"]
 
 
@@ -169,6 +174,18 @@ class Segment(BaseModel):
         description="How many beats of the track this clip lasts, once beat sync has "
         "rounded its length. None until sync runs.",
     )
+    user_decision: UserDecision | None = Field(
+        default=None,
+        description="What the reviewer said about this clip. A keep is always selected "
+        "and a reject never is, whatever the score and the similarity penalty make of "
+        "it, and neither survives being overwritten by an automatic step.",
+    )
+    user_start_s: float | None = Field(
+        default=None,
+        description="In point set by hand, inside the trimmed span. With user_end_s it "
+        "replaces the searched window and the assigned duration.",
+    )
+    user_end_s: float | None = Field(default=None, description="Out point set by hand.")
     grid_unreachable: bool = Field(
         default=False,
         description="Whether the trimmed span was too short to hold the final window on "
@@ -259,6 +276,50 @@ class Segment(BaseModel):
             else item
             for item in value
         ]
+
+    @property
+    def user_bounds(self) -> tuple[float, float] | None:
+        """The hand set window, or ``None``.
+
+        Both ends or neither: a single point is a half finished drag, not a decision,
+        and every caller wants a span. Read rather than stored as a span so the two
+        fields stay the manifest's shape and this stays the one place that judges them.
+        """
+        start, end = self.user_start_s, self.user_end_s
+        if start is None or end is None or end <= start:
+            return None
+        return start, end
+
+    @property
+    def effective_bounds(self) -> tuple[float, float]:
+        """The span every later stage works inside, hand set bounds winning.
+
+        Three sources in order: what the reviewer set, the per class trim, and the
+        shot detection bounds. Read here rather than at each call site so a hand
+        trimmed clip means the same thing to durations, beat sync and export.
+        """
+        bounds = self.user_bounds
+        if bounds is not None:
+            return bounds
+        start = self.trimmed_start_s if self.trimmed_start_s is not None else self.start_s
+        end = self.trimmed_end_s if self.trimmed_end_s is not None else self.end_s
+        return start, end
+
+    @property
+    def effective_center(self) -> float:
+        """Where the window is centred: the hand set middle, or the searched one."""
+        start, end = self.effective_bounds
+        if self.user_bounds is not None or self.best_center_s is None:
+            return (start + end) / 2.0
+        return self.best_center_s
+
+    @property
+    def kept(self) -> bool:
+        return self.user_decision == "keep"
+
+    @property
+    def user_rejected(self) -> bool:
+        return self.user_decision == "reject"
 
     @property
     def dominant_tag(self) -> str | None:

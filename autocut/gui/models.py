@@ -39,6 +39,12 @@ class SegmentRole:
     DOMINANT_TAG = int(Qt.ItemDataRole.UserRole) + 8
     THUMBNAIL = int(Qt.ItemDataRole.UserRole) + 9
     FILE_NAME = int(Qt.ItemDataRole.UserRole) + 10
+    PLACE_ID = int(Qt.ItemDataRole.UserRole) + 11
+    REASON = int(Qt.ItemDataRole.UserRole) + 12
+    USER_DECISION = int(Qt.ItemDataRole.UserRole) + 13
+    ORDER_OR_TIME = int(Qt.ItemDataRole.UserRole) + 14
+    TAGS = int(Qt.ItemDataRole.UserRole) + 15
+    SPRITE = int(Qt.ItemDataRole.UserRole) + 16
 
 
 #: Qt hands a view's model either kind of index, and an override has to accept both.
@@ -156,6 +162,23 @@ class SegmentListModel(QAbstractListModel):
             return str(segment.thumbnail) if segment.thumbnail else ""
         if role == SegmentRole.FILE_NAME:
             return name
+        if role == SegmentRole.PLACE_ID:
+            return segment.place_id if segment.place_id is not None else -1
+        if role == SegmentRole.REASON:
+            return segment.reason or ""
+        if role == SegmentRole.USER_DECISION:
+            return segment.user_decision or ""
+        if role == SegmentRole.TAGS:
+            return [tag.label for tag in segment.tags]
+        if role == SegmentRole.SPRITE:
+            return str(segment.sprite) if segment.sprite else ""
+        if role == SegmentRole.ORDER_OR_TIME:
+            # Capture order: the file's position in the project, then the offset in it.
+            # The sort has to be stable across files, and a start time alone is not,
+            # because every file starts at zero.
+            files = list(manifest.files) if manifest is not None else []
+            position = files.index(segment.file_id) if segment.file_id in files else 0
+            return position * 1e6 + segment.start_s
         return None
 
     def roleNames(self) -> dict[int, QByteArray]:  # noqa: N802 - Qt override
@@ -189,7 +212,45 @@ class SegmentFilterProxy(QSortFilterProxyModel):
         self._outcomes: set[Outcome] = set()
         self._source_classes: set[str] = set()
         self._tag: str = ""
+        self._place: int | None = None
+        self._reasons: set[str] = set()
+        self._score_range: tuple[float, float] = (0.0, 1.0)
+        self._show_rejected = False
         self.setDynamicSortFilter(True)
+
+    def set_place(self, place_id: int | None) -> None:
+        """Show one place, or every place when ``None``."""
+        self._place = place_id
+        self.invalidate()
+
+    def set_reasons(self, reasons: set[str]) -> None:
+        """Show only clips held back for these reasons. Empty means no reason filter."""
+        self._reasons = set(reasons)
+        self.invalidate()
+
+    def set_score_range(self, low: float, high: float) -> None:
+        self._score_range = (min(low, high), max(low, high))
+        self.invalidate()
+
+    def set_show_rejected(self, show: bool) -> None:
+        """Whether the clips the rules threw out are on screen at all.
+
+        Off by default: they are not candidates for the edit, and a grid that opens
+        with a third of it greyed out is a grid nobody trusts. The toggle exists
+        because a reviewer sometimes wants to know what the rules did.
+        """
+        self._show_rejected = show
+        self.invalidate()
+
+    @property
+    def show_rejected(self) -> bool:
+        return self._show_rejected
+
+    def sort_by_score(self) -> None:
+        self.sort_by(SegmentRole.SCORE, descending=True)
+
+    def sort_by_chronology(self) -> None:
+        self.sort_by(SegmentRole.ORDER_OR_TIME, descending=False)
 
     def set_outcomes(self, outcomes: set[Outcome]) -> None:
         """Show only these outcomes. An empty set shows every one of them."""
@@ -213,10 +274,26 @@ class SegmentFilterProxy(QSortFilterProxyModel):
     ) -> bool:
         model = self.sourceModel()
         index = model.index(source_row, 0, source_parent)
-        if self._outcomes and index.data(SegmentRole.OUTCOME) not in self._outcomes:
+        outcome = index.data(SegmentRole.OUTCOME)
+        if outcome == "rejected" and not self._show_rejected:
+            return False
+        if self._outcomes and outcome not in self._outcomes:
             return False
         if self._source_classes and index.data(SegmentRole.SOURCE_CLASS) not in (
             self._source_classes
         ):
             return False
-        return not (self._tag and index.data(SegmentRole.DOMINANT_TAG) != self._tag)
+        if self._tag and self._tag not in (index.data(SegmentRole.TAGS) or []):
+            return False
+        if self._place is not None and index.data(SegmentRole.PLACE_ID) != self._place:
+            return False
+        if self._reasons and index.data(SegmentRole.REASON) not in self._reasons:
+            return False
+        low, high = self._score_range
+        if low > 0.0 or high < 1.0:
+            score = index.data(SegmentRole.SCORE)
+            # A candidate with no score yet is not filtered out by a range: it has not
+            # been judged, and hiding it would hide the fact that it has not.
+            if score is not None and score >= 0.0 and not low <= score <= high:
+                return False
+        return True

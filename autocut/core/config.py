@@ -676,6 +676,36 @@ class ProvidersConfig(BaseModel):
     faces: bool = False
 
 
+class GuiConfig(BaseModel):
+    """Settings the window needs and the command line has no use for.
+
+    In the core's configuration rather than in the GUI package because every tunable
+    lives here (AGENTS.md), and because a user who finds the sliders sluggish should be
+    able to change the debounce in the same file as everything else.
+    """
+
+    slider_debounce_ms: int = Field(
+        default=250,
+        ge=0,
+        le=5000,
+        description="How long a slider has to stop moving before the edit is redone. "
+        "Long enough that a drag is one re-selection rather than forty, short enough "
+        "that the answer feels like it belongs to the gesture.",
+    )
+    reselect_worker_threshold: int = Field(
+        default=300,
+        ge=0,
+        description="Candidate count above which a re-selection goes to the worker "
+        "thread instead of running inline. Selection reads only cached arrays and "
+        "takes well under a second on a normal holiday folder, so threading it always "
+        "would cost more in complexity than it saves; a folder large enough to be felt "
+        "gets the thread.",
+    )
+    grid_thumbnail_px: int = Field(
+        default=196, ge=64, le=512, description="Card width in the review grid."
+    )
+
+
 class CacheConfig(BaseModel):
     dir: Path | None = Field(default=None, description="Defaults to the platform cache dir.")
     models_dir: Path | None = Field(
@@ -700,6 +730,7 @@ class AutocutConfig(BaseModel):
     export: ExportConfig = ExportConfig()
     providers: ProvidersConfig = ProvidersConfig()
     places: PlacesConfig = PlacesConfig()
+    gui: GuiConfig = GuiConfig()
     cache: CacheConfig = CacheConfig()
 
     @classmethod

@@ -455,6 +455,10 @@
     font-variant-numeric: tabular-nums;
   }
   .tag.reason { border-color: var(--reject); color: var(--reject); background: var(--reject-wash); }
+  /* A human decision reads louder than a machine one, because it is the one thing on
+     the card no automatic step is allowed to have changed. */
+  .tag.kept { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .tag.user-rejected { border-color: var(--reject); color: var(--reject); font-weight: 600; }
   .tag.policy { border-color: var(--ink-muted); color: var(--ink-muted); background: transparent; }
   .tag.length { font-family: var(--mono); font-variant-numeric: tabular-nums; }
   .tag.reason-length { border-color: var(--accent); color: var(--accent); }
@@ -577,6 +581,9 @@
         {% if summary.selected_count %}
         {{ summary.selected_label }} of footage across {{ summary.cluster_count }} visual clusters,
         diversity {{ "%.2f"|format(summary.diversity_lambda) if summary.diversity_lambda is not none else "not run" }}.
+        {% if summary.kept_count or summary.user_rejected_count %}
+        {{ summary.kept_count }} kept and {{ summary.user_rejected_count }} rejected by hand.
+        {% endif %}
         {% else %}
         Nothing selected yet. Run <code>autocut select</code>.
         {% endif %}
@@ -810,6 +817,14 @@
         {% if card.height_label %}<span class="tag">min {{ card.height_label }}</span>{% endif %}
         {% if card.duration_target_label %}
         <span class="tag length">{{ card.duration_target_label }}</span>
+        {% endif %}
+        {% if card.user_decision == "keep" %}
+        <span class="tag kept" title="Kept by hand in the Review screen">user kept</span>
+        {% elif card.user_decision == "reject" %}
+        <span class="tag user-rejected" title="Rejected by hand in the Review screen">user rejected</span>
+        {% endif %}
+        {% if card.user_bounds_label %}
+        <span class="tag length" title="In and out points set by hand">{{ card.user_bounds_label }}</span>
         {% endif %}
         {% if card.beats_label %}
         <span class="tag length" title="Whole beats of the measured track">{{ card.beats_label }}</span>

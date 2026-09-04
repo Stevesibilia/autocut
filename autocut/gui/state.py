@@ -19,7 +19,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QGuiApplication, QUndoCommand, QUndoStack
 
 from autocut.core.analyze import analyze_files
 from autocut.core.config import AutocutConfig
@@ -27,10 +28,11 @@ from autocut.core.describe import DescribeResult, describe_project
 from autocut.core.embeddings import EmbedResult, embed_project
 from autocut.core.events import ProgressCallback, ProgressEvent
 from autocut.core.ingest import ingest
-from autocut.core.manifest import Manifest
+from autocut.core.manifest import Manifest, Segment, UserDecision
 from autocut.core.providers import cloud_enabled, find_key
 from autocut.core.providers.openrouter import OpenRouterProvider
-from autocut.core.select import SelectionOverrides, select_clips
+from autocut.core.score import rescore
+from autocut.core.select import SelectionOverrides, SelectionResult, select_clips
 from autocut.core.tags import TagResult, tag_project
 from autocut.gui.workers import CancelFlag, CoreWorker
 
@@ -53,6 +55,84 @@ class AnalysisOutcome:
     embed: EmbedResult | None = None
     tag: TagResult | None = None
     describe: DescribeResult | None = None
+
+
+class DecisionCommand(QUndoCommand):
+    """One keep, reject or clear, undoable.
+
+    The command carries the previous decision rather than a way to recompute it,
+    because there is nothing to recompute: a decision is what a person said, and undo
+    means saying the previous thing again. Redo and undo both re-select, since the
+    edit is what the decision was about.
+    """
+
+    def __init__(self, state: ProjectState, segment_id: str, decision: UserDecision | None) -> None:
+        super().__init__(_decision_text(decision, segment_id))
+        self._state = state
+        self._segment_id = segment_id
+        self._after = decision
+        segment = state.segment(segment_id)
+        self._before = segment.user_decision if segment is not None else None
+
+    def redo(self) -> None:
+        self._state.apply_decision(self._segment_id, self._after)
+
+    def undo(self) -> None:
+        self._state.apply_decision(self._segment_id, self._before)
+
+
+class BoundsCommand(QUndoCommand):
+    """Hand set in and out points, undoable as one step."""
+
+    def __init__(
+        self, state: ProjectState, segment_id: str, bounds: tuple[float, float] | None
+    ) -> None:
+        super().__init__(f"trim {segment_id}" if bounds else f"clear trim on {segment_id}")
+        self._state = state
+        self._segment_id = segment_id
+        self._after = bounds
+        segment = state.segment(segment_id)
+        self._before = segment.user_bounds if segment is not None else None
+
+    def redo(self) -> None:
+        self._state.apply_bounds(self._segment_id, self._after)
+
+    def undo(self) -> None:
+        self._state.apply_bounds(self._segment_id, self._before)
+
+
+class SwapCommand(QUndoCommand):
+    """Keep one clip of a group and reject the current pick, in one undo step.
+
+    Two decisions rather than one, because that is what swapping a duplicate means,
+    and a user who regrets it wants both back at once.
+    """
+
+    def __init__(self, state: ProjectState, keep_id: str, reject_id: str) -> None:
+        super().__init__(f"swap {reject_id} for {keep_id}")
+        self._state = state
+        self._keep_id = keep_id
+        self._reject_id = reject_id
+        keep = state.segment(keep_id)
+        reject = state.segment(reject_id)
+        self._before = (
+            keep.user_decision if keep is not None else None,
+            reject.user_decision if reject is not None else None,
+        )
+
+    def redo(self) -> None:
+        self._state.apply_decision(self._keep_id, "keep", reselect=False)
+        self._state.apply_decision(self._reject_id, "reject")
+
+    def undo(self) -> None:
+        self._state.apply_decision(self._keep_id, self._before[0], reselect=False)
+        self._state.apply_decision(self._reject_id, self._before[1])
+
+
+def _decision_text(decision: UserDecision | None, segment_id: str) -> str:
+    if decision is None:
+        return f"clear the decision on {segment_id}"
+    return f"{decision} {segment_id}"
 
 
 class ProjectState(QObject):
@@ -83,6 +163,13 @@ class ProjectState(QObject):
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(AUTOSAVE_DEBOUNCE_MS)
         self._save_timer.timeout.connect(self.save_now)
+        self.undo_stack = QUndoStack(self)
+        self._reselect_timer = QTimer(self)
+        self._reselect_timer.setSingleShot(True)
+        self._reselect_timer.setInterval(self.config.gui.slider_debounce_ms)
+        self._reselect_timer.timeout.connect(self._run_pending_reselect)
+        self._pending_rescore = False
+        self.last_selection: SelectionResult | None = None
 
     # --- the project itself -------------------------------------------------
 
@@ -332,17 +419,140 @@ class ProjectState(QObject):
         with OpenRouterProvider(key, config) as provider:
             return describe_project(manifest, config, provider, progress)
 
-    def run_selection(self, overrides: SelectionOverrides | None = None) -> bool:
-        """Re-score and re-select. Fast enough to run on the UI thread.
+    # --- review decisions ---------------------------------------------------
 
-        Selection reads the metrics already in the manifest and touches no file, so it
-        is the one stage that does not need a worker. That is what makes the live
-        slider of SPEC.md section 11 possible: move it, re-select, emit one signal.
+    def segment(self, segment_id: str) -> Segment | None:
+        manifest = self.manifest
+        return manifest.segments.get(segment_id) if manifest is not None else None
+
+    def set_decision(self, segment_id: str, decision: UserDecision | None) -> bool:
+        """Keep, reject or clear, through the undo stack. False while a stage runs."""
+        if self.manifest is None or self.is_running:
+            return False
+        self.undo_stack.push(DecisionCommand(self, segment_id, decision))
+        return True
+
+    def toggle_keep(self, segment_id: str) -> bool:
+        """Space on a card: keep it, or clear the keep it already has."""
+        segment = self.segment(segment_id)
+        if segment is None:
+            return False
+        return self.set_decision(segment_id, None if segment.kept else "keep")
+
+    def set_user_bounds(self, segment_id: str, bounds: tuple[float, float] | None) -> bool:
+        if self.manifest is None or self.is_running:
+            return False
+        self.undo_stack.push(BoundsCommand(self, segment_id, bounds))
+        return True
+
+    def swap_pick(self, keep_id: str, reject_id: str) -> bool:
+        """Take the other clip of a group: one undo step, one re-selection."""
+        if self.manifest is None or self.is_running:
+            return False
+        self.undo_stack.push(SwapCommand(self, keep_id, reject_id))
+        return True
+
+    def apply_decision(
+        self, segment_id: str, decision: UserDecision | None, reselect: bool = True
+    ) -> None:
+        """Write the decision and re-select. Called by the undo commands, not directly."""
+        segment = self.segment(segment_id)
+        if segment is None:
+            return
+        segment.user_decision = decision
+        self.segments_changed.emit([segment_id])
+        if reselect:
+            self.request_reselect(immediate=True)
+
+    def apply_bounds(self, segment_id: str, bounds: tuple[float, float] | None) -> None:
+        segment = self.segment(segment_id)
+        if segment is None:
+            return
+        if bounds is None:
+            segment.user_start_s = segment.user_end_s = None
+        else:
+            segment.user_start_s, segment.user_end_s = bounds
+        self.segments_changed.emit([segment_id])
+        self.request_reselect(immediate=True)
+
+    # --- re-scoring and re-selecting ---------------------------------------
+
+    def request_reselect(self, rescore_first: bool = False, immediate: bool = False) -> None:
+        """Redo the edit, coalescing a burst of slider moves into one run.
+
+        A drag emits a value per pixel and each one would otherwise be a selection, so
+        the timer is the whole point. A decision is a single deliberate act and asks for
+        ``immediate``: waiting a quarter of a second to see a rejected clip leave the
+        grid feels like a bug.
+        """
+        self._pending_rescore = self._pending_rescore or rescore_first
+        if self.is_running:
+            return
+        self._reselect_timer.setInterval(self.config.gui.slider_debounce_ms)
+        if immediate:
+            self._reselect_timer.stop()
+            self._run_pending_reselect()
+            return
+        self._reselect_timer.start()
+
+    def _run_pending_reselect(self) -> None:
+        rescore_first = self._pending_rescore
+        self._pending_rescore = False
+        self.run_selection(rescore_first=rescore_first)
+
+    def candidate_count(self) -> int:
+        manifest = self.manifest
+        if manifest is None:
+            return 0
+        return sum(1 for segment in manifest.segments.values() if segment.outcome != "rejected")
+
+    def reselect_needs_worker(self) -> bool:
+        """Whether this project is big enough to hand selection to the thread.
+
+        Measured rather than assumed, which is why it is a threshold and not a rule:
+        selection reads cached arrays only and takes well under a second on a normal
+        folder, so threading every re-selection would buy nothing and cost the
+        simplicity of a synchronous slider.
+        """
+        threshold = self.config.gui.reselect_worker_threshold
+        return threshold > 0 and self.candidate_count() > threshold
+
+    def run_selection(
+        self,
+        overrides: SelectionOverrides | None = None,
+        rescore_first: bool = False,
+    ) -> bool:
+        """Re-score and re-select, inline or on the worker depending on the size.
+
+        Selection reads the metrics already in the manifest and touches no file, so on
+        a normal project it is the one stage that needs no worker, and that is what
+        makes the live slider of SPEC.md section 11 possible: move it, re-select, emit
+        one signal. A project past ``gui.reselect_worker_threshold`` candidates goes
+        through the thread instead, because a slider that freezes the window is worse
+        than a slider that answers a moment later.
         """
         manifest = self.manifest
+        config = self.config
         if manifest is None or self.is_running:
             return False
-        select_clips(manifest, self.config, overrides)
+
+        if self.reselect_needs_worker():
+
+            def work(_progress: ProgressCallback) -> SelectionResult:
+                if rescore_first:
+                    rescore(manifest, config.weights)
+                return select_clips(manifest, config, overrides)
+
+            return self.run_stage("selection", work)
+
+        cursor = Qt.CursorShape.BusyCursor
+        QGuiApplication.setOverrideCursor(cursor)
+        try:
+            if rescore_first:
+                rescore(manifest, config.weights)
+            self.last_selection = select_clips(manifest, config, overrides)
+        finally:
+            QGuiApplication.restoreOverrideCursor()
         self.selection_changed.emit()
         self.segments_changed.emit([])
         self.schedule_save()

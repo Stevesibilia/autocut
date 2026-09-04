@@ -349,9 +349,8 @@ def _set_final_bounds(segment: Segment, source_duration: float, config: AutocutC
     frame, so the window keeps the bound and the segment records that the grid was out
     of reach.
     """
-    start = segment.trimmed_start_s if segment.trimmed_start_s is not None else segment.start_s
-    stop = segment.trimmed_end_s if segment.trimmed_end_s is not None else segment.end_s
-    centre = segment.best_center_s if segment.best_center_s is not None else (start + stop) / 2.0
+    start, stop = segment.effective_bounds
+    centre = segment.effective_center
     sample_fps = config.analysis.sample_fps
     latest = stop - source_duration
 

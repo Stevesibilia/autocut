@@ -102,9 +102,16 @@ def test_the_navigation_switches_the_visible_screen(window: MainWindow) -> None:
     assert window.stack.currentWidget() is window.screens["review"]
 
 
-def test_the_three_later_screens_name_the_change_that_fills_them(window: MainWindow) -> None:
+def test_the_review_screen_is_no_longer_a_placeholder(window: MainWindow) -> None:
+    """It arrived with m5-gui-review, so the window holds the real screen now."""
+    screen = window.screens["review"]
+
+    assert not isinstance(screen, PlaceholderScreen)
+    assert screen.objectName() == "screen-review"
+
+
+def test_the_two_later_screens_name_the_change_that_fills_them(window: MainWindow) -> None:
     for key, change in (
-        ("review", "m5-gui-review"),
         ("soundtrack", "m5-gui-soundtrack-export"),
         ("export", "m5-gui-soundtrack-export"),
     ):

@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-from autocut.core.cache import CacheEntry, read_entry, write_entry
+from autocut.core.cache import CacheEntry, read_entry, shot_index, write_entry
 from autocut.core.config import AutocutConfig
 from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
 from autocut.core.hwaccel import SOFTWARE, Hwaccel
@@ -330,11 +330,11 @@ def _build_segments(
                 metrics=_aggregate(entry, indices, telemetry_by_file[file_id], window),
             )
             segments.append(segment)
-            shot_index = _shot_of(entry.shot_bounds, span.start_s)
-            if entry.thumb_frames is not None and shot_index < entry.thumb_frames.shape[0]:
-                frames_by_segment[segment_id] = entry.thumb_frames[shot_index]
-            if shot_index < len(entry.sprites):
-                sprites_by_segment[segment_id] = entry.sprites[shot_index]
+            shot = shot_index(entry.shot_bounds, span.start_s)
+            if entry.thumb_frames is not None and shot < entry.thumb_frames.shape[0]:
+                frames_by_segment[segment_id] = entry.thumb_frames[shot]
+            if shot < len(entry.sprites):
+                sprites_by_segment[segment_id] = entry.sprites[shot]
 
     for segment in segments:
         assert segment.metrics is not None
@@ -366,14 +366,6 @@ def _build_segments(
 
     for segment in segments:
         manifest.segments[segment.id] = segment
-
-
-def _shot_of(shot_bounds: list[tuple[float, float]], start_s: float) -> int:
-    """Index of the detected shot a span came from. Splits share their shot's frames."""
-    for index, (start, stop) in enumerate(shot_bounds):
-        if start <= start_s < stop:
-            return index
-    return max(len(shot_bounds) - 1, 0)
 
 
 def _aggregate(

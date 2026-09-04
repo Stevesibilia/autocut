@@ -30,8 +30,8 @@ SHORT = "short"
 
 
 def trimmed_span(segment: Segment) -> float:
-    start = segment.trimmed_start_s if segment.trimmed_start_s is not None else segment.start_s
-    stop = segment.trimmed_end_s if segment.trimmed_end_s is not None else segment.end_s
+    """How much of the shot is available. Hand set bounds are the span when they exist."""
+    start, stop = segment.effective_bounds
     return max(stop - start, 0.0)
 
 
@@ -90,6 +90,10 @@ def assign_durations(
 
     if override is not None:
         for segment in selected:
+            if segment.user_bounds is not None:
+                segment.target_duration_s = trimmed_span(segment)
+                segment.duration_reason = "user"
+                continue
             span = trimmed_span(segment)
             # Bounded by the shot and by nothing else. The flag exists to ask for one
             # length everywhere, so the configured minimum and maximum stay out of it.
@@ -98,23 +102,32 @@ def assign_durations(
         _record_total(manifest, selected)
         return
 
+    # A hand trimmed clip is already the length the reviewer asked for. It takes no
+    # part in the class base, the hero bonus, the alternation or the total scaling,
+    # because every one of those would move a boundary somebody set on purpose.
+    by_hand = [segment for segment in selected if segment.user_bounds is not None]
+    automatic = [segment for segment in selected if segment.user_bounds is None]
+    for segment in by_hand:
+        segment.target_duration_s = trimmed_span(segment)
+        segment.duration_reason = "user"
+
     reasons: dict[str, DurationReason] = {}
     bases: dict[str, float] = {}
-    for segment in selected:
+    for segment in automatic:
         base = base_duration(manifest, segment, config)
         bases[segment.id] = base
         segment.target_duration_s = base * score_factor(segment.score, config)
         reasons[segment.id] = "base"
 
-    _apply_heroes(selected, config, reasons)
-    _clamp_all(selected, config, reasons)
+    _apply_heroes(automatic, config, reasons)
+    _clamp_all(automatic, config, reasons)
 
     if config.selection.alternate_durations:
-        _alternate(selected, config, bases, reasons)
+        _alternate(automatic, config, bases, reasons)
     if config.selection.target_total_seconds:
-        _scale_to_total(selected, config, reasons)
+        _scale_to_total(automatic, config, reasons)
 
-    for segment in selected:
+    for segment in automatic:
         segment.duration_reason = reasons[segment.id]
     _record_total(manifest, selected)
 

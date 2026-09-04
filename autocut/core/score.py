@@ -28,7 +28,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from autocut.core.config import ScoringWeights
-from autocut.core.manifest import Metrics
+from autocut.core.manifest import Manifest, Metrics, Segment
 
 # Metric name on Metrics, weight name on ScoringWeights, and whether lower is better.
 SCORED_METRICS: tuple[tuple[str, str, bool], ...] = (
@@ -63,6 +63,35 @@ def rank_normalize(values: np.ndarray) -> np.ndarray:
         np.add.at(counts, inverse, 1.0)
         ranks = (sums / counts)[inverse]
     return ranks / (count - 1)
+
+
+def rescore(manifest: Manifest, weights: ScoringWeights) -> int:
+    """Recompute every segment's score from the metrics already in the manifest.
+
+    Analysis scores the segments once, with the weights of that run. Moving a weight
+    afterwards has to change the scores, and the metrics needed are all in the manifest
+    already, so this touches no cache entry and decodes nothing: it is the cheap half
+    of what a slider does before selection runs again.
+
+    Returns how many segments were scored. Ranking is per class, as in analysis, which
+    is why the class travels with each metric set.
+    """
+    scored = [
+        (_class_of(manifest, segment), segment.metrics)
+        for segment in manifest.segments.values()
+        if segment.metrics is not None
+    ]
+    if not scored:
+        return 0
+    segments = [segment for segment in manifest.segments.values() if segment.metrics is not None]
+    for segment, score in zip(segments, score_metrics(scored, weights), strict=True):
+        segment.score = score
+    return len(segments)
+
+
+def _class_of(manifest: Manifest, segment: Segment) -> str:
+    source = manifest.files.get(segment.file_id)
+    return source.source_class if source is not None else "generic"
 
 
 def score_metrics(entries: Sequence[tuple[str, Metrics]], weights: ScoringWeights) -> list[float]:

@@ -91,6 +91,8 @@ class Card:
     duration_reason: str | None
     beats: int | None
     beats_label: str | None
+    user_decision: str | None
+    user_bounds_label: str | None
     snapped: bool
     place_id: int | None
     place_label: str | None
@@ -159,6 +161,8 @@ class Summary:
     selected_label: str
     exported_count: int
     snapped_count: int
+    kept_count: int
+    user_rejected_count: int
     places: list[PlaceSummary]
     tags: list[TagSummary]
     cloud_model: str | None
@@ -292,6 +296,12 @@ def _card(segment: Segment, source: SourceFile | None, index: int, out_dir: Path
         duration_reason=segment.duration_reason,
         beats=segment.beats,
         beats_label=f"{segment.beats} beats" if segment.beats else None,
+        user_decision=segment.user_decision,
+        user_bounds_label=(
+            f"{bounds[0]:.1f} to {bounds[1]:.1f} s by hand"
+            if (bounds := segment.user_bounds) is not None
+            else None
+        ),
         snapped=segment.snapped,
         place_id=segment.place_id,
         place_label=f"place {segment.place_id}" if segment.place_id is not None else None,
@@ -458,6 +468,8 @@ def build_summary(manifest: Manifest, cards: list[Card], out_dir: Path | None = 
         selected_label=duration_label(selected_seconds),
         exported_count=sum(1 for card in cards if card.exported_name),
         snapped_count=sum(1 for card in cards if card.snapped),
+        kept_count=sum(1 for card in cards if card.user_decision == "keep"),
+        user_rejected_count=sum(1 for card in cards if card.user_decision == "reject"),
         places=build_places(manifest, cards),
         tags=tags,
         # "none" is what a run that made no cloud call records; the header shows the

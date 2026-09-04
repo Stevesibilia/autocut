@@ -833,6 +833,25 @@ class GuiConfig(BaseModel):
     grid_thumbnail_px: int = Field(
         default=196, ge=64, le=512, description="Card width in the review grid."
     )
+    montage_height: int = Field(
+        default=360,
+        ge=144,
+        le=1080,
+        description="Height of the montage preview. Low on purpose: the montage exists "
+        "to judge the sequence and the cuts, and a 4K one would take longer to build "
+        "than the export it is meant to come before.",
+    )
+    montage_preset: str = Field(
+        default="ultrafast",
+        description="x264 preset for the montage parts. Speed over size: the file is "
+        "watched once and rebuilt whenever the edit changes.",
+    )
+    montage_crf: int = Field(
+        default=28,
+        ge=0,
+        le=51,
+        description="Quality of the montage parts. Lower than the export's on purpose.",
+    )
 
 
 class CacheConfig(BaseModel):

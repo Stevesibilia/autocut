@@ -538,6 +538,27 @@ class Soundtrack(BaseModel):
     beatmap_path: Path | None = None
 
 
+class PreviewInfo(BaseModel):
+    """What montage preview exists for this project, and what it was made from.
+
+    The fingerprint is the whole point: rendering 29 clips takes seconds, and the edit
+    usually has not changed since the last time somebody pressed Play all.
+    """
+
+    fingerprint: str | None = Field(
+        default=None,
+        description="Hash of the selection, the effective windows, the frame rate, the "
+        "height and the track. A montage whose fingerprint no longer matches the "
+        "project is stale.",
+    )
+    path: Path | None = None
+    index_path: Path | None = None
+    duration_s: float = 0.0
+    clips: int = 0
+    has_audio: bool = False
+    built_at: datetime | None = None
+
+
 class Manifest(BaseModel):
     """Root document written to ``manifest.json``."""
 
@@ -549,6 +570,10 @@ class Manifest(BaseModel):
     output_dir: Path
     files: dict[str, SourceFile] = Field(default_factory=dict)
     segments: dict[str, Segment] = Field(default_factory=dict)
+    preview: PreviewInfo = Field(
+        default_factory=PreviewInfo,
+        description="The montage preview built from the current edit, when one is.",
+    )
     places: dict[str, PlaceInfo] = Field(
         default_factory=dict,
         description="Keyed by the place id as a string, because JSON object keys are "

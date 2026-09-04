@@ -126,6 +126,17 @@ def title_for(signals: SoundtrackSignals, row: GenreRow) -> str:
     return ", ".join(part.lower() for part in parts)
 
 
+def _section_moods(row: GenreRow, chosen: str, count: int) -> list[str]:
+    """One mood word per section, the variant's own first, then the row's others.
+
+    The first version used the same word in every section, so a five section structure
+    read "sunny" five times. A tag is meant to cover a dimension the others do not, and
+    a repeated mood wastes four of them.
+    """
+    pool = [chosen, *[word for word in (*row.mood, *row.mood_alternates) if word != chosen]]
+    return [pool[index % len(pool)] for index in range(count)]
+
+
 def _variant_palette(row: GenreRow, index: int) -> tuple[list[str], str]:
     """The instruments and the mood word this variant uses.
 
@@ -155,7 +166,9 @@ def build_description(row: GenreRow, bpm: int, instruments: list[str], mood: str
     return ", ".join(parts)
 
 
-def build_structure(shape: str, instruments: list[str], mood: str) -> list[str]:
+def build_structure(
+    shape: str, instruments: list[str], mood: str, moods: list[str] | None = None
+) -> list[str]:
     """One bracketed tag per line, ending in ``[end]``.
 
     Each section takes its energy word first, then cycles the instrument nouns and the
@@ -173,10 +186,13 @@ def build_structure(shape: str, instruments: list[str], mood: str) -> list[str]:
         instrument_noun(instrument) for instrument in instruments if instrument_noun(instrument)
     ]
     skeleton = SKELETONS.get(shape, SKELETONS["flat"])
+    # One mood word per section rather than one for the whole structure.
+    section_moods = moods if moods is not None else [mood] * len(skeleton)
     lines: list[str] = []
     noun_cursor = 0
-    for section, count in skeleton:
+    for index, (section, count) in enumerate(skeleton):
         energy = ENERGY_WORDS.get(section, ("steady", "open", "clear"))
+        section_mood = section_moods[index % len(section_moods)] if section_moods else mood
         used: list[str] = []
         for position in range(count):
             if position == 0:
@@ -185,13 +201,13 @@ def build_structure(shape: str, instruments: list[str], mood: str) -> list[str]:
                 modifier = nouns[noun_cursor % len(nouns)]
                 noun_cursor += 1
             elif position == 2:
-                modifier = mood
+                modifier = section_mood
             else:
                 modifier = energy[min(position - 2, len(energy) - 1)]
             if modifier in used:
                 # Never repeat a modifier inside one section: the rules ask each tag to
                 # cover a different dimension.
-                pool = [*energy, *nouns, mood]
+                pool = [*energy, *nouns, section_mood, mood]
                 modifier = next((word for word in pool if word not in used), modifier)
             used.append(modifier)
             lines.append(f"[{modifier} {section}]")
@@ -209,11 +225,15 @@ def build_prompt(
     """One complete prompt. Validation is the caller's job and is never skipped."""
     instruments, mood = _variant_palette(row, variant)
     shape = energy_shape(signals)
+    skeleton = SKELETONS.get(shape, SKELETONS["flat"])
+    moods = _section_moods(row, mood, len(skeleton))
     return PromptVariant(
         title=title_for(signals, row),
+        # The Description names the variant's own mood; the Structure moves through the
+        # row's others section by section.
         description=build_description(row, bpm, instruments, mood),
-        structure=build_structure(shape, instruments, mood),
-        mood=[mood],
+        structure=build_structure(shape, instruments, mood, moods),
+        mood=moods,
         instruments=instruments,
         source="template",
     )

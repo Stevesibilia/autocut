@@ -1,0 +1,364 @@
+"""Making every clip last a whole number of beats of the actual track.
+
+The two-pass loop of SPEC.md section 7.6 closes here. AutoCut proposed a BPM, the user
+generated a track, and the track came back at whatever tempo Suno felt like. This module
+measures what actually arrived and rounds the lengths the edit already chose onto its
+beat grid, so clips placed back to back land on the music and CapCut's own beat sync has
+nothing left to fix.
+
+It rounds rather than re-derives, which is the contract `m3-durations` set: the rhythm
+decisions of the edit, the class base and the hero bonus and the alternation, are all
+kept and only nudged onto the nearest legal beat count. A clip whose span is too short
+for that count falls back to a smaller one instead of reaching outside its own shot.
+
+No video is decoded. The audio goes through ffmpeg because Suno exports containers
+librosa has no business opening.
+"""
+
+from __future__ import annotations
+
+import subprocess
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import numpy as np
+
+from autocut.core.config import AutocutConfig
+from autocut.core.durations import heroes, trimmed_span
+from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
+from autocut.core.ffmpeg_cmd import resolve_target_fps, slow_motion_ratio
+from autocut.core.manifest import Manifest, Segment
+
+#: librosa works on mono at a modest rate, and a beat tracker gains nothing from more.
+SAMPLE_RATE = 22050
+DECODE_TIMEOUT_S = 300.0
+
+BEATMAP_FILENAME = "beatmap.txt"
+
+#: Half and double are the two mistakes a beat tracker actually makes, because a
+#: four-on-the-floor bar reads equally well at either tempo.
+TEMPO_FACTORS: tuple[tuple[float, str], ...] = ((0.5, "half"), (2.0, "double"))
+
+
+class AudioUnavailableError(RuntimeError):
+    """The track could not be decoded, so there is nothing to measure."""
+
+
+@dataclass(slots=True)
+class Track:
+    """What the audio measured."""
+
+    bpm: float
+    beats_s: list[float] = field(default_factory=list)
+    duration_s: float = 0.0
+    tempo_estimate: float = 0.0
+    """What librosa's own tempo scalar said, kept because it can disagree with its beats."""
+
+    @property
+    def beat_seconds(self) -> float:
+        return 60.0 / self.bpm if self.bpm > 0 else 0.0
+
+
+@dataclass(slots=True)
+class Comparison:
+    """How the track's tempo relates to the one the prompt asked for."""
+
+    status: str
+    note: str | None = None
+
+    @property
+    def agreed(self) -> bool:
+        return self.status in ("agreed", "no proposal")
+
+
+@dataclass(slots=True)
+class QuantizeResult:
+    """What rounding the durations onto the beat grid did."""
+
+    bpm: float = 0.0
+    clips: int = 0
+    clamped: int = 0
+    total_before_s: float = 0.0
+    total_after_s: float = 0.0
+    per_multiple: dict[int, int] = field(default_factory=dict)
+    mean_shift_s: float = 0.0
+
+    @property
+    def drift_s(self) -> float:
+        return self.total_after_s - self.total_before_s
+
+
+def decode_audio(path: Path, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
+    """The track as mono float samples, decoded by ffmpeg.
+
+    Raw ``f32le`` rather than a WAV stream as the design suggested: the pipeline is the
+    same ffmpeg call, and a bare float stream needs no header parser and no second
+    audio library to read one from a pipe.
+    """
+    command = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-nostdin",
+        "-i",
+        str(path),
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        str(sample_rate),
+        "-f",
+        "f32le",
+        "-",
+    ]
+    try:
+        completed = subprocess.run(
+            command, capture_output=True, timeout=DECODE_TIMEOUT_S, check=False
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise AudioUnavailableError(f"could not run ffmpeg on {path.name}: {exc}") from exc
+    if completed.returncode != 0 or not completed.stdout:
+        detail = _first_line(completed.stderr.decode("utf-8", "replace")) or "no audio decoded"
+        raise AudioUnavailableError(f"could not decode {path.name}: {detail}")
+    return np.frombuffer(completed.stdout, dtype=np.float32)
+
+
+def _first_line(text: str) -> str:
+    for line in text.splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def measure_track(samples: np.ndarray, sample_rate: int = SAMPLE_RATE) -> Track:
+    """BPM and beat positions, from librosa.
+
+    The BPM is taken from the spacing of the beats librosa found, not from the tempo
+    scalar it returns alongside them. The two disagree: on the 120 BPM click fixture the
+    scalar reads 117.5 while the beats it placed sit 0.5002 s apart, which is 119.95.
+    The scalar comes off a tempogram whose bins are coarse, and it is the beat grid that
+    the clip lengths are rounded onto, so the grid is what the number has to describe.
+    The gaps are averaged after dropping the outliers, which is what the quantisation
+    demands: librosa places beats on analysis frames 23 ms apart, so on a steady click
+    the gaps alternate between 0.4876 s and 0.5109 s and neither the median nor the mode
+    is the tempo. Averaging cancels that, and trimming first means a missed onset, which
+    shows up as one doubled gap, does not drag the answer with it.
+    """
+    if samples.size == 0:
+        raise AudioUnavailableError("the track decoded to no samples")
+    import librosa
+
+    tempo, beats = librosa.beat.beat_track(
+        y=samples.astype(np.float32), sr=sample_rate, units="time"
+    )
+    moments = [round(float(moment), 4) for moment in np.atleast_1d(beats)]
+    estimate = float(np.atleast_1d(tempo)[0])
+    return Track(
+        bpm=bpm_from_beats(moments, fallback=estimate),
+        beats_s=moments,
+        duration_s=round(samples.size / sample_rate, 3),
+        tempo_estimate=round(estimate, 1),
+    )
+
+
+#: A gap further than this from the median is a missed or doubled beat, not a tempo.
+GAP_TOLERANCE = 0.5
+
+
+def bpm_from_beats(beats_s: list[float], fallback: float) -> float:
+    """Tempo implied by the beat spacing, or ``fallback`` when there is no spacing."""
+    if len(beats_s) < 2:
+        return round(fallback, 1)
+    gaps = np.diff(np.array(beats_s, dtype=np.float64))
+    gaps = gaps[gaps > 0]
+    if gaps.size == 0:
+        return round(fallback, 1)
+    middle = float(np.median(gaps))
+    kept = gaps[np.abs(gaps - middle) <= middle * GAP_TOLERANCE]
+    spacing = float(kept.mean()) if kept.size else middle
+    return round(60.0 / spacing, 1) if spacing > 0 else round(fallback, 1)
+
+
+def compare_bpm(proposed: float | None, effective: float, tolerance: float) -> Comparison:
+    """Whether the track came back at the tempo the prompt asked for.
+
+    Half and double are called out by name because they are the tracker's usual mistake
+    rather than the track's, and because the fix is one flag the user can pass.
+    """
+    if proposed is None or proposed <= 0:
+        return Comparison(status="no proposal", note="no BPM was proposed, nothing to compare")
+    if abs(effective - proposed) <= tolerance:
+        return Comparison(
+            status="agreed",
+            note=f"measured {effective:g} against a proposed {proposed:g}",
+        )
+    for factor, name in TEMPO_FACTORS:
+        if abs(effective - proposed * factor) <= tolerance:
+            return Comparison(
+                status=name,
+                note=(
+                    f"the track measures {effective:g}, which is {name} the proposed "
+                    f"{proposed:g}. Beat trackers do this to a steady four to the floor. "
+                    f"Pass --bpm {proposed:g} to use the proposed tempo instead."
+                ),
+            )
+    return Comparison(
+        status="drifted",
+        note=(
+            f"the track measures {effective:g} against a proposed {proposed:g}, more "
+            f"than {tolerance:g} apart. The clips are cut to {effective:g}."
+        ),
+    )
+
+
+def choose_multiple(beats_wanted: float, multiples: list[int], round_up_on_tie: bool) -> int:
+    """The legal beat count nearest what the clip asked for.
+
+    A hero clip takes the longer side of a tie and everything else the shorter, so the
+    clips the edit already decided to dwell on keep dwelling.
+    """
+    ordered = sorted({m for m in multiples if m > 0}) or [4]
+    best = ordered[0]
+    best_distance = abs(beats_wanted - best)
+    for multiple in ordered[1:]:
+        distance = abs(beats_wanted - multiple)
+        if distance < best_distance - 1e-9:
+            best, best_distance = multiple, distance
+        elif abs(distance - best_distance) <= 1e-9 and round_up_on_tie and multiple > best:
+            best = multiple
+    return best
+
+
+def snap_to_grid(value: float, sample_fps: float) -> float:
+    """The nearest instant the analysis actually sampled.
+
+    Cutting between two sampled frames means cutting where nothing was measured, so the
+    start lands on the grid. The duration is added afterwards and stays exact.
+    """
+    if sample_fps <= 0:
+        return value
+    return round(value * sample_fps) / sample_fps
+
+
+def quantize_durations(
+    manifest: Manifest,
+    bpm: float,
+    config: AutocutConfig,
+    progress: ProgressCallback = null_progress,
+) -> QuantizeResult:
+    """Round every selected clip onto the beat grid and set its final bounds."""
+    selected = sorted(
+        (s for s in manifest.segments.values() if s.outcome == "selected"),
+        key=lambda s: (s.order if s.order is not None else 0, s.id),
+    )
+    result = QuantizeResult(bpm=bpm)
+    if not selected or bpm <= 0:
+        return result
+
+    hero_ids = heroes(selected, config)
+    multiples = list(config.soundtrack.beat_multiples)
+    beat = 60.0 / bpm
+    target_fps = resolve_target_fps(manifest, config)
+    shifts: list[float] = []
+
+    for position, segment in enumerate(selected, start=1):
+        before = segment.target_duration_s or config.selection.target_duration_seconds
+        result.total_before_s += before
+        source = manifest.files.get(segment.file_id)
+        ratio = slow_motion_ratio(source, target_fps, config) if source is not None else 1
+        span = trimmed_span(segment)
+
+        wanted = before / beat
+        multiple = choose_multiple(wanted, multiples, round_up_on_tie=segment.id in hero_ids)
+        clamped = False
+        # The window read from the source is shorter than the output when the clip is
+        # slowed down, so the span it has to fit in is the source span.
+        while multiple * beat / ratio > span and multiple > min(multiples):
+            smaller = [m for m in sorted(multiples) if m < multiple]
+            if not smaller:
+                break
+            multiple = smaller[-1]
+            clamped = True
+        duration = multiple * beat
+        if duration / ratio > span > 0:
+            # Not even the smallest legal count fits, so the shot decides the length.
+            duration = span * ratio
+            clamped = True
+
+        # Not rounded: the whole point is that the length is exactly this many beats,
+        # and the report formats it for display.
+        segment.target_duration_s = duration
+        segment.beats = multiple
+        segment.duration_reason = "beat"
+        _set_final_bounds(segment, duration / ratio, config)
+        result.clips += 1
+        result.clamped += int(clamped)
+        result.total_after_s += duration
+        result.per_multiple[multiple] = result.per_multiple.get(multiple, 0) + 1
+        shifts.append(abs(duration - before))
+        progress(ProgressEvent(stage="sync", current=position, total=len(selected)))
+
+    result.mean_shift_s = round(sum(shifts) / len(shifts), 4) if shifts else 0.0
+    result.per_multiple = dict(sorted(result.per_multiple.items()))
+    result.total_before_s = round(result.total_before_s, 3)
+    result.total_after_s = round(result.total_after_s, 3)
+    return result
+
+
+def _set_final_bounds(segment: Segment, source_duration: float, config: AutocutConfig) -> None:
+    """Centre the window on the best frames, snap it to the grid, keep it in the shot."""
+    start = segment.trimmed_start_s if segment.trimmed_start_s is not None else segment.start_s
+    stop = segment.trimmed_end_s if segment.trimmed_end_s is not None else segment.end_s
+    centre = segment.best_center_s if segment.best_center_s is not None else (start + stop) / 2.0
+
+    begin = snap_to_grid(centre - source_duration / 2.0, config.analysis.sample_fps)
+    if begin + source_duration > stop:
+        begin = stop - source_duration
+    begin = max(begin, start)
+    segment.final_start_s = begin
+    segment.final_end_s = min(begin + source_duration, stop)
+
+
+def reset_final_bounds(manifest: Manifest) -> None:
+    """Forget a previous sync, so a re-run is a fresh measurement and not a drift."""
+    for segment in manifest.segments.values():
+        segment.final_start_s = None
+        segment.final_end_s = None
+        segment.beats = None
+
+
+def write_beatmap(manifest: Manifest, track: Track, output_dir: Path) -> Path:
+    """``beatmap.txt``: the beat times, then where each clip starts in the edit.
+
+    Enough to line the clips up by hand in CapCut if anything drifts, which is the only
+    reason it exists: nothing in AutoCut reads it back.
+    """
+    from autocut.core.naming import clip_name
+
+    lines = [
+        f"# {track.bpm:g} bpm, {len(track.beats_s)} beats, {track.duration_s:g} s of audio",
+        "# beat times in seconds",
+    ]
+    lines += [f"{moment:.4f}" for moment in track.beats_s]
+    lines += ["", "# order  start  beats  name"]
+    selected = sorted(
+        (s for s in manifest.segments.values() if s.outcome == "selected"),
+        key=lambda s: (s.order if s.order is not None else 0, s.id),
+    )
+    cursor = 0.0
+    for segment in selected:
+        source = manifest.files.get(segment.file_id)
+        duration = segment.target_duration_s or 0.0
+        name = (
+            clip_name(segment, source, segment.order or 0, duration)
+            if source is not None
+            else segment.id
+        )
+        lines.append(f"{segment.order or 0:03d}  {cursor:8.3f}  {segment.beats or 0:>3}  {name}")
+        cursor += duration
+    lines += ["", f"# edit length {cursor:.3f} s"]
+
+    path = output_dir / BEATMAP_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path

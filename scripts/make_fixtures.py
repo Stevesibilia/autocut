@@ -131,6 +131,21 @@ def main() -> int:
         str(OUT / "hevc_10bit.mp4"),
     )
 
+    # Beat sync needs a track whose tempo is known exactly, so the fixture is a click
+    # at 120 BPM: one beat every 0.5 s. A real Suno track is not reproducible and a
+    # sine tone has no onsets for a beat tracker to find.
+    ff(
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=1000:sample_rate=22050:duration=0.03",
+        "-af",
+        "apad=whole_dur=0.5,aloop=loop=39:size=11025:start=0",
+        "-c:a",
+        "pcm_s16le",
+        str(OUT / "click_120bpm.wav"),
+    )
+
     srt = OUT / "drone_telemetry.srt"
     dji_srt(srt, DUR, heights=[0.5, 1.0, 3.0, 25.0, 30.0, 2.0])
     ff(

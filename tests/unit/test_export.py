@@ -668,3 +668,43 @@ def _ffprobe(path: Path, entries: str, video_only: bool = False) -> str:
         command += ["-select_streams", "v:0"]
     command += ["-show_entries", entries, "-of", "csv=p=0", str(path)]
     return subprocess.run(command, capture_output=True, text=True, check=True).stdout
+
+
+def test_beat_bounds_win_over_the_target_duration(tmp_path: Path) -> None:
+    """The scenario from the spec: 2.2 s assigned, 2.0 s from beat sync, 2.0 s exported."""
+    manifest = project(tmp_path)
+    source = add_file(manifest, "a")
+    segment = add_segment(manifest, "a:0", "a", center=3.0, duration=2.2)
+    segment.final_start_s = 2.0
+    segment.final_end_s = 4.0
+
+    plan = plan_export(segment, source, manifest, AutocutConfig())
+
+    assert plan.source_start_s == pytest.approx(2.0)
+    assert plan.source_duration_s == pytest.approx(2.0)
+    assert plan.out_duration_s == pytest.approx(2.0)
+
+
+def test_without_beat_bounds_the_target_duration_still_decides(tmp_path: Path) -> None:
+    manifest = project(tmp_path)
+    source = add_file(manifest, "a")
+    segment = add_segment(manifest, "a:0", "a", center=3.0, duration=2.2)
+
+    plan = plan_export(segment, source, manifest, AutocutConfig())
+
+    assert plan.out_duration_s == pytest.approx(2.2)
+    assert plan.source_start_s == pytest.approx(1.9)
+
+
+def test_half_written_beat_bounds_are_ignored(tmp_path: Path) -> None:
+    """A start with no end, or an end before its start, is not a window."""
+    manifest = project(tmp_path)
+    source = add_file(manifest, "a")
+    segment = add_segment(manifest, "a:0", "a", center=3.0, duration=2.2)
+    segment.final_start_s = 2.0
+
+    config = AutocutConfig()
+    assert plan_export(segment, source, manifest, config).out_duration_s == pytest.approx(2.2)
+
+    segment.final_end_s = 1.0
+    assert plan_export(segment, source, manifest, config).out_duration_s == pytest.approx(2.2)

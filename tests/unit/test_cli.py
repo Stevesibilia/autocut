@@ -19,19 +19,23 @@ def test_help_lists_commands() -> None:
         assert cmd in result.stdout
 
 
-def test_unimplemented_stage_exits_2(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    """Stages that land in later milestones say so rather than failing obscurely.
+def test_every_command_is_implemented() -> None:
+    """m4-beat-sync implemented sync, the last stub, so nothing prints a stage notice."""
+    from autocut.cli import main
 
-    ``soundtrack`` left this list when m4-soundtrack-prompt implemented it; ``sync`` is
-    the last stub and goes with m4-beat-sync.
-    """
-    result = runner.invoke(app, ["sync", str(tmp_path), "--audio", str(tmp_path / "track.mp3")])
-    assert result.exit_code == 2
-    assert "not implemented" in result.stdout
+    assert not hasattr(main, "_not_implemented")
 
 
 def test_soundtrack_needs_a_project(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """It is implemented now, so a missing manifest is what fails rather than the stage."""
     result = runner.invoke(app, ["soundtrack", str(tmp_path / "nowhere")])
+    assert result.exit_code == 1
+    assert "No manifest found" in result.stdout
+
+
+def test_sync_needs_a_project(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    result = runner.invoke(
+        app, ["sync", str(tmp_path / "nowhere"), "--audio", str(tmp_path / "track.wav")]
+    )
     assert result.exit_code == 1
     assert "No manifest found" in result.stdout

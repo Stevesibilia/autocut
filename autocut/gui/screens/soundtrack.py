@@ -83,6 +83,8 @@ class SoundtrackScreen(QWidget):
         self.bpm_field.setKeyboardTracking(False)
         self.bpm_field.editingFinished.connect(self._regenerate_from_controls)
 
+        # Labelled by their ends rather than by a one word name: "Mood" and "Room" told
+        # a reader neither which way the control goes nor what it does.
         self.mood_box = QComboBox()
         self.mood_box.addItems(["calmer", "as matched", "more energetic"])
         self.mood_box.setCurrentIndex(1)
@@ -110,8 +112,8 @@ class SoundtrackScreen(QWidget):
             ("Variant", self.variant_box),
             ("Genre", self.genre_box),
             ("BPM", self.bpm_field),
-            ("Mood", self.mood_box),
-            ("Room", self.room_box),
+            ("Calm to energetic", self.mood_box),
+            ("Intimate to cinematic", self.room_box),
         ):
             controls.addWidget(QLabel(label))
             controls.addWidget(widget)
@@ -362,12 +364,23 @@ class SoundtrackScreen(QWidget):
         )
 
     def _mood_changed(self) -> None:
-        """A mood move is a regeneration inside the matched row, never a new genre."""
+        """A mood move is a regeneration inside the matched row, never a new genre.
+
+        A hand edited variant is left exactly as it was, and the screen says so rather
+        than appearing to do nothing: the controls rewrite the generated variants, and
+        the prompt somebody typed is not theirs to rewrite.
+        """
         manifest = self._state.manifest
         if manifest is None or not manifest.soundtrack.variants:
             return
         self._apply_mood_to_variants()
         self._set_variants(manifest.soundtrack.variants)
+        self._state.schedule_save()
+        if manifest.soundtrack.variants[self.variant_box.currentIndex()].source == "user":
+            self.editor.problems.setText(
+                "Your edit is unchanged: the mood controls rewrote the generated "
+                "variants. Switch variant to see them."
+            )
         self._state.schedule_save()
 
     def _regenerate_from_controls(self) -> None:

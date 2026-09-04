@@ -76,6 +76,7 @@ All notable changes to this project are documented in this file. The format foll
 - `read_entry` no longer decompresses the sprite strips unless asked, and selection asks it not to. The strips are most of the bytes in an entry and selection never looks at them: on the Sardinia project this took a re-selection, which is what every slider move costs, from 1.5 s to 485 ms.
 - The review grid keeps the cursor on the clip it was on across the model reset that every re-selection causes, so working down the grid with the keyboard is possible.
 
+- The Soundtrack screen labels both mood axes by their ends, "Calm to energetic" and "Intimate to cinematic". Moving one while a hand edited prompt is the chosen variant leaves that prompt untouched and says so.
 - The review grid's cards carry a coloured border and a corner badge for kept, rejected and selected, rather than only a number in a row of numbers.
 - The groups view labels each clip with its file name and time instead of the segment's content hash, and shows at most four alternatives with a count of the rest.
 - `ProjectState` records a stage's result before it emits `stage_finished`, so a screen reading it in that handler gets this run's result and not the previous one.
@@ -97,3 +98,7 @@ All notable changes to this project are documented in this file. The format foll
 - `Segment.tags` is a list of `Tag` records rather than of strings. A manifest written before the change opens unchanged: a string list upgrades to local tags with confidence 1.0.
 - Tests that are not marked `ai` no longer touch the real vision model. With the extra installed, every CLI test running `analyze` was downloading the model into its own temporary cache.
 - A cache entry whose stored embedding model differs from the configured one reads back with no embeddings and with its metric arrays intact, so changing the model costs one forward pass per shot rather than a re-analysis.
+
+### Fixed
+
+- GUI tests waited for a signal a worker emits from inside its own run and then ended, so a `QThread` could be collected while its thread was still running, which makes Qt abort the process. About one run in fifteen locally, with the suite still reporting every test passed.

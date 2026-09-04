@@ -193,6 +193,25 @@ def test_the_mood_control_leaves_a_hand_written_prompt_alone(screen: SoundtrackS
 # --- hand editing -------------------------------------------------------------
 
 
+def test_the_screen_says_a_hand_edit_was_left_alone(screen: SoundtrackScreen) -> None:
+    """Doing nothing silently reads as a broken control, so the screen says why."""
+    screen.editor.title.setText("Mine")
+    assert screen.store_edit()
+
+    screen.mood_box.setCurrentIndex(0)
+
+    assert "Your edit is unchanged" in screen.editor.problems.text()
+
+
+def test_both_mood_axes_are_labelled_by_their_ends(screen: SoundtrackScreen) -> None:
+    """ "Mood" and "Room" said neither which way the control goes nor what it does."""
+    labels = [child.text() for child in screen.findChildren(type(screen.matched_label))]
+
+    assert "Calm to energetic" in labels
+    assert "Intimate to cinematic" in labels
+    assert "Room" not in labels
+
+
 def test_a_comma_in_a_tag_is_marked_on_its_line(screen: SoundtrackScreen) -> None:
     """The scenario from the spec, with the line number the validator reported."""
     lines = screen.editor.structure_lines()
@@ -437,6 +456,9 @@ def test_nothing_is_editable_while_a_stage_runs(screen: SoundtrackScreen, qtbot:
     gate.set()
     with qtbot.waitSignal(state.stage_finished, timeout=5000):
         pass
+    # The signal comes from inside the thread's run, so the thread is still winding
+    # down: a QThread collected while running makes Qt abort the process.
+    assert state.wait_for_stage(10_000)
     assert screen.generate_button.isEnabled()
 
 

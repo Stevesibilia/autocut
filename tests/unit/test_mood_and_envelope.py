@@ -152,6 +152,33 @@ def test_the_structure_follows_the_new_mood() -> None:
     assert calmer.structure != variant.structure
 
 
+def test_moving_the_mood_of_a_hand_edited_prompt_makes_it_the_template_s_again() -> None:
+    """Every word has just been regenerated, so it is not the person's prompt any more.
+
+    Keeping the ``user`` label would credit them with text they never typed and would
+    make it survive the next regeneration as if it had been theirs. The screen leaves a
+    hand edited variant alone for exactly this reason; the function is honest about
+    what it does when it is called on one.
+    """
+    config = AutocutConfig()
+    mine = build_prompt(signals(), ROW, 128, config).model_copy(update={"source": "user"})
+
+    moved = apply_mood(mine, ROW, 128, signals(), config, calm="calmer")
+
+    assert mine.source == "user"
+    assert moved.source == "template"
+
+
+def test_a_refined_variant_keeps_its_label() -> None:
+    """Only the user label is dropped: a refined prompt is still a refined prompt."""
+    config = AutocutConfig()
+    refined = build_prompt(signals(), ROW, 128, config).model_copy(update={"source": "refined"})
+
+    moved = apply_mood(refined, ROW, 128, signals(), config, calm="calmer")
+
+    assert moved.source == "refined"
+
+
 def test_a_word_the_scale_does_not_know_is_neutral() -> None:
     """The scales rank the words the rows use, not every word in English."""
     config = AutocutConfig()

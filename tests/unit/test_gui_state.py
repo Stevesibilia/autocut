@@ -199,6 +199,7 @@ def test_a_stage_reports_progress_and_finishes(
     with qtbot.waitSignal(state.stage_finished, timeout=5000) as blocker:
         assert state.run_stage("analysis", work)
 
+    assert state.wait_for_stage(10_000)
     assert blocker.args == ["analysis"]
     assert [event.current for event in events] == [1, 2]
     assert state.last_result == "did it"
@@ -223,7 +224,7 @@ def test_a_second_stage_is_refused_while_one_runs(
 
     refused = state.run_stage("selection", lambda _progress: None)
     gate.set()
-    state.wait_for_stage(5000)
+    assert state.wait_for_stage(10_000)
     qtbot.wait(50)
 
     assert refused is False
@@ -258,6 +259,7 @@ def test_an_armed_autosave_does_not_fire_into_a_running_stage(
     with qtbot.waitSignal(state.stage_finished, timeout=5000):
         gate.set()
 
+    assert state.wait_for_stage(10_000)
     assert saves == [1]
     assert (out / "manifest.json").exists()
 
@@ -277,7 +279,7 @@ def test_nothing_new_is_scheduled_during_a_stage(
 
     assert saves == []
     gate.set()
-    state.wait_for_stage(5000)
+    assert state.wait_for_stage(10_000)
     qtbot.wait(100)
 
 
@@ -317,6 +319,7 @@ def test_a_failing_stage_reports_and_logs_the_traceback(
     with qtbot.waitSignal(state.error, timeout=5000) as blocker:
         state.run_stage("analysis", work)
 
+    assert state.wait_for_stage(10_000)
     assert "the card was pulled" in blocker.args[0]
     log = (out / "gui-errors.log").read_text(encoding="utf-8")
     assert "RuntimeError" in log
@@ -332,6 +335,7 @@ def test_a_stale_cancel_does_not_kill_the_next_run(
 
     with qtbot.waitSignal(state.stage_finished, timeout=5000):
         state.run_stage("analysis", lambda progress: progress(ProgressEvent("analyze", 1, 1)))
+    assert state.wait_for_stage(10_000)
 
 
 def test_a_cancelled_stage_keeps_what_it_reached(
@@ -341,22 +345,29 @@ def test_a_cancelled_stage_keeps_what_it_reached(
     state.new_project([tmp_path], out)
     state.manifest.files.update(a_manifest(out).files) if state.manifest else None
 
-    gate = threading.Event()
+    # Gated from the test rather than from a progress slot: the cancel has to be set
+    # while the worker is parked, or whether it lands before or after the report that
+    # released it is a race, and on a slow machine it is the wrong one.
+    arrived = threading.Event()
+    released = threading.Event()
+    reached: list[int] = []
 
     def work(progress: ProgressCallback) -> None:
-        progress(ProgressEvent(stage="analyze", current=1, total=9))
-        gate.wait(5.0)
-        progress(ProgressEvent(stage="analyze", current=2, total=9))
+        for unit in range(1, 10):
+            reached.append(unit)
+            progress(ProgressEvent(stage="analyze", current=unit, total=9))
+            arrived.set()
+            assert released.wait(10.0)
 
-    def press_cancel(_event: object) -> None:
-        state.cancel()
-        gate.set()
-
-    state.progress.connect(press_cancel)
-    with qtbot.waitSignal(state.stage_cancelled, timeout=5000) as blocker:
+    with qtbot.waitSignal(state.stage_cancelled, timeout=10_000) as blocker:
         state.run_stage("analysis", work)
+        assert arrived.wait(10.0)
+        state.cancel()
+        released.set()
 
     assert blocker.args == ["analysis"]
+    assert reached == [1, 2]
+    assert state.wait_for_stage(10_000)
     # Cancelled, but the files the run had already probed are on disk.
     saved = Manifest.load(out / "manifest.json")
     assert len(saved.files) == 4
@@ -392,7 +403,7 @@ def test_selection_is_refused_while_a_stage_runs(
 
     refused = state.run_selection()
     gate.set()
-    state.wait_for_stage(5000)
+    assert state.wait_for_stage(10_000)
     qtbot.wait(50)
 
     assert refused is False

@@ -261,6 +261,13 @@ def apply_mood(
 
     Rebuilt rather than patched, because the Structure spreads the mood across its
     sections and editing the Description alone would leave the two blocks disagreeing.
+
+    A variant whose source was ``user`` comes back as ``template``. Every word of both
+    blocks has just been regenerated from the row, so what comes out is the template's
+    prompt at a different mood and not the one the person wrote; keeping the label
+    would credit them with text they never typed, and would make it survive the next
+    regeneration as if it had been theirs. The Soundtrack screen therefore leaves a
+    hand edited variant alone rather than calling this on it.
     """
     pool = [*row.mood, *row.mood_alternates] or [variant.mood[0] if variant.mood else "warm"]
     chosen = variant.mood[0] if variant.mood else pool[0]

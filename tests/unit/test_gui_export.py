@@ -325,6 +325,9 @@ def test_nothing_is_editable_while_a_stage_runs(screen: ExportScreen, qtbot: Any
     gate.set()
     with qtbot.waitSignal(state.stage_finished, timeout=5000):
         pass
+    # The signal comes from inside the thread's run, so the thread is still winding
+    # down: a QThread collected while running makes Qt abort the process.
+    assert state.wait_for_stage(10_000)
     assert screen.run_button.isEnabled()
     assert not screen.cancel_button.isEnabled()
 

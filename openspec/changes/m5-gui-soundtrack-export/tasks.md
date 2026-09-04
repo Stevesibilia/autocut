@@ -71,3 +71,21 @@
   Section 11 now describes both screens and the two mood scales; section 15 marks M5 complete. **Section 11 also needed repairing:** the paragraph the previous change added between the numbered items had swallowed items 4 and 5 into itself once prettier reflowed it, so the last two screens were not list items at all.
 
   Gates: `make lint` clean (ruff, format, mypy strict on 69 files). `make docker-test` **1049 passed, 59 skipped**. `make docker-test-gui` **217 passed**. `make docker-test-ai` **8 passed, 11 skipped**. Both mypy passes hold: excluded on the Qt free image (46 files), full in `dev-gui` (69 files). In the venv, **1274 passed, 40 skipped**.
+
+## 5. Review fixes on pull request 36
+
+- [x] 5.1 **The cancellation test raced the worker and the GitHub runner proved it.** It set the flag from a queued slot after unit three's report, so on a slow box the flag could land before that same report's own flag check and the run stopped at three instead of four.
+
+  Every unit is now gated from the test. `GatedWork` announces its arrival before each unit and parks until the test releases it, so the flag is set while the worker is parked and "the flag was set before unit four" is a fact rather than a hope. A second test cancels before the first unit and asserts that unit finishes and no other starts, which is the contract in one line.
+
+  The audit found one more of the same shape, `test_a_cancelled_stage_keeps_what_it_reached` in the state tests, cancelling from a progress slot. It is gated the same way and now asserts exactly which units ran.
+
+  **And a real flake the audit turned up:** the worker tests never waited for the thread. `done`, `cancelled` and `failed` are emitted from inside `run`, so the thread is still winding down when the assertions pass, and a `QThread` collected while its thread runs makes Qt abort the process. Reproduced locally: one abort in about fifteen runs, with the suite still reporting eight passed, which is why it had gone unnoticed. A fixture now waits for every worker a test starts, and every screen test that gates a stage waits for it too. Twenty local runs and three `make docker-test-gui` runs clean afterwards.
+
+- [x] 5.2 The second mood axis was labelled "Room", which said neither which way the control goes nor what it does. Both axes are now labelled by their ends, "Calm to energetic" and "Intimate to cinematic", with a test asserting the labels and the absence of the old one.
+
+- [x] 5.3 `apply_mood` returning a `user` variant as `template` is deliberate and is now documented and tested. Every word of both blocks has just been regenerated from the row, so what comes out is the template's prompt at a different mood and not the prompt the person wrote; keeping the label would credit them with text they never typed and would make it survive the next regeneration as if it had been theirs. A `refined` variant keeps its label, since only the user claim is the one at stake.
+
+  The screen never calls it on a hand edited variant, and now says so instead of appearing to do nothing: moving a mood while the user's own prompt is chosen leaves it untouched and the editor reports "Your edit is unchanged: the mood controls rewrote the generated variants."
+
+  Gates after these fixes: `make lint` clean, `make docker-test-gui` **220 passed** three times in a row, venv **1279 passed, 40 skipped**.

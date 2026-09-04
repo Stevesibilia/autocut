@@ -43,6 +43,13 @@ All notable changes to this project are documented in this file. The format foll
 - The review report shows the caption on the card, marks cloud tags apart from local ones, shows the aesthetic value, says why a description failed, and reports the model, the request count and the cost in USD in the header.
 - `ai` extra pinned to torch 2.13, torchvision 0.28 and open_clip_torch 3.3, a second `Dockerfile.dev` target and `dev-ai` compose service that install torch from the PyTorch CPU index, `make docker-test-ai`, an `ai` pytest marker that skips when torch does not import, and a CI job that runs the marked tests so the matrix job stays light.
 
+- Soundtrack prompt: `autocut soundtrack` derives the edit's signals, matches a genre row, fits a BPM to the clip lengths, writes 3 to 5 validated Suno prompts into `suno-prompt.md`, and records all of it on the manifest. `autocut run` calls it after select.
+- Genre table of twelve ordered rows seeded from the user's own genres, each with a `when` block, instruments carrying adjectives, a BPM range and mood words. First match wins and the matched row is recorded with the condition that made it match.
+- Prompt validator enforcing every Description and Structure rule from SPEC.md section 7.5, returning every violation with its line rather than the first.
+- Place names from Nominatim reverse geocoding, one request per place centroid, cached forever, spaced and identified as the usage policy requires. `places.geocode = false` or no network keeps places numeric.
+- Optional prompt refinement through the OpenRouter text model, gated like the vision calls, sending only derived signals and the template prompt. Its answer is used only if it passes the validator; a rejection keeps the template and is recorded.
+- The review report header shows the genre, the matched row and why, the proposed BPM, the mean distance from a whole beat, and a link to the prompt file. Places are listed by name and region when geocoding found them.
+
 ### Changed
 
 - The review report lists selected segments first, with their edit order, best window bounds, visual cluster and the near duplicate a candidate lost to.
@@ -51,6 +58,8 @@ All notable changes to this project are documented in this file. The format foll
 - Selected cards show the clip's target duration, the rule that settled it and whether its window was snapped to a motion boundary.
 - `export.remove_audio` defaults to true for every class: a default export is silent and the soundtrack carries the sound. Set a class to false in `autocut.toml` to keep its ambience.
 - The review report shows each segment's place, offers a filter by place, lists the places with their visits and clip counts, and names the clips that filled a visit on a card the place cap held back.
+- `cache.models_dir` is separate from `cache.dir`, so a project with its own analysis cache no longer downloads its own copy of the model weights. Weights belong to the machine and default to the platform cache directory.
+- `soundtrack.genres` is an ordered list of rows rather than a dictionary of profiles. The old shape had no way to say when a row applies.
 - The dominant tag prefers the first cloud tag when a segment has one, since a model that looked at the picture is more specific than a zero-shot label set. A local re-run replaces only local tags and leaves cloud tags alone.
 - `Segment.tags` is a list of `Tag` records rather than of strings. A manifest written before the change opens unchanged: a string list upgrades to local tags with confidence 1.0.
 - Tests that are not marked `ai` no longer touch the real vision model. With the extra installed, every CLI test running `analyze` was downloading the model into its own temporary cache.

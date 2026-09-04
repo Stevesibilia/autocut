@@ -39,8 +39,14 @@ ai = [
   "torchvision>=0.28,<0.29",
   "open_clip_torch>=3.3,<3.4",
 ]
+# PySide6 is a meta package pinning shiboken6, PySide6-Essentials and PySide6-Addons
+# to its own exact version. 6.11.2 (2026-08-18) publishes cp310-abi3 wheels for
+# manylinux_2_34_x86_64 and macosx_13_0_universal2 and declares >=3.10,<3.15, so all
+# four of the Python versions this project supports get a wheel on both platforms
+# this project targets. The abi3 tag means one wheel serves every interpreter, so the
+# bound is on the Qt version rather than on the interpreter.
 gui = [
-  "PySide6>=6.7",
+  "PySide6>=6.11.2,<6.12",
 ]
 dev = [
   "pytest>=8.2",
@@ -48,6 +54,13 @@ dev = [
   "ruff>=0.5",
   "mypy>=1.10",
   "types-Pillow",
+]
+# pytest-qt is not in "dev" because it refuses to load without a Qt binding: it fails
+# the whole collection, not just the tests that need it, so a "dev" environment
+# without PySide6 could not run any test at all. It lives in its own extra installed
+# alongside "gui", which keeps the default matrix job and the dev container Qt free.
+dev-gui = [
+  "pytest-qt>=4.5",
 ]
 build = [
   "pyinstaller>=6.9",
@@ -89,4 +102,5 @@ markers = [
   "real_footage: needs AUTOCUT_REAL_FOOTAGE",
   "ffmpeg: runs the ffmpeg binary",
   "ai: needs the ai extra, runs a real vision model",
+  "gui: needs the gui extra, builds Qt widgets",
 ]

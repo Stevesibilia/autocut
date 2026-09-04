@@ -24,3 +24,20 @@ RUN pip install --no-cache-dir \
  && pip install --no-cache-dir -e ".[dev,ai]"
 
 CMD ["pytest", "-q", "-m", "ai"]
+
+# The gui extra for the tests marked "gui". PySide6 ships the Qt libraries it needs
+# inside the wheel, but not the system libraries Qt itself links against, so the
+# offscreen platform plugin still needs libEGL, xkbcommon, fontconfig and the dbus
+# client. Nothing here pulls in an X server: QT_QPA_PLATFORM=offscreen renders into
+# memory, which is also what CI does.
+FROM dev AS gui
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0 \
+ && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir -e ".[dev,gui,dev-gui]"
+
+ENV QT_QPA_PLATFORM=offscreen
+
+CMD ["pytest", "-q", "-m", "gui"]

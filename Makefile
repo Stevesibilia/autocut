@@ -1,11 +1,11 @@
-.PHONY: venv test lint fixtures docker-test docker-test-ai dmg
+.PHONY: venv test lint fixtures docker-test docker-test-ai docker-test-gui dmg
 
 VENV ?= .venv
 PY := $(VENV)/bin/python
 
 venv:
 	python3 -m venv $(VENV)
-	$(PY) -m pip install -e ".[dev,gui]"
+	$(PY) -m pip install -e ".[dev,gui,dev-gui]"
 
 fixtures:
 	$(PY) scripts/make_fixtures.py
@@ -23,6 +23,11 @@ docker-test:
 # model weights in a named volume, so the checkpoint is downloaded once.
 docker-test-ai:
 	docker compose run --rm dev-ai sh -c "python scripts/make_fixtures.py && pytest -q -m ai"
+
+# The tests marked "gui" only. Builds a third image with the gui extra and the Qt
+# system libraries, and runs Qt offscreen.
+docker-test-gui:
+	docker compose run --rm dev-gui sh -c "python scripts/make_fixtures.py && pytest -q -m gui"
 
 # macOS only. Requires the build extra and ffmpeg on PATH. See ADR 7.
 dmg:

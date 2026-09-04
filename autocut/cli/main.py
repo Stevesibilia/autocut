@@ -878,6 +878,28 @@ def export(
 
 
 @app.command()
+def gui(
+    project: Annotated[
+        Path | None,
+        typer.Argument(help="Project folder to open on start. Optional."),
+    ] = None,
+) -> None:
+    """Open the desktop window. Needs the gui extra."""
+    try:
+        from autocut.gui.app import run as run_gui
+    except ImportError as error:
+        console.print(
+            "[red]The gui extra is not installed.[/red] Install it with: "
+            # Escaped, because the one part of this line the user has to type
+            # verbatim is the part Rich would read as markup and eat.
+            r'pip install -e ".\[gui]"'
+        )
+        console.print(f"  {error}")
+        raise typer.Exit(code=1) from error
+    raise typer.Exit(code=run_gui(project))
+
+
+@app.command()
 def run(
     sources: Annotated[list[Path], typer.Argument()],
     out: Annotated[Path, typer.Option("--out", "-o")],

@@ -40,3 +40,15 @@ jobs:
         run: docker compose build dev-ai
       - name: Fixtures and ai tests
         run: docker compose run --rm dev-ai sh -c "python scripts/make_fixtures.py && pytest -q -m ai"
+
+  # The GUI tests need PySide6 and the Qt system libraries, which the matrix job
+  # deliberately does not install. This job builds the third Docker target and runs
+  # only the tests marked "gui", with Qt on the offscreen platform.
+  gui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the gui image
+        run: docker compose build dev-gui
+      - name: Fixtures and gui tests
+        run: docker compose run --rm dev-gui sh -c "python scripts/make_fixtures.py && pytest -q -m gui"

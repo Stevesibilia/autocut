@@ -39,6 +39,10 @@ NO_MODEL = "none"
 #: from :func:`image_encoder`; tests pass a deterministic function on the frame array.
 Encoder = Callable[[np.ndarray], np.ndarray]
 
+#: The other tower of the same checkpoint: prompts in, one vector per prompt out.
+#: ``m3-tagging`` encodes its label set with this, so the weights are read once.
+TextEncoder = Callable[[list[str]], np.ndarray]
+
 
 class EmbeddingsUnavailableError(RuntimeError):
     """The ``ai`` extra is missing, or the configured model could not be loaded."""
@@ -226,6 +230,19 @@ def image_encoder(loaded: LoadedModel) -> Encoder:
             stacked = stacked.half()
         with torch.no_grad():
             features = loaded.model.encode_image(stacked)
+        return np.asarray(features.float().cpu().numpy(), dtype=np.float32)
+
+    return encode
+
+
+def text_encoder(loaded: LoadedModel) -> TextEncoder:
+    """An encoder over prompt strings, using the text tower of the loaded model."""
+    torch = _torch()
+
+    def encode(prompts: list[str]) -> np.ndarray:
+        tokens = loaded.tokenizer(list(prompts)).to(loaded.device)
+        with torch.no_grad():
+            features = loaded.model.encode_text(tokens)
         return np.asarray(features.float().cpu().numpy(), dtype=np.float32)
 
     return encode

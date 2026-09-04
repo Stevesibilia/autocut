@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -104,6 +105,57 @@ def test_manifest_roundtrip_with_telemetry_and_analysis(tmp_path: Path) -> None:
     assert segment.reason == "low_altitude"
     assert segment.metrics is not None
     assert segment.metrics.min_height_m == 22.7
+
+
+def test_tags_roundtrip_with_their_confidence_and_source(tmp_path: Path) -> None:
+    from autocut.core.manifest import Tag
+
+    now = datetime.now(UTC)
+    m = Manifest(created_at=now, updated_at=now, sources=[Path("/footage")], output_dir=tmp_path)
+    m.segments["a:0"] = Segment(
+        id="a:0",
+        file_id="a",
+        start_s=0.0,
+        end_s=4.0,
+        tags=[
+            Tag(label="beach", confidence=0.62, source="local", group="subject", primary=True),
+            Tag(label="snorkeling", confidence=1.0, source="cloud", primary=True),
+        ],
+    )
+    out = tmp_path / "manifest.json"
+    m.save(out)
+
+    back = Manifest.load(out).segments["a:0"]
+    assert [tag.label for tag in back.tags] == ["beach", "snorkeling"]
+    assert back.tags[0].confidence == 0.62
+    assert back.tags[1].source == "cloud"
+    # The dominant tag follows confidence, not list order.
+    assert back.dominant_tag == "snorkeling"
+
+
+def test_a_manifest_written_before_tags_had_a_shape_still_opens(tmp_path: Path) -> None:
+    """M2 wrote tags as plain strings; those projects have to keep opening."""
+    from autocut.core.manifest import Tag
+
+    now = datetime.now(UTC)
+    m = Manifest(created_at=now, updated_at=now, sources=[Path("/footage")], output_dir=tmp_path)
+    m.segments["a:0"] = Segment(id="a:0", file_id="a", start_s=0.0, end_s=4.0)
+    out = tmp_path / "manifest.json"
+    m.save(out)
+    legacy = json.loads(out.read_text(encoding="utf-8"))
+    legacy["segments"]["a:0"]["tags"] = ["sunset", "beach"]
+    out.write_text(json.dumps(legacy), encoding="utf-8")
+
+    back = Manifest.load(out).segments["a:0"]
+    assert back.tags == [
+        Tag(label="sunset", confidence=1.0, source="local", primary=True),
+        Tag(label="beach", confidence=1.0, source="local", primary=True),
+    ]
+    assert back.dominant_tag == "sunset"
+
+
+def test_a_segment_without_tags_has_no_dominant_tag(tmp_path: Path) -> None:
+    assert Segment(id="a:0", file_id="a", start_s=0.0, end_s=1.0).dominant_tag is None
 
 
 def test_analysis_run_defaults_and_roundtrip(tmp_path: Path) -> None:

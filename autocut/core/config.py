@@ -179,6 +179,12 @@ class SelectionConfig(BaseModel):
         description="Clips from one visit to one place. Three keeps a wide, a medium and "
         "a detail, which is how a montage covers a location.",
     )
+    max_share_per_tag: float = Field(
+        default=0.5,
+        description="Ceiling on the share of the final count carrying one dominant "
+        "tag, while candidates with another tag or none remain. Lifted when nothing "
+        "else is eligible, like the place cap and the temporal gap.",
+    )
     max_candidate_share: float = Field(
         default=0.5,
         description="Ceiling on max_clips as a share of the eligible candidates, so a "
@@ -194,6 +200,108 @@ class SelectionConfig(BaseModel):
         description="Mean score a snap may give up, as a share. The window search already "
         "found the best frames, so the snap is only allowed to fix where the cut lands.",
     )
+
+
+class TagLabel(BaseModel):
+    """One zero-shot label and, when the group template reads badly, its own prompt."""
+
+    label: str
+    prompt: str | None = Field(
+        default=None,
+        description="Full sentence to encode instead of the group template. CLIP is "
+        "sensitive to phrasing, and some labels need more context than the word alone.",
+    )
+
+
+class TagGroup(BaseModel):
+    """Labels that are alternatives to each other, scored by one softmax.
+
+    Groups exist because a drone shot over a beach is a beach and is aerial, and one
+    softmax over both makes them compete for the same probability mass. Anything that
+    can be true at the same time as another label belongs in another group.
+
+    ``null_prompt`` joins the softmax and is never emitted. Without it the probabilities
+    of a group always sum to one over its labels, so some label always wins however
+    little the picture has to do with any of them, and the threshold decides nothing.
+    """
+
+    name: str
+    prompt_template: str = "a photo of {label}"
+    null_prompt: str = Field(
+        description="Encoded with the labels and never emitted: the way a group says none of these."
+    )
+    primary: bool = Field(
+        default=False,
+        description="Whether this group provides the dominant tag, the one that names "
+        "the exported clip. Exactly one group should be primary.",
+    )
+    labels: list[TagLabel]
+
+
+DEFAULT_TAG_GROUPS: tuple[TagGroup, ...] = (
+    TagGroup(
+        name="subject",
+        null_prompt="a photo",
+        primary=True,
+        labels=[
+            TagLabel(label="beach"),
+            TagLabel(label="mountain"),
+            TagLabel(label="city"),
+            TagLabel(label="street"),
+            TagLabel(label="indoor"),
+            TagLabel(label="food"),
+            TagLabel(label="people"),
+        ],
+    ),
+    TagGroup(
+        name="view",
+        null_prompt="a photo taken at ground level",
+        labels=[
+            # "aerial" alone encodes closer to an antenna than to a view from the air.
+            TagLabel(label="aerial", prompt="an aerial photo taken from a drone"),
+            TagLabel(label="underwater"),
+        ],
+    ),
+    TagGroup(
+        name="light",
+        null_prompt="a photo taken in ordinary daylight",
+        labels=[TagLabel(label="sunset")],
+    ),
+)
+
+
+class TagsConfig(BaseModel):
+    """Zero-shot labels, their groups and how confident a tag has to be to stick."""
+
+    enabled: bool = True
+    logit_scale: float = Field(
+        default=10.0,
+        description="Cosines are multiplied by this before the softmax. CLIP ships 100, "
+        "which is the constant its contrastive loss was trained with and produces a "
+        "one-hot distribution over a handful of labels: measured on the Sardinia set at "
+        "100, every segment took a tag and no threshold rejected anything. 10 leaves the "
+        "probabilities spread widely enough for a threshold to mean something.",
+    )
+    threshold: float = Field(
+        default=0.2,
+        description="Probability after the softmax over a group, its null prompt "
+        "included. Not a cosine: the useful cosine range shifts with the label set, a "
+        "probability does not.",
+    )
+    max_per_segment: int = Field(
+        default=3,
+        description="Tags kept in total, across groups. The dominant tag is kept first "
+        "and the rest fill by confidence.",
+    )
+    groups: list[TagGroup] = Field(default_factory=lambda: list(DEFAULT_TAG_GROUPS))
+
+    @property
+    def primary_group(self) -> str | None:
+        """The group whose top tag names the clip."""
+        for group in self.groups:
+            if group.primary:
+                return group.name
+        return None
 
 
 class SimilarityWeights(BaseModel):
@@ -314,6 +422,7 @@ class AutocutConfig(BaseModel):
     rules: RejectionRules = RejectionRules()
     selection: SelectionConfig = SelectionConfig()
     similarity: SimilarityConfig = SimilarityConfig()
+    tags: TagsConfig = TagsConfig()
     soundtrack: SoundtrackConfig = SoundtrackConfig()
     export: ExportConfig = ExportConfig()
     providers: ProvidersConfig = ProvidersConfig()

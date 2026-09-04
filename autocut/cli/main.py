@@ -37,6 +37,7 @@ from autocut.core.ingest import ingest
 from autocut.core.manifest import Manifest
 from autocut.core.report import render_report
 from autocut.core.select import SelectionOverrides, select_clips
+from autocut.core.tags import TagResult, tag_project
 
 app = typer.Typer(
     name="autocut",
@@ -156,6 +157,7 @@ def analyze(
             interrupted = True
 
     embedded = _run_embed(manifest, cfg)
+    tagged = _run_tag(manifest, cfg)
     manifest.updated_at = datetime.now(UTC)
     manifest.save(manifest_path)
 
@@ -172,6 +174,7 @@ def analyze(
     for reason, count in sorted(rejected.items()):
         console.print(f"  {reason}: {count}")
     _print_embed(embedded)
+    _print_tag(tagged)
     console.print(f"Report written to {report_path}")
     if interrupted:
         console.print(
@@ -271,6 +274,44 @@ def embed(
     _print_embed(result)
 
 
+def _run_tag(manifest: Manifest, cfg: AutocutConfig) -> TagResult:
+    """Recompute the local tags. Cheap enough that no progress bar is worth the noise."""
+    return tag_project(manifest, cfg)
+
+
+def _print_tag(result: TagResult) -> None:
+    if result.skipped_reason is not None:
+        console.print(f"Tagging skipped: {result.skipped_reason}")
+        return
+    console.print(
+        f"Tagged [bold]{result.with_a_tag}[/bold] of {result.embedded} embedded segments "
+        f"against {result.labels} labels in {result.groups} groups"
+    )
+    console.print(
+        f"  {result.with_a_subject} carry a subject and are named after it, "
+        f"{result.embedded - result.with_a_subject} fall back to clip"
+    )
+    if result.without_an_embedding:
+        console.print(f"  {result.without_an_embedding} without an embedding, left untagged")
+    for group, labels in result.per_group.items():
+        listed = ", ".join(f"{label} {count}" for label, count in labels.items())
+        console.print(f"  {group}: {listed}")
+
+
+@app.command()
+def tag(
+    project: Annotated[Path, typer.Argument(help="Output folder holding manifest.json.")],
+    config: ConfigOpt = None,
+) -> None:
+    """Recompute the semantic tags from the cached embeddings and the label set."""
+    cfg = _load_config(config)
+    manifest = _open_project(project)
+    result = _run_tag(manifest, cfg)
+    manifest.updated_at = datetime.now(UTC)
+    manifest.save(project / "manifest.json")
+    _print_tag(result)
+
+
 @app.command()
 def doctor(
     config: ConfigOpt = None,
@@ -334,6 +375,16 @@ def select(
         console.print(
             f"  {result.held_by_place} candidates held back by the place cap "
             f"of {cfg.selection.max_clips_per_place} per visit"
+        )
+    if result.held_by_tag:
+        console.print(
+            f"  {result.held_by_tag} candidates held back by the tag share cap "
+            f"of {cfg.selection.max_share_per_tag:g}"
+        )
+    if result.lifted_tag_cap:
+        console.print(
+            "[yellow]The tag share cap was lifted[/yellow]: no candidate with another "
+            "subject was left."
         )
     if result.ceiling_applied:
         console.print(

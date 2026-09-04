@@ -65,6 +65,31 @@ def test_a_semantic_tag_replaces_the_placeholder() -> None:
     assert name == "012_20260812_drone_sunset_4.0s.mp4"
 
 
+def test_the_tagged_name_from_the_spec() -> None:
+    """The 13th clip, phone, 2026-08-12, two seconds, tagged people first."""
+    from autocut.core.manifest import Tag
+
+    tagged = segment()
+    tagged.tags = [
+        Tag(label="people", confidence=0.62, source="local", primary=True),
+        Tag(label="beach", confidence=0.21, source="local", primary=True),
+    ]
+    name = clip_name(tagged, source(source_class="phone"), 13, 2.0)
+    assert name == "013_20260812_phone_people_2.0s.mp4"
+
+
+def test_the_dominant_tag_is_the_most_confident_one() -> None:
+    """The list order does not decide the name; the confidence does."""
+    from autocut.core.manifest import Tag
+
+    tagged = segment()
+    tagged.tags = [
+        Tag(label="beach", confidence=0.21, source="local", primary=True),
+        Tag(label="people", confidence=0.62, source="local", primary=True),
+    ]
+    assert clip_tag(tagged) == "people"
+
+
 def test_an_explicit_tag_wins_over_the_segment_tags() -> None:
     """The rejects folder passes the reason in place of the tag."""
     name = clip_name(segment(tags=["sunset"]), source(), 3, 2.0, "low_altitude")

@@ -49,6 +49,70 @@ def test_the_shipped_example_lists_the_provider_defaults() -> None:
     assert AutocutConfig.load(example).providers == AutocutConfig().providers
 
 
+def test_tag_defaults_match_the_spec() -> None:
+    cfg = AutocutConfig()
+    assert cfg.tags.enabled
+    assert cfg.tags.threshold == 0.2
+    assert cfg.tags.max_per_segment == 3
+    # Not CLIP's 100: at that scale the softmax is one-hot and the threshold is inert.
+    assert cfg.tags.logit_scale == 10.0
+    assert [group.name for group in cfg.tags.groups] == ["subject", "view", "light"]
+    assert cfg.tags.primary_group == "subject"
+    assert [group.name for group in cfg.tags.groups if group.primary] == ["subject"]
+    # Every group needs a null prompt or some label always wins.
+    assert all(group.null_prompt for group in cfg.tags.groups)
+    by_name = {group.name: group for group in cfg.tags.groups}
+    assert [label.label for label in by_name["subject"].labels] == [
+        "beach",
+        "mountain",
+        "city",
+        "street",
+        "indoor",
+        "food",
+        "people",
+    ]
+    assert [label.label for label in by_name["view"].labels] == ["aerial", "underwater"]
+    assert [label.label for label in by_name["light"].labels] == ["sunset"]
+    # Only "aerial" needs more context than its group template gives it.
+    assert [label.label for group in cfg.tags.groups for label in group.labels if label.prompt] == [
+        "aerial"
+    ]
+    assert cfg.selection.max_share_per_tag == 0.5
+
+
+def test_the_shipped_example_lists_the_tag_defaults() -> None:
+    example = Path(__file__).resolve().parents[2] / "autocut.example.toml"
+    assert AutocutConfig.load(example).tags == AutocutConfig().tags
+
+
+def test_a_custom_group_set_replaces_the_shipped_one(tmp_path: Path) -> None:
+    toml = tmp_path / "autocut.toml"
+    toml.write_text(
+        "[tags]\nthreshold = 0.4\n"
+        "[[tags.groups]]\n"
+        'name = "subject"\n'
+        'null_prompt = "a photo"\n'
+        "primary = true\n"
+        'labels = [{ label = "boat" }, { label = "aerial", prompt = "a drone shot" }]\n',
+        encoding="utf-8",
+    )
+    cfg = AutocutConfig.load(toml)
+    assert [group.name for group in cfg.tags.groups] == ["subject"]
+    assert [label.label for label in cfg.tags.groups[0].labels] == ["boat", "aerial"]
+    assert cfg.tags.groups[0].labels[1].prompt == "a drone shot"
+    assert cfg.tags.threshold == 0.4
+
+
+def test_a_configuration_with_no_primary_group_names_none() -> None:
+    from autocut.core.config import TagGroup, TagLabel
+
+    cfg = AutocutConfig()
+    cfg.tags.groups = [
+        TagGroup(name="view", null_prompt="a photo", labels=[TagLabel(label="aerial")])
+    ]
+    assert cfg.tags.primary_group is None
+
+
 def test_duration_defaults_match_the_spec() -> None:
     """The numbers in specs/clip-durations are the shipped defaults, not examples."""
     selection = AutocutConfig().selection

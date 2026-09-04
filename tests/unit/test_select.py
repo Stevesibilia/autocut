@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from autocut.core.config import AutocutConfig
-from autocut.core.manifest import Manifest, Metrics, Segment, SourceFile
+from autocut.core.manifest import Manifest, Metrics, Segment, SourceFile, Tag
 from autocut.core.select import SelectionOverrides, absolute_time, select_clips
 from autocut.core.similarity import SimilarityMatrix
 
@@ -905,3 +905,109 @@ def test_a_lifted_cap_does_not_blame_the_place(
     for segment in manifest.segments.values():
         assert segment.reason != "place_cap"
         assert not segment.held_by
+
+
+def tagged_field(tmp_path: Path, beach: int, food: int) -> Manifest:
+    """One candidate per file, tagged, scored so the beaches would win on score alone."""
+    manifest = project(tmp_path)
+    for index in range(beach):
+        file_id = f"beach{index}"
+        add_file(manifest, file_id, "actioncam", minutes=index * 10)
+        segment = add_segment(manifest, f"{file_id}:0", file_id, score=0.9 - index * 0.01)
+        segment.tags = [Tag(label="beach", confidence=0.7, source="local", primary=True)]
+    for index in range(food):
+        file_id = f"food{index}"
+        add_file(manifest, file_id, "actioncam", minutes=1000 + index * 10)
+        segment = add_segment(manifest, f"{file_id}:0", file_id, score=0.5 - index * 0.01)
+        segment.tags = [Tag(label="food", confidence=0.7, source="local", primary=True)]
+    return manifest
+
+
+def tag_settings(max_clips: int, share: float = 0.5) -> AutocutConfig:
+    config = AutocutConfig()
+    config.selection.max_clips = max_clips
+    config.selection.max_share_per_tag = share
+    config.selection.max_candidate_share = 0.0
+    config.selection.min_temporal_gap_seconds = 0.0
+    config.selection.max_clips_per_cluster = 99
+    return config
+
+
+def test_the_tag_share_cap_leaves_room_for_another_subject(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Twelve beaches and four plates of food, ten slots.
+
+    Every beach outscores every plate of food, so on score alone the edit would be ten
+    beaches. The cap stops at five while food is still available, which is what puts
+    all four of them in. The tenth slot is filled by a sixth beach: nothing else is
+    eligible by then, and the cap is lifted rather than leaving the edit short.
+    """
+    no_similarity(monkeypatch)
+    manifest = tagged_field(tmp_path, beach=12, food=4)
+
+    result = select_clips(manifest, tag_settings(10))
+
+    dominant = [manifest.segments[i].dominant_tag for i in result.selected]
+    assert len(result.selected) == 10
+    assert dominant.count("food") == 4
+    assert dominant.count("beach") == 6
+    assert result.lifted_tag_cap
+
+
+def test_the_cap_holds_back_candidates_while_another_subject_remains(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    no_similarity(monkeypatch)
+    manifest = tagged_field(tmp_path, beach=12, food=8)
+
+    result = select_clips(manifest, tag_settings(10))
+
+    dominant = [manifest.segments[i].dominant_tag for i in result.selected]
+    assert dominant.count("beach") == 5
+    assert dominant.count("food") == 5
+    assert not result.lifted_tag_cap
+    assert result.held_by_tag == 10
+
+
+def test_one_tag_everywhere_lifts_the_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When every candidate carries the same subject the cap cannot help, so it goes."""
+    no_similarity(monkeypatch)
+    manifest = tagged_field(tmp_path, beach=12, food=0)
+
+    result = select_clips(manifest, tag_settings(10))
+
+    assert len(result.selected) == 10
+    assert result.lifted_tag_cap
+
+
+def test_untagged_candidates_are_never_held_back_by_the_tag_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    no_similarity(monkeypatch)
+    manifest = tagged_field(tmp_path, beach=12, food=0)
+    for index in range(4):
+        file_id = f"plain{index}"
+        add_file(manifest, file_id, "actioncam", minutes=2000 + index * 10)
+        add_segment(manifest, f"{file_id}:0", file_id, score=0.4 - index * 0.01)
+
+    result = select_clips(manifest, tag_settings(10))
+
+    selected = [manifest.segments[segment_id] for segment_id in result.selected]
+    # The four untagged clips score below every beach and are taken anyway, because
+    # a candidate with no dominant tag is outside the cap entirely.
+    assert sum(1 for s in selected if s.dominant_tag is None) == 4
+    assert sum(1 for s in selected if s.dominant_tag == "beach") == 6
+
+
+def test_a_share_of_zero_switches_the_tag_cap_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    no_similarity(monkeypatch)
+    manifest = tagged_field(tmp_path, beach=12, food=4)
+
+    result = select_clips(manifest, tag_settings(10, share=0.0))
+
+    dominant = [manifest.segments[i].dominant_tag for i in result.selected]
+    assert dominant.count("beach") == 10
+    assert result.held_by_tag == 0

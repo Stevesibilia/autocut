@@ -59,6 +59,8 @@ class SelectionResult:
     target_duration_s: float = 0.0
     diversity_lambda: float = 0.0
     relaxed_gap: bool = False
+    lifted_tag_cap: bool = False
+    held_by_tag: int = 0
     total_duration_s: float = 0.0
     places: int = 0
     visits: int = 0
@@ -143,6 +145,16 @@ def select_clips(
         1
         for segment in candidates
         if segment.reason == "place_cap" and segment.outcome != "selected"
+    )
+    # Counted against the finished selection rather than recorded during it: the cap
+    # is a ceiling on the whole edit, so whether it held a candidate back is only true
+    # once the edit is complete.
+    result.held_by_tag = sum(
+        1
+        for segment in candidates
+        if segment.outcome != "selected"
+        and not _excluded(segment)
+        and _tag_cap_blocks(config, segment, chosen, max_clips)
     )
     _record_durations(manifest, config, chosen, result)
     result.selected = [segment.id for segment in chosen]
@@ -374,6 +386,7 @@ def _greedy(
                 chosen,
                 matrix,
                 lam,
+                max_clips,
                 result,
             )
             if pick is None:
@@ -382,7 +395,7 @@ def _greedy(
             remaining.remove(pick)
 
     while len(chosen) < max_clips:
-        pick = _best_pick(manifest, config, remaining, chosen, matrix, lam, result)
+        pick = _best_pick(manifest, config, remaining, chosen, matrix, lam, max_clips, result)
         if pick is None:
             break
         chosen.append(pick)
@@ -422,13 +435,14 @@ def _best_pick(
     chosen: list[Segment],
     matrix: SimilarityMatrix,
     lam: float,
+    max_clips: int,
     result: SelectionResult,
 ) -> Segment | None:
     """The eligible candidate with the highest penalized score.
 
-    Two passes. The first honours every cap; the second lifts the two that exist to
-    spread the edit out, the minimum temporal gap and the place cap, because an edit
-    short of clips is worse than an edit with two shots from one spot.
+    Two passes. The first honours every cap; the second lifts the three that exist to
+    spread the edit out, the minimum temporal gap, the place cap and the tag share cap,
+    because an edit short of clips is worse than an edit with two shots from one spot.
     """
     chosen_ids = [segment.id for segment in chosen]
     taken = set(chosen_ids)
@@ -437,7 +451,7 @@ def _best_pick(
             segment
             for segment in pool
             if segment.id not in taken
-            and _eligible(manifest, config, segment, chosen, relaxed=relaxed)
+            and _eligible(manifest, config, segment, chosen, max_clips, relaxed=relaxed)
         ]
         if not eligible:
             continue
@@ -450,8 +464,28 @@ def _best_pick(
                 best_value, best = value, segment
         if relaxed:
             result.relaxed_gap = True
+            # Which cap was lifted matters to the reader: "no other subject was left"
+            # is a different message from "the clips were too close together".
+            if best is not None and _tag_cap_blocks(config, best, chosen, max_clips):
+                result.lifted_tag_cap = True
         return best
     return None
+
+
+def _tag_cap_blocks(
+    config: AutocutConfig, segment: Segment, chosen: list[Segment], max_clips: int
+) -> bool:
+    """Whether the tag share cap stands between this candidate and a slot.
+
+    The share is of the final count rather than of what is chosen so far, because a
+    share of the running total would let the first clip of any tag fill it.
+    """
+    share = config.selection.max_share_per_tag
+    dominant = segment.dominant_tag
+    if dominant is None or share <= 0 or max_clips <= 0:
+        return False
+    same_tag = sum(1 for other in chosen if other.dominant_tag == dominant)
+    return same_tag / max_clips >= share
 
 
 def _apply_share_ceiling(
@@ -531,6 +565,7 @@ def _eligible(
     config: AutocutConfig,
     segment: Segment,
     chosen: list[Segment],
+    max_clips: int,
     *,
     relaxed: bool,
 ) -> bool:
@@ -549,6 +584,12 @@ def _eligible(
 
     if relaxed:
         return True
+
+    # Half an edit of beaches is a holiday video of one beach. The cap only applies
+    # while something else is available: an untagged candidate carries no dominant tag
+    # and is never held back by it.
+    if _tag_cap_blocks(config, segment, chosen, max_clips):
+        return False
 
     # One spot on one outing gives a few clips, however different the pixels look.
     # A candidate with no GPS has no visit and is never held back by this.

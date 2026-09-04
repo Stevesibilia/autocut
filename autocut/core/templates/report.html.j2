@@ -433,6 +433,16 @@
   .tag.klass { border-color: var(--accent); color: var(--accent); }
   .tag.cluster { border-style: dashed; }
   .tag.place { border-style: dotted; }
+  .tag.subject {
+    border-style: solid;
+    font-weight: 600;
+  }
+  .tag.subject .confidence {
+    font-weight: 400;
+    opacity: 0.7;
+    margin-left: 0.35em;
+  }
+  .tag.subject.weak { font-weight: 400; }
   .tag.reason { border-color: var(--reject); color: var(--reject); background: var(--reject-wash); }
   .tag.policy { border-color: var(--ink-muted); color: var(--ink-muted); background: transparent; }
   .tag.length { font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -599,6 +609,21 @@
     </div>
     {% endif %}
 
+    {% if summary.tags %}
+    <div class="panel">
+      <h2>Tags</h2>
+      <p class="totals"><b>{{ summary.tags|length }}</b><span>tags</span></p>
+      <dl class="tally">
+        {% for tag in summary.tags %}
+        <div>
+          <dt>{{ tag.label }}</dt>
+          <dd>{{ tag.selected }} of {{ tag.segments }} carrying it</dd>
+        </div>
+        {% endfor %}
+      </dl>
+    </div>
+    {% endif %}
+
     <div class="panel">
       <h2>Files per class</h2>
       <dl class="tally">
@@ -659,6 +684,17 @@
       </select>
     </div>
     {% endif %}
+    {% if summary.tag_names %}
+    <div class="field">
+      <label for="tag">Tag</label>
+      <select id="tag">
+        <option value="">All</option>
+        {% for tag in summary.tags %}
+        <option value="{{ tag.label }}">{{ tag.label }} ({{ tag.segments }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
     <div class="field">
       <label for="outcome">Outcome</label>
       <select id="outcome">
@@ -684,6 +720,7 @@
              data-outcome="{{ card.outcome }}"
              data-reason="{{ card.reason or '' }}"
              data-place="{{ card.place_id if card.place_id is not none else '' }}"
+             data-tags="{{ card.tag_keys }}"
              data-order="{{ card.order }}"
              data-score="{{ card.score if card.score is not none else -1 }}">
       <div class="shot">
@@ -720,6 +757,10 @@
         {% if card.snapped %}
         <span class="tag" title="Window start moved onto a motion boundary">snapped</span>
         {% endif %}
+        {% for tag in card.tags %}
+        <span class="tag subject{% if not tag.dominant %} weak{% endif %}"
+              title="{{ tag.group or tag.source }} tag, {{ tag.source }}, confidence {{ tag.confidence_label }}{% if tag.dominant %}, names the clip{% endif %}">{{ tag.label }}<span class="confidence">{{ tag.confidence_label }}</span></span>
+        {% endfor %}
         {% if card.place_label %}
         <span class="tag place" title="Visit {{ card.visit_id }}">{{ card.place_label }}</span>
         {% endif %}
@@ -784,16 +825,20 @@
     outcome: document.getElementById("outcome"),
     reason: document.getElementById("reason")
   };
-  // The place filter only exists when the footage carried GPS.
+  // The place filter only exists when the footage carried GPS, and the tag filter
+  // only when something was tagged.
   var placeControl = document.getElementById("place");
   if (placeControl) { controls.place = placeControl; }
+  var tagControl = document.getElementById("tag");
+  if (tagControl) { controls.tag = tagControl; }
 
   function apply() {
     var wanted = {
       klass: controls.klass.value,
       outcome: controls.outcome.value,
       reason: controls.reason.value,
-      place: controls.place ? controls.place.value : ""
+      place: controls.place ? controls.place.value : "",
+      tag: controls.tag ? controls.tag.value : ""
     };
     var shown = 0;
     cards.forEach(function (card) {
@@ -801,7 +846,8 @@
         (!wanted.klass || card.dataset.class === wanted.klass) &&
         (!wanted.outcome || card.dataset.outcome === wanted.outcome) &&
         (!wanted.reason || card.dataset.reason === wanted.reason) &&
-        (!wanted.place || card.dataset.place === wanted.place);
+        (!wanted.place || card.dataset.place === wanted.place) &&
+        (!wanted.tag || card.dataset.tags.indexOf("|" + wanted.tag + "|") !== -1);
       card.hidden = !keep;
       if (keep) { shown += 1; }
     });
@@ -828,6 +874,7 @@
     controls.outcome.value = "";
     controls.reason.value = "";
     if (controls.place) { controls.place.value = ""; }
+    if (controls.tag) { controls.tag.value = ""; }
     apply();
   });
 

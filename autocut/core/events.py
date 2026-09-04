@@ -12,7 +12,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-Stage = Literal["scan", "probe", "analyze", "embed", "select", "soundtrack", "sync", "export"]
+Stage = Literal[
+    "scan", "probe", "analyze", "embed", "tag", "select", "soundtrack", "sync", "export"
+]
 
 
 @dataclass(slots=True)

@@ -47,6 +47,18 @@ class CardMetric:
 
 
 @dataclass(slots=True)
+class CardTag:
+    """One tag as the card shows it."""
+
+    label: str
+    confidence: float
+    confidence_label: str
+    source: str
+    group: str | None
+    dominant: bool
+
+
+@dataclass(slots=True)
 class Card:
     """One segment, flattened into everything the template prints."""
 
@@ -95,6 +107,8 @@ class Card:
     thumbnail: str | None
     sprite: str | None
     metrics: list[CardMetric] = field(default_factory=list)
+    tags: list[CardTag] = field(default_factory=list)
+    tag_keys: str = ""
     height_label: str | None = None
 
 
@@ -107,6 +121,15 @@ class PlaceSummary:
     visits: int
     selected: int
     segments: int
+
+
+@dataclass(slots=True)
+class TagSummary:
+    """One tag in the header: how many segments carry it and how many were selected."""
+
+    label: str
+    segments: int
+    selected: int
 
 
 @dataclass(slots=True)
@@ -131,6 +154,7 @@ class Summary:
     exported_count: int
     snapped_count: int
     places: list[PlaceSummary]
+    tags: list[TagSummary]
     export_mode: str | None
     export_fps: float | None
     export_failed: int
@@ -138,6 +162,7 @@ class Summary:
     classes: list[str]
     outcomes: list[str]
     reasons: list[str]
+    tag_names: list[str]
 
 
 def render_report(manifest: Manifest, out_dir: Path) -> Path:
@@ -260,8 +285,40 @@ def _card(segment: Segment, source: SourceFile | None, index: int, out_dir: Path
         thumbnail=relative_asset(segment.thumbnail, out_dir),
         sprite=relative_asset(segment.sprite, out_dir),
         metrics=metrics,
+        tags=_card_tags(segment),
+        # A delimited list rather than a space separated one: a label from the user's
+        # own set may contain a space, and the filter compares whole labels.
+        tag_keys=_tag_keys(segment),
         height_label=height,
     )
+
+
+def _card_tags(segment: Segment) -> list[CardTag]:
+    """Every tag on a segment, the one that names the clip first."""
+    dominant = segment.dominant_tag
+    ordered = sorted(segment.tags, key=lambda tag: (not tag.primary, -tag.confidence))
+    seen_dominant = False
+    cards: list[CardTag] = []
+    for tag in ordered:
+        is_dominant = not seen_dominant and tag.primary and tag.label == dominant
+        seen_dominant = seen_dominant or is_dominant
+        cards.append(
+            CardTag(
+                label=tag.label,
+                confidence=tag.confidence,
+                confidence_label=f"{tag.confidence:.2f}",
+                source=tag.source,
+                group=tag.group,
+                dominant=is_dominant,
+            )
+        )
+    return cards
+
+
+def _tag_keys(segment: Segment) -> str:
+    if not segment.tags:
+        return ""
+    return "|" + "|".join(tag.label for tag in segment.tags) + "|"
 
 
 def build_places(manifest: Manifest, cards: list[Card]) -> list[PlaceSummary]:
@@ -289,6 +346,25 @@ def build_places(manifest: Manifest, cards: list[Card]) -> list[PlaceSummary]:
     ]
 
 
+def build_tags(manifest: Manifest) -> list[TagSummary]:
+    """Every tag present on any segment, most carried first.
+
+    Counted by segments carrying the tag rather than by segments it is dominant on, so
+    the number beside a filter is the number of cards that filter leaves visible.
+    """
+    carried: Counter[str] = Counter()
+    chosen: Counter[str] = Counter()
+    for segment in manifest.segments.values():
+        for label in {tag.label for tag in segment.tags}:
+            carried[label] += 1
+            if segment.outcome == "selected":
+                chosen[label] += 1
+    return [
+        TagSummary(label=label, segments=count, selected=chosen[label])
+        for label, count in sorted(carried.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
 def resolve_held_by(cards: list[Card]) -> None:
     """Name the clips that filled a visit by their edit order, not by their ids.
 
@@ -306,6 +382,7 @@ def resolve_held_by(cards: list[Card]) -> None:
 
 def build_summary(manifest: Manifest, cards: list[Card]) -> Summary:
     """Header counts. Every filter dropdown is built from the values actually present."""
+    tags = build_tags(manifest)
     per_class = Counter(source.source_class for source in manifest.files.values())
     per_outcome = Counter(card.outcome for card in cards)
     per_reason = Counter(card.reason for card in cards if card.reason)
@@ -340,6 +417,7 @@ def build_summary(manifest: Manifest, cards: list[Card]) -> Summary:
         exported_count=sum(1 for card in cards if card.exported_name),
         snapped_count=sum(1 for card in cards if card.snapped),
         places=build_places(manifest, cards),
+        tags=tags,
         export_mode=manifest.export.mode,
         export_fps=manifest.export.target_fps,
         export_failed=manifest.export.failed,
@@ -347,6 +425,7 @@ def build_summary(manifest: Manifest, cards: list[Card]) -> Summary:
         classes=[name for name in SOURCE_CLASSES if per_class[name]],
         outcomes=[name for name in ("candidate", "selected", "rejected") if per_outcome[name]],
         reasons=[name for name in ALL_REASONS if per_reason[name]],
+        tag_names=[summary.label for summary in tags],
     )
 
 

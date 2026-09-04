@@ -39,6 +39,23 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 
 @pytest.fixture(autouse=True)
+def no_model_downloads(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep every test that is not marked ``ai`` away from the real vision model.
+
+    ``autocut analyze`` embeds and tags at the end when the ai extra is installed, and
+    a CLI test points the cache at its own ``tmp_path``. On a machine with the extra
+    that meant every such test downloading 600 MB of weights into a fresh directory:
+    the unit suite took fifteen minutes and left 18 GB in ``/tmp``. Tests that want the
+    seams patch the probe themselves, which overrides this.
+    """
+    if "ai" in request.keywords:
+        return
+    from autocut.core import embeddings
+
+    monkeypatch.setattr(embeddings, "_probe", (False, "the ai extra is switched off for this test"))
+
+
+@pytest.fixture(autouse=True)
 def plain_cli_output(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make Rich render CLI output as plain, unwrapped text.
 

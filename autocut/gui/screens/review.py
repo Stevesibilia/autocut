@@ -35,13 +35,9 @@ from autocut.gui.widgets.montage import MontagePlayer, clip_labels
 from autocut.gui.widgets.preview import PreviewPanel
 from autocut.gui.widgets.sliders import SliderPanel
 from autocut.gui.widgets.thumb_grid import ThumbGrid
+from autocut.gui.widgets.topbar import Counter, edit_counters
 
 ANY = "any"
-
-
-def duration_label(seconds: float) -> str:
-    minutes, secs = divmod(int(round(seconds)), 60)
-    return f"{minutes}:{secs:02d}"
 
 
 class ReviewScreen(QWidget):
@@ -65,12 +61,13 @@ class ReviewScreen(QWidget):
         self.preview = PreviewPanel(state, self)
         self.sliders = SliderPanel(state, self)
 
-        # --- header ---------------------------------------------------------
-        self.counts = QLabel()
-        self.counts.setStyleSheet("font-size: 15px; font-weight: 600;")
+        # --- notices ---------------------------------------------------------
+        # The counters live in the window's top bar now: they are about the project and
+        # every screen wants to read them. What is left here is what only this screen
+        # can say, which is when the edit disagrees with the settings.
         self.warning = QLabel()
         self.warning.setWordWrap(True)
-        self.warning.setStyleSheet("color: palette(link-visited);")
+        self.warning.setProperty("role", "warning")
 
         # --- filters --------------------------------------------------------
         self.sort_box = QComboBox()
@@ -105,7 +102,7 @@ class ReviewScreen(QWidget):
         self.play_all_button.clicked.connect(self.play_all)
         self.montage_note = QLabel()
         self.montage_note.setWordWrap(True)
-        self.montage_note.setStyleSheet("color: palette(mid);")
+        self.montage_note.setProperty("role", "muted")
 
         self.keep_button = QPushButton("Keep (K)")
         self.reject_button = QPushButton("Reject (R)")
@@ -137,14 +134,14 @@ class ReviewScreen(QWidget):
         filters.addWidget(self.show_rejected)
         filters.addWidget(self.groups_toggle)
 
+        # Play all and Export report are handed to the top bar by bar_actions; what
+        # stays here is the decision row, which belongs beside the grid it acts on.
         actions = QHBoxLayout()
-        actions.addWidget(self.play_all_button)
         actions.addWidget(self.keep_button)
         actions.addWidget(self.reject_button)
         actions.addWidget(self.clear_button)
         actions.addWidget(self.undo_button)
         actions.addStretch(1)
-        actions.addWidget(self.report_button)
 
         right = QWidget()
         right_layout = QVBoxLayout(right)
@@ -160,7 +157,6 @@ class ReviewScreen(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
-        layout.addWidget(self.counts)
         layout.addWidget(self.warning)
         layout.addWidget(self.montage_note)
         layout.addLayout(filters)
@@ -285,26 +281,37 @@ class ReviewScreen(QWidget):
 
     # --- header ------------------------------------------------------------
 
-    def refresh_header(self) -> None:
-        """Selected clips and total duration, project wide, whatever the filters show.
+    def bar_counters(self) -> list[Counter]:
+        """The edit, counted for the top bar: project wide, whatever the filters show.
 
-        Project wide on purpose: the header answers "how long is my edit", and a
+        Project wide on purpose. The counters answer "how long is my edit", and a
         number that changed when a filter changed would answer nothing.
         """
         manifest = self._state.manifest
         if manifest is None:
-            self.counts.setText("No project open")
+            return []
+        selected = [s for s in manifest.segments.values() if s.outcome == "selected"]
+        return edit_counters(
+            clips=len(selected),
+            duration_s=total_duration(selected),
+            # The synced tempo, not the measured one: a measurement is not a sync,
+            # and the counter is about the edit the clips were actually cut to.
+            bpm=round(manifest.soundtrack.synced_bpm) if manifest.soundtrack.synced_bpm else None,
+            kept=sum(1 for s in manifest.segments.values() if s.kept),
+            rejected=sum(1 for s in manifest.segments.values() if s.user_rejected),
+        )
+
+    def bar_actions(self) -> list[QWidget]:
+        """The two things this screen does that are about the whole edit."""
+        return [self.play_all_button, self.report_button]
+
+    def refresh_header(self) -> None:
+        """The one notice only this screen can give: the edit against the settings."""
+        manifest = self._state.manifest
+        if manifest is None:
             self.warning.clear()
             return
-        selected = [s for s in manifest.segments.values() if s.outcome == "selected"]
         kept = sum(1 for s in manifest.segments.values() if s.kept)
-        rejected = sum(1 for s in manifest.segments.values() if s.user_rejected)
-        total = total_duration(selected)
-        showing = self.grid.count
-        self.counts.setText(
-            f"{len(selected)} clips, {duration_label(total)} of edit  "
-            f"({showing} shown, {kept} kept by hand, {rejected} rejected by hand)"
-        )
         cap = self._state.config.selection.max_clips
         if kept > cap:
             self.warning.setText(

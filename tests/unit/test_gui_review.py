@@ -27,11 +27,12 @@ from autocut.core.manifest import (  # noqa: E402
     SourceFile,
     Tag,
 )
-from autocut.gui.screens.review import ReviewScreen, duration_label  # noqa: E402
+from autocut.gui.screens.review import ReviewScreen  # noqa: E402
 from autocut.gui.state import ProjectState  # noqa: E402
 from autocut.gui.widgets.groups import build_groups  # noqa: E402
 from autocut.gui.widgets.preview import snap  # noqa: E402
 from autocut.gui.widgets.scrubber import SpriteStrip  # noqa: E402
+from autocut.gui.widgets.topbar import duration_label  # noqa: E402
 
 pytestmark = pytest.mark.gui
 
@@ -188,10 +189,14 @@ def test_the_rejected_clips_can_be_revealed(screen: ReviewScreen) -> None:
     assert "f7:0" in screen.grid.visible_ids()
 
 
-def test_the_header_counts_the_edit_and_not_the_filter(screen: ReviewScreen) -> None:
-    """The scenario from the spec: filter to one place, the header stays project wide."""
-    before = screen.counts.text()
-    assert "3 clips" in before
+def counter(screen: ReviewScreen, label: str) -> str:
+    """The value of one top bar counter, by the word under it."""
+    return next(c.value for c in screen.bar_counters() if c.label == label)
+
+
+def test_the_counters_count_the_edit_and_not_the_filter(screen: ReviewScreen) -> None:
+    """The scenario from the spec: filter to one place, the counters stay project wide."""
+    assert counter(screen, "clips") == "3"
     manifest = screen._state.manifest
     assert manifest is not None
     place = sorted({s.place_id for s in manifest.segments.values() if s.place_id is not None})[0]
@@ -202,7 +207,7 @@ def test_the_header_counts_the_edit_and_not_the_filter(screen: ReviewScreen) -> 
     assert shown
     assert all(manifest.segments[sid].place_id == place for sid in shown)
     assert len(shown) < 7
-    assert "3 clips" in screen.counts.text()
+    assert counter(screen, "clips") == "3"
 
 
 def test_the_place_filter_names_the_place(screen: ReviewScreen) -> None:
@@ -266,7 +271,7 @@ def test_rejecting_with_the_keyboard_re_runs_the_selection(screen: ReviewScreen)
     assert selected.user_decision == "reject"
     assert selected.outcome != "selected"
     assert sum(1 for s in manifest.segments.values() if s.outcome == "selected") == 3
-    assert "rejected by hand" in screen.counts.text()
+    assert counter(screen, "kept · rejected").endswith("· 1")
 
 
 def test_keeping_with_the_keyboard_pins_the_clip(screen: ReviewScreen) -> None:
@@ -769,7 +774,7 @@ def test_exporting_the_report_shows_the_review(screen: ReviewScreen) -> None:
     assert path is not None
     html = path.read_text(encoding="utf-8")
     assert "user rejected" in html
-    assert "2 rejected by hand" in screen.counts.text()
+    assert counter(screen, "kept · rejected").endswith("· 2")
 
 
 def test_the_report_button_writes_beside_the_manifest(screen: ReviewScreen) -> None:
@@ -998,11 +1003,10 @@ def test_the_header_shows_the_edit_and_not_the_montage(
     assert manifest is not None
     selected = [s for s in manifest.segments.values() if s.outcome == "selected"]
 
-    header = screen.counts.text()
+    edit = counter(screen, "edit")
     note = screen.montage_note.text()
 
-    assert "of edit" in header
-    assert duration_label(total_duration(selected)) in header
+    assert edit == duration_label(total_duration(selected))
     # The montage's own length lives in the transport row, not under the header.
     assert f"{manifest.preview.duration_s:.1f}" not in note
     assert "Montage of" in note
@@ -1055,7 +1059,7 @@ def test_the_screen_follows_a_different_project(
     assert screen.grid.count == 3
     # The filters were rebuilt for this project: it has places of its own.
     assert screen.place_box.count() >= 2
-    assert screen.counts.text() != "No project open"
+    assert screen.bar_counters()
 
 
 def test_an_empty_state_says_so(qtbot: Any) -> None:
@@ -1064,7 +1068,7 @@ def test_an_empty_state_says_so(qtbot: Any) -> None:
     qtbot.addWidget(widget)
 
     assert widget.grid.count == 0
-    assert "No project open" in widget.counts.text()
+    assert widget.bar_counters() == []
 
 
 def _key(key: Qt.Key) -> Any:

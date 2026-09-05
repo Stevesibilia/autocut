@@ -144,6 +144,8 @@ class ProjectScreen(QWidget):
 
     project_opened = Signal()
     settings_requested = Signal()
+    machine_checked = Signal()
+    """The doctor report was rebuilt, so the rail can say what this machine can do."""
 
     def __init__(self, state: ProjectState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -345,6 +347,7 @@ class ProjectScreen(QWidget):
         """The doctor report, so a missing ffmpeg is seen before a run, not during one."""
         self.doctor_report = inspect_environment(self._state.config)
         self.doctor.setText(doctor_table(self.doctor_report))
+        self.machine_checked.emit()
 
     def refresh_recent(self) -> None:
         self.recent.clear()

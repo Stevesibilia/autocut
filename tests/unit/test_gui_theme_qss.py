@@ -165,13 +165,11 @@ def test_qt_parses_the_sheet_without_a_word(
 def test_a_broken_sheet_does_make_qt_complain(qapp: QApplication, qt_messages: list[str]) -> None:
     """Proof the handler above is actually listening to Qt."""
     label = QLabel("x")
-    try:
-        label.setStyleSheet("QLabel { color: $accent; }")
-        label.ensurePolished()
-        label.show()
-        qapp.processEvents()
-    finally:
-        label.deleteLater()
+    label.setStyleSheet("QLabel { color: $accent; }")
+    # Polishing is what makes Qt parse it. The label is never shown and never queued
+    # for deletion, so it cannot come back and warn again inside somebody else's test.
+    label.ensurePolished()
+    qapp.processEvents()
     assert qt_messages
 
 

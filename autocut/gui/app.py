@@ -12,24 +12,23 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast, runtime_checkable
 
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QCloseEvent, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QStackedWidget,
     QStatusBar,
+    QVBoxLayout,
     QWidget,
 )
 
 from autocut.core.config import AutocutConfig
+from autocut.core.doctor import DoctorReport
 from autocut.core.manifest import Manifest
 from autocut.gui import theme
 from autocut.gui.screens.analysis import AnalysisScreen
@@ -40,6 +39,8 @@ from autocut.gui.screens.soundtrack import SoundtrackScreen
 from autocut.gui.settings import SettingsDialog
 from autocut.gui.state import CONFIG_NAME, ProjectState
 from autocut.gui.theme import icons
+from autocut.gui.widgets.rail import NavRail
+from autocut.gui.widgets.topbar import Counter, TopBar
 
 APP_TITLE = "AutoCut"
 
@@ -79,6 +80,19 @@ def screen_available(spec: ScreenSpec, manifest: Manifest | None) -> bool:
     return any(segment.outcome == "selected" for segment in manifest.segments.values())
 
 
+@runtime_checkable
+class BarScreen(Protocol):
+    """A screen that fills the top bar with its own counters and actions.
+
+    Not called `actions` because `QWidget.actions` already means something in Qt and
+    shadowing it would quietly break every context menu.
+    """
+
+    def bar_counters(self) -> list[Counter]: ...
+
+    def bar_actions(self) -> list[QWidget]: ...
+
+
 class MainWindow(QMainWindow):
     """The one window. Navigation on the left, the current screen filling the rest."""
 
@@ -88,15 +102,13 @@ class MainWindow(QMainWindow):
         self.resize(1180, 760)
         self.state = state or ProjectState(self)
 
-        self.nav = QListWidget()
-        self.nav.setObjectName("nav")
-        self.nav.setFixedWidth(180)
-        self.nav.setFrameShape(QListWidget.Shape.NoFrame)
-        for spec in SCREENS:
-            self.nav.addItem(QListWidgetItem(spec.title))
-        self.nav.currentRowChanged.connect(self._show_row)
+        self.rail = NavRail(tuple((spec.key, spec.title) for spec in SCREENS))
+        self.rail.screen_chosen.connect(self.go_to)
+
+        self.top_bar = TopBar()
 
         self.stack = QStackedWidget()
+        self.stack.currentChanged.connect(lambda _index: self.refresh_top_bar())
         self.screens: dict[str, QWidget] = {
             "project": ProjectScreen(self.state),
             "analysis": AnalysisScreen(self.state),
@@ -107,12 +119,18 @@ class MainWindow(QMainWindow):
         for spec in SCREENS:
             self.stack.addWidget(self.screens[spec.key])
 
+        main_column = QVBoxLayout()
+        main_column.setContentsMargins(0, 0, 0, 0)
+        main_column.setSpacing(0)
+        main_column.addWidget(self.top_bar)
+        main_column.addWidget(self.stack, 1)
+
         central = QWidget()
         layout = QHBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(self.nav)
-        layout.addWidget(self.stack, 1)
+        layout.addWidget(self.rail)
+        layout.addLayout(main_column, 1)
         self.setCentralWidget(central)
 
         self.setStatusBar(QStatusBar())
@@ -123,6 +141,7 @@ class MainWindow(QMainWindow):
         assert isinstance(project_screen, ProjectScreen)
         project_screen.project_opened.connect(self._project_opened)
         project_screen.settings_requested.connect(self.open_settings)
+        project_screen.machine_checked.connect(self._machine_checked)
 
         self.state.segments_changed.connect(lambda _ids: self.refresh_navigation())
         self.state.selection_changed.connect(self.refresh_navigation)
@@ -132,7 +151,10 @@ class MainWindow(QMainWindow):
         self.state.stage_finished.connect(lambda name: self._set_status(f"{name} finished"))
         self.state.stage_cancelled.connect(lambda name: self._set_status(f"{name} cancelled"))
 
-        self.nav.setCurrentRow(0)
+        self.state.segments_changed.connect(lambda _ids: self.refresh_top_bar())
+        self.state.selection_changed.connect(self.refresh_top_bar)
+
+        self.go_to("project")
         self.refresh_navigation()
         apply_theme(QApplication.instance(), self.state.config.gui.theme)
 
@@ -141,28 +163,62 @@ class MainWindow(QMainWindow):
     def refresh_navigation(self) -> None:
         """Enable the screens this project has earned, and title the window after it."""
         manifest = self.state.manifest
-        for row, spec in enumerate(SCREENS):
-            item = self.nav.item(row)
-            available = screen_available(spec, manifest)
-            item.setFlags(
-                item.flags() | Qt.ItemFlag.ItemIsEnabled
-                if available
-                else item.flags() & ~Qt.ItemFlag.ItemIsEnabled
-            )
+        for spec in SCREENS:
+            self.rail.set_available(spec.key, screen_available(spec, manifest))
+        self.rail.set_machine(self.doctor_report, self.state.config.providers.cloud)
         if self.state.output_dir is not None:
             self.setWindowTitle(f"{APP_TITLE} — {self.state.output_dir.name}")
         else:
             self.setWindowTitle(APP_TITLE)
+        self.refresh_top_bar()
 
     def go_to(self, key: str) -> None:
-        for row, spec in enumerate(SCREENS):
-            if spec.key == key:
-                self.nav.setCurrentRow(row)
-                return
+        """Show a screen and mark it in the rail.
 
-    def _show_row(self, row: int) -> None:
-        if 0 <= row < len(SCREENS):
-            self.stack.setCurrentWidget(self.screens[SCREENS[row].key])
+        Deliberately not guarded by `screen_available`: the rail disables what the
+        project has not earned, and the window itself sends the user to a screen after
+        an open or a stage, where refusing would leave them looking at the wrong one.
+        """
+        if key not in self.screens:
+            return
+        self.stack.setCurrentWidget(self.screens[key])
+        self.rail.set_current(key)
+
+    @property
+    def doctor_report(self) -> DoctorReport | None:
+        """What the Project screen last found out about this machine.
+
+        The probe runs there because that is the screen that shows it in full; the rail
+        borrows the answer rather than running ffmpeg a second time.
+        """
+        screen = self.screens["project"]
+        assert isinstance(screen, ProjectScreen)
+        return getattr(screen, "doctor_report", None)
+
+    def _machine_checked(self) -> None:
+        self.rail.set_machine(self.doctor_report, self.state.config.providers.cloud)
+
+    @property
+    def current_key(self) -> str:
+        """The key of the screen on show."""
+        current = self.stack.currentWidget()
+        return next((key for key, screen in self.screens.items() if screen is current), "")
+
+    def refresh_top_bar(self) -> None:
+        """Fill the bar from the project and from whichever screen is on show."""
+        manifest = self.state.manifest
+        if manifest is None:
+            self.top_bar.clear_project()
+            return
+        name = self.state.output_dir.name if self.state.output_dir else APP_TITLE
+        self.top_bar.set_project(name, len(manifest.files), len(manifest.segments))
+        screen = self.stack.currentWidget()
+        if isinstance(screen, BarScreen):
+            self.top_bar.set_counters(screen.bar_counters())
+            self.top_bar.set_actions(screen.bar_actions())
+        else:
+            self.top_bar.set_counters([])
+            self.top_bar.set_actions([])
 
     # --- reacting to the state ---------------------------------------------
 

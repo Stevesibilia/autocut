@@ -18,10 +18,10 @@ class PlaceholderScreen(QWidget):
         super().__init__(parent)
         self.setObjectName(f"placeholder-{title.lower()}")
         heading = QLabel(title)
-        heading.setStyleSheet("font-size: 20px; font-weight: 600;")
+        heading.setProperty("role", "display")
         body = QLabel(message)
         body.setWordWrap(True)
-        body.setStyleSheet("color: palette(mid);")
+        body.setProperty("role", "muted")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(32, 32, 32, 32)

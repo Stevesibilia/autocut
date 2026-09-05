@@ -30,6 +30,7 @@ from autocut.core.montage import MontageResult, discard
 from autocut.core.report import render_report
 from autocut.core.rules import EXCLUSIONS
 from autocut.gui.state import ProjectState
+from autocut.gui.widgets.empty import EmptyState
 from autocut.gui.widgets.groups import GroupsView
 from autocut.gui.widgets.montage import MontagePlayer, clip_labels
 from autocut.gui.widgets.preview import PreviewPanel
@@ -44,6 +45,8 @@ class ReviewScreen(QWidget):
     """Filters and header on top, grid or groups on the left, preview and sliders right."""
 
     report_written = Signal(str)
+    open_project_requested = Signal()
+    """The empty state's one action: the window sends the user to the Project screen."""
 
     def __init__(self, state: ProjectState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -53,7 +56,19 @@ class ReviewScreen(QWidget):
         self.grid = ThumbGrid(state, self)
         self.groups = GroupsView(state, self)
         self.montage = MontagePlayer(self)
+        # Shown instead of the grid when there is nothing to review: one sentence and
+        # the one thing that would fix it, which here is opening a project.
+        self.open_project_button = QPushButton("Open a project…")
+        self.open_project_button.setProperty("variant", "primary")
+        self.open_project_button.clicked.connect(self.open_project_requested.emit)
+        self.empty = EmptyState(
+            "No project open. Open one and analyse it to review its clips.",
+            icon="folder",
+            action=self.open_project_button,
+        )
+
         self.stack = QStackedWidget()
+        self.stack.addWidget(self.empty)
         self.stack.addWidget(self.grid)
         self.stack.addWidget(self.groups)
         self.stack.addWidget(self.montage)
@@ -197,6 +212,7 @@ class ReviewScreen(QWidget):
         self._fill_filters(manifest)
         self.groups.refresh()
         self.refresh_header()
+        self._show_grid_or_empty()
         if manifest is not None and self.grid.count and not self.grid.current_id():
             self.grid.setCurrentIndex(self.grid.proxy.index(0, 0))
 
@@ -430,6 +446,13 @@ class ReviewScreen(QWidget):
         self.stack.setCurrentWidget(self.groups if groups else self.grid)
         if groups:
             self.groups.refresh()
+
+    def _show_grid_or_empty(self) -> None:
+        """The grid when there is a project, the empty state when there is not."""
+        if self._state.manifest is None:
+            self.stack.setCurrentWidget(self.empty)
+        elif self.stack.currentWidget() is self.empty:
+            self.stack.setCurrentWidget(self.grid)
 
     def _set_running(self, running: bool) -> None:
         """No decisions while a stage owns the manifest."""

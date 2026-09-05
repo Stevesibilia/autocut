@@ -45,6 +45,7 @@ from autocut.core.montage import MontageResult, discard
 from autocut.core.providers import TextProvider, cloud_enabled, find_key
 from autocut.core.soundtrack.build import build_soundtrack, store_user_variant, write_prompt_file
 from autocut.core.soundtrack.prompt import MoodDirection, RoomDirection, apply_mood
+from autocut.gui import theme
 from autocut.gui.state import ProjectState
 from autocut.gui.widgets.montage import MontagePlayer, clip_labels
 from autocut.gui.widgets.prompt_editor import PromptEditor
@@ -102,7 +103,7 @@ class SoundtrackScreen(QWidget):
         self.matched_label.setWordWrap(True)
         self.refine_note = QLabel()
         self.refine_note.setWordWrap(True)
-        self.refine_note.setStyleSheet("color: palette(mid);")
+        self.refine_note.setProperty("role", "muted")
 
         self.generate_button = QPushButton("Generate the prompt")
         self.generate_button.clicked.connect(self.generate)
@@ -504,7 +505,8 @@ class SoundtrackScreen(QWidget):
         manifest.soundtrack.comparison_note = comparison.note
         self.comparison_label.setText(comparison.note or "")
         drifted = comparison.status in ("drifted", "half", "double")
-        self.comparison_label.setStyleSheet("color: palette(link-visited);" if drifted else "")
+        self.comparison_label.setProperty("role", "warning" if drifted else None)
+        theme.repolish(self.comparison_label)
         if comparison.status in ("half", "double") and proposed:
             # The tracker's usual mistake, and the fix is one field away.
             self.override_field.blockSignals(True)

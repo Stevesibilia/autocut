@@ -1104,3 +1104,23 @@ def test_a_review_is_saved_without_being_asked(screen: ReviewScreen, qtbot: Any)
     reloaded = Manifest.load(state.output_dir / "manifest.json")  # type: ignore[operator]
     assert reloaded.segments[segment_id].user_decision == "reject"
     assert time.monotonic() - started < 5.0
+
+
+def test_a_screen_without_a_project_offers_to_open_one(qtbot: Any) -> None:
+    """The empty state, and its one action: the window is asked for the Project screen."""
+    state = ProjectState()
+    widget = ReviewScreen(state)
+    qtbot.addWidget(widget)
+    asked: list[int] = []
+    widget.open_project_requested.connect(lambda: asked.append(1))
+
+    assert widget.stack.currentWidget() is widget.empty
+    assert "No project open" in widget.empty.message.text()
+    widget.open_project_button.click()
+
+    assert asked == [1]
+
+
+def test_opening_a_project_replaces_the_empty_state_with_the_grid(screen: ReviewScreen) -> None:
+    assert screen.stack.currentWidget() is screen.grid
+    assert screen.grid.count

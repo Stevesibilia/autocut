@@ -96,7 +96,7 @@ class AnalysisScreen(QWidget):
         self.warnings = QLabel()
         self.warnings.setWordWrap(True)
         self.warnings.setTextFormat(Qt.TextFormat.PlainText)
-        self.warnings.setStyleSheet("color: palette(link-visited);")
+        self.warnings.setProperty("role", "warning")
 
         progress_box = QGroupBox("Progress")
         progress_layout = QVBoxLayout(progress_box)

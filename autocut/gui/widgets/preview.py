@@ -75,7 +75,7 @@ class PreviewPanel(QWidget):
         self._strips = StripCache(self)
 
         self.title = QLabel("Nothing selected")
-        self.title.setStyleSheet("font-weight: 600;")
+        self.title.setProperty("role", "title")
         self.frame = QLabel()
         self.frame.setMinimumHeight(180)
         self.frame.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -105,7 +105,7 @@ class PreviewPanel(QWidget):
         self.bounds_label = QLabel("")
         self.note = QLabel("")
         self.note.setWordWrap(True)
-        self.note.setStyleSheet("color: palette(mid);")
+        self.note.setProperty("role", "muted")
 
         self.clear_button = QPushButton("Use the automatic window")
         self.clear_button.clicked.connect(self._clear_bounds)

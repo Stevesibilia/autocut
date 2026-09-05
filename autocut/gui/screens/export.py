@@ -159,7 +159,7 @@ class ExportScreen(QWidget):
         grid = QGridLayout()
         for column, header in enumerate(("Class", "Keep audio", "Slow motion", "Lens", "LUT")):
             label = QLabel(header)
-            label.setStyleSheet("font-weight: 600;")
+            label.setProperty("role", "title")
             # The three middle columns are checkboxes, which Qt draws at their own
             # width: centred under the header they belong to rather than left against
             # the name of the class in the column before.
@@ -232,7 +232,7 @@ class ExportScreen(QWidget):
         self.problems = QLabel()
         self.problems.setWordWrap(True)
         self.problems.setTextFormat(Qt.TextFormat.PlainText)
-        self.problems.setStyleSheet("color: palette(link-visited);")
+        self.problems.setProperty("role", "error")
 
         self.run_button = QPushButton("Export")
         self.run_button.clicked.connect(self.run)

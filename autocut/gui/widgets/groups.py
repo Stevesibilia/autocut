@@ -99,7 +99,7 @@ class GroupCard(QFrame):
 
         layout = QVBoxLayout(self)
         header = QLabel(group.title)
-        header.setStyleSheet("font-weight: 600;")
+        header.setProperty("role", "title")
         layout.addWidget(header)
 
         row = QHBoxLayout()
@@ -199,7 +199,7 @@ class GroupsView(QScrollArea):
         self._layout = QVBoxLayout(self._body)
         self.setWidget(self._body)
         self.empty = QLabel("No near duplicates to compare yet. Run the selection first.")
-        self.empty.setStyleSheet("color: palette(mid);")
+        self.empty.setProperty("role", "muted")
         self._layout.addWidget(self.empty)
         self._layout.addStretch(1)
         self.cards: list[GroupCard] = []

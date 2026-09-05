@@ -256,3 +256,81 @@ def test_the_actions_stay_the_screens_own_buttons(qtbot: Any) -> None:
     assert button.parent() is None
     button.click()
     assert clicks == [1, 1]
+
+
+# --- the empty state --------------------------------------------------------
+
+
+def test_an_empty_state_is_a_sentence_and_at_most_one_action(qtbot: Any) -> None:
+    from autocut.gui.widgets.empty import EmptyState
+
+    bare = EmptyState("Nothing here.")
+    qtbot.addWidget(bare)
+    assert bare.message.text() == "Nothing here."
+    assert not bare.icon.pixmap().isNull()
+
+    button = QPushButton("Do the thing")
+    with_action = EmptyState("Nothing here.", icon="folder", action=button)
+    qtbot.addWidget(with_action)
+    assert button.parent() is not None
+
+
+# --- recent projects --------------------------------------------------------
+
+
+def test_a_recent_card_names_the_folder_and_where_it_is(qtbot: Any, tmp_path: Any) -> None:
+    from autocut.gui.widgets.recent import RecentCard
+
+    project = tmp_path / "holidays" / "sardegna"
+    project.mkdir(parents=True)
+    card = RecentCard(project)
+    qtbot.addWidget(card)
+
+    assert card.name.text() == "sardegna"
+    assert card.path.text() == str(project.parent)
+    assert card.touched.text() == "never opened"
+
+
+def test_a_recent_card_dates_itself_from_the_manifest(qtbot: Any, tmp_path: Any) -> None:
+    """The folder's own time changes when a thumbnail is cached, which is not a visit."""
+    from autocut.gui.widgets.recent import RecentCard, touched_label
+
+    project = tmp_path / "edit"
+    project.mkdir()
+    (project / "manifest.json").write_text("{}", encoding="utf-8")
+    card = RecentCard(project)
+    qtbot.addWidget(card)
+
+    assert card.touched.text() == "just now"
+    assert touched_label(tmp_path / "gone") == "never opened"
+
+
+def test_the_recent_list_replaces_its_cards(qtbot: Any, tmp_path: Any) -> None:
+    from autocut.gui.widgets.recent import RecentList
+
+    first = tmp_path / "one"
+    second = tmp_path / "two"
+    for folder in (first, second):
+        folder.mkdir()
+    listing = RecentList()
+    qtbot.addWidget(listing)
+
+    listing.set_projects([first, second])
+    assert [card.project for card in listing.cards] == [first, second]
+    assert listing.empty.isHidden()
+
+    listing.set_projects([second])
+    assert [card.project for card in listing.cards] == [second]
+
+
+def test_an_empty_recent_list_says_so(qtbot: Any) -> None:
+    from autocut.gui.widgets.recent import RecentList
+
+    listing = RecentList()
+    qtbot.addWidget(listing)
+
+    listing.set_projects([])
+
+    assert listing.cards == []
+    assert not listing.empty.isHidden()
+    assert "Nothing here yet" in listing.empty.text()

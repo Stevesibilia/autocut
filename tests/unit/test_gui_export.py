@@ -606,12 +606,23 @@ def test_the_render_card_names_what_it_writes_and_where(screen: ExportScreen) ->
     screen.refresh_frame()
     with_render = screen.destination_label.text()
 
-    assert clips_only.startswith("_selects/ in ")
+    assert clips_only.startswith("_selects/, in ")
     assert "montage.mp4" in with_render
-    assert str(screen._state.output_dir) in with_render
+    # The label is shortened so a deep path cannot stretch the screen; the whole of it
+    # is on the tooltip, which is where a user goes when the name is not enough.
+    assert screen.destination_label.toolTip() == str(screen._state.output_dir)
+    assert screen.destination_label.text().endswith("edit")
 
 
 def test_the_render_card_holds_the_toggle_and_its_fade(screen: ExportScreen) -> None:
     assert screen.render_box.parent() is screen.render_card
     assert screen.fade_field.parent() is screen.render_card
     assert screen.render_card.objectName() == "card"
+
+
+def test_a_deep_path_is_shortened_rather_than_stretching_the_screen() -> None:
+    from autocut.gui.screens.export import short_path
+
+    assert short_path(Path("/home/steve/holidays/sardegna/edit")) == "…/sardegna/edit"
+    assert short_path(Path("/edit")) == "/edit"
+    assert short_path(Path("/home/edit")) == "/home/edit"

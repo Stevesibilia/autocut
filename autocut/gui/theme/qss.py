@@ -189,6 +189,10 @@ QPushButton[variant="danger"] {
     color: $red;
 }
 
+QPushButton[variant="compact"] {
+    padding: 0 4px;
+}
+
 QPushButton:flat {
     border: none;
 }

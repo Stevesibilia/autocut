@@ -97,6 +97,23 @@ def folder_size(path: Path) -> int:
     return total
 
 
+def short_path(path: Path, keep: int = 2) -> str:
+    """The last `keep` parts of `path`, so a deep project folder still fits the card.
+
+    An absolute path has no spaces in it, so a word wrapped label asks for its whole
+    length and takes the screen with it. The full path lives on the tooltip.
+    """
+    shortened = "…/" + "/".join(path.parts[-keep:])
+    # A path that is already short gains nothing from an ellipsis and loses the root.
+    return str(path) if len(shortened) >= len(str(path)) else shortened
+
+
+#: Wide enough for a frame height and no wider.
+NUMBER_FIELD_WIDTH = 96
+#: The LUT path is the one field on the screen that is worth stretching.
+LUT_FIELD_WIDTH = 260
+
+
 class ExportScreen(QWidget):
     """The options, a dry run summary, the progress, and the folder at the end."""
 
@@ -141,7 +158,16 @@ class ExportScreen(QWidget):
         self.profile.add_box("codec", "Codec", self.codec_box)
         self.profile.add_box("vertical", "Vertical", self.vertical_box)
 
+        # A number is four characters wide. Left to itself a QFormLayout gives the field
+        # column every pixel that is going, and a CRF box a thousand pixels wide reads
+        # as a text area someone forgot to fill in.
+        for number in (self.crf_field, self.fps_field, self.width_field, self.height_field):
+            number.setFixedWidth(NUMBER_FIELD_WIDTH)
+        self.fade_field.setFixedWidth(NUMBER_FIELD_WIDTH)
+
         form = QFormLayout()
+        form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
         form.addRow("Quality (CRF)", self.crf_field)
         form.addRow("Target fps", self.fps_field)
         form.addRow("Maximum width", self.width_field)
@@ -204,7 +230,10 @@ class ExportScreen(QWidget):
                 else Qt.AlignmentFlag.AlignLeft,
             )
         grid.setColumnMinimumWidth(0, 90)
-        grid.setColumnStretch(4, 1)
+        # The class column takes the slack, not the LUT path: a row of checkboxes
+        # pushed to the far right of a wide window is a row nobody can follow back to
+        # the class it belongs to.
+        grid.setColumnStretch(5, 1)
         for row, source_class in enumerate(SOURCE_CLASSES, start=1):
             grid.addWidget(QLabel(source_class), row, 0)
             keep_audio = QCheckBox()
@@ -212,8 +241,12 @@ class ExportScreen(QWidget):
             lens = QCheckBox()
             lut = QLineEdit()
             lut.setPlaceholderText("none")
+            lut.setFixedWidth(LUT_FIELD_WIDTH)
             browse = QPushButton("…")
-            browse.setFixedWidth(30)
+            # Compact: the shared button rule pads by 14 px a side, which left a 30 px
+            # button with no room at all for the character on it.
+            browse.setProperty("variant", "compact")
+            browse.setFixedWidth(36)
             browse.clicked.connect(lambda _checked=False, name=source_class: self._browse_lut(name))
             for column, box in ((1, keep_audio), (2, slow), (3, lens)):
                 grid.addWidget(box, row, column, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -222,7 +255,7 @@ class ExportScreen(QWidget):
             holder.addWidget(browse)
             wrapper = QWidget()
             wrapper.setLayout(holder)
-            grid.addWidget(wrapper, row, 4)
+            grid.addWidget(wrapper, row, 4, alignment=Qt.AlignmentFlag.AlignLeft)
             self.audio_boxes[source_class] = keep_audio
             self.slow_boxes[source_class] = slow
             self.lens_boxes[source_class] = lens
@@ -481,9 +514,11 @@ class ExportScreen(QWidget):
             return
         if manifest is not None and self.render_box.isChecked():
             rendered = render_path(manifest, self._state.config).name
-            self.destination_label.setText(f"{SELECTS_DIR}/ and {rendered}, in {out}")
+            written = f"{SELECTS_DIR}/ and {rendered}"
         else:
-            self.destination_label.setText(f"{SELECTS_DIR}/ in {out}")
+            written = f"{SELECTS_DIR}/"
+        self.destination_label.setText(f"{written}, in {short_path(out)}")
+        self.destination_label.setToolTip(str(out))
 
     def _overrides(self) -> ExportOverrides:
         return ExportOverrides(

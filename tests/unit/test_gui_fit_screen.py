@@ -358,3 +358,32 @@ def test_the_weight_value_columns_come_from_the_font(window: MainWindow) -> None
     wanted = QFontMetrics(label.font()).horizontalAdvance("0.00")
 
     assert label.width() >= wanted or label.minimumWidth() >= wanted
+
+
+# --- what the Mac can report back -------------------------------------------
+
+
+def test_diagnose_prints_the_numbers_a_mac_report_needs(capsys: Any) -> None:
+    """Screens, ratios, fonts, theme and sizes, without entering the event loop.
+
+    Every defect in this change was found by eye on a Mac and described in prose. This
+    is so the next one can be reported as numbers.
+    """
+    code = gui_app.diagnose()
+    printed = capsys.readouterr().out
+
+    assert code == 0
+    for heading in ("screen", "font", "theme", "minimum size hint", "opening size"):
+        assert heading in printed.lower(), f"{heading} is missing from the report"
+    assert "ratio" in printed.lower()
+    assert f"{MIN_WIDTH}x{MIN_HEIGHT}" in printed
+
+
+def test_diagnose_names_the_bundled_families_and_the_theme(capsys: Any) -> None:
+    code = gui_app.diagnose()
+    printed = capsys.readouterr().out
+
+    assert code == 0
+    assert "Space Grotesk" in printed
+    assert "Plex Mono" in printed
+    assert "dark" in printed

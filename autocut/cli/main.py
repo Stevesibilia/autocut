@@ -990,6 +990,14 @@ def gui(
         Path | None,
         typer.Argument(help="Project folder to open on start. Optional."),
     ] = None,
+    diagnose: Annotated[
+        bool,
+        typer.Option(
+            "--diagnose",
+            help="Print the screens, fonts, theme and window sizes this machine reports, "
+            "then exit without opening a window.",
+        ),
+    ] = False,
 ) -> None:
     """Open the desktop window. Needs the gui extra."""
     try:
@@ -1003,6 +1011,13 @@ def gui(
         )
         console.print(f"  {error}")
         raise typer.Exit(code=1) from error
+    if diagnose:
+        # Imported here rather than beside `run`: a failure to import the report is not
+        # a missing gui extra, and pulling it in unconditionally made every caller
+        # depend on it.
+        from autocut.gui.app import diagnose as diagnose_gui
+
+        raise typer.Exit(code=diagnose_gui())
     raise typer.Exit(code=run_gui(project))
 
 

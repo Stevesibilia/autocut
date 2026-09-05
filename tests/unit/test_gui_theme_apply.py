@@ -9,6 +9,7 @@ merely not taken here.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 from typing import Any
 
@@ -67,10 +68,21 @@ def test_fusion_is_what_the_application_ends_up_with(qapp: QApplication) -> None
 
 
 def test_the_style_is_not_chosen_by_platform_any_more() -> None:
-    """ADR 10 supersedes the platform branch; this fails if it comes back."""
+    """ADR 10 supersedes the platform branch; this fails if it comes back.
+
+    Scoped to the function with `ast` rather than sliced to the end of the file: the
+    first version read everything after `def apply_theme` and so was tripped by an
+    unrelated later function that prints `sys.platform` as a diagnostic.
+    """
     source = Path(gui_app.__file__).read_text(encoding="utf-8")
-    body = source[source.index("def apply_theme") :]
-    assert "sys.platform" not in body
+    tree = ast.parse(source)
+    function = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "apply_theme"
+    )
+
+    assert "sys.platform" not in ast.get_source_segment(source, function)
 
 
 @pytest.mark.parametrize("name", ["dark", "light"])

@@ -59,3 +59,29 @@ def test_gui_is_in_the_help() -> None:
     result = runner.invoke(app, ["--help"])
 
     assert "gui" in result.stdout
+
+
+def test_diagnose_is_offered_without_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The flag has to reach the lazy import like everything else in this command."""
+    monkeypatch.setitem(sys.modules, "autocut.gui.app", None)
+
+    result = runner.invoke(app, ["gui", "--diagnose"])
+
+    assert result.exit_code == 1
+    assert "gui extra is not installed" in result.stdout
+
+
+def test_diagnose_calls_the_report_and_never_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """It exists so a Mac report can carry numbers, so it must not open a window."""
+    called: list[str] = []
+    fake = types.ModuleType("autocut.gui.app")
+    fake.run = lambda project=None: called.append("run") or 0  # type: ignore[attr-defined]
+    fake.diagnose = lambda: called.append("diagnose") or 0  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "autocut.gui.app", fake)
+
+    result = runner.invoke(app, ["gui", "--diagnose"])
+
+    assert result.exit_code == 0
+    assert called == ["diagnose"]

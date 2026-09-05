@@ -46,8 +46,10 @@ from autocut.core.manifest import Manifest
 from autocut.core.montage import clear_preview, is_current
 from autocut.core.naming import SELECTS_DIR, STALE_DIR
 from autocut.core.render import RenderResult, render_edit, render_path, resolve_track
+from autocut.gui import theme
 from autocut.gui.settings import write_config
 from autocut.gui.state import ProjectState
+from autocut.gui.widgets.chips import FilterChips
 
 #: The export fields the screen writes back to ``autocut.toml``. The per class ones are
 #: written whole, since a table with one key changed is still the whole table.
@@ -132,24 +134,54 @@ class ExportScreen(QWidget):
         self.fade_field.setSingleStep(0.5)
         self.fade_field.setSuffix(" s")
 
+        # The three choices that decide what kind of export this is are chips, because
+        # they are picked once and then read at a glance; the numbers stay a form.
+        self.profile = FilterChips()
+        self.profile.add_box("mode", "Cut", self.mode_box)
+        self.profile.add_box("codec", "Codec", self.codec_box)
+        self.profile.add_box("vertical", "Vertical", self.vertical_box)
+
         form = QFormLayout()
-        form.addRow("Cut", self.mode_box)
-        form.addRow("Codec", self.codec_box)
         form.addRow("Quality (CRF)", self.crf_field)
         form.addRow("Target fps", self.fps_field)
         form.addRow("Maximum width", self.width_field)
         form.addRow("Maximum height", self.height_field)
-        form.addRow("Vertical clips", self.vertical_box)
         form.addRow("", self.rejects_box)
-        form.addRow("", self.render_box)
-        form.addRow("Fade out", self.fade_field)
-        self.frame_label = QLabel()
-        self.frame_label.setTextFormat(Qt.TextFormat.PlainText)
-        form.addRow("", self.frame_label)
 
         options_box = QGroupBox("Output")
         options_layout = QVBoxLayout(options_box)
+        options_layout.setSpacing(theme.METRICS.space + 2)
+        options_layout.addWidget(self.profile)
         options_layout.addLayout(form)
+
+        # The final render is a decision of its own, not one more row of the export
+        # form: it produces a different file, in a different place, from a different
+        # input. Its own card says so.
+        self.frame_label = QLabel()
+        self.frame_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.frame_label.setProperty("role", "muted")
+        self.destination_label = QLabel("")
+        self.destination_label.setProperty("role", "muted")
+        self.destination_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.destination_label.setWordWrap(True)
+
+        fade_label = QLabel("Fade out")
+        fade_label.setProperty("role", "label")
+        fade_row = QHBoxLayout()
+        fade_row.setSpacing(theme.METRICS.space)
+        fade_row.addWidget(fade_label)
+        fade_row.addWidget(self.fade_field)
+        fade_row.addStretch(1)
+
+        self.render_card = QWidget()
+        self.render_card.setObjectName("card")
+        render_layout = QVBoxLayout(self.render_card)
+        render_layout.setContentsMargins(14, 12, 14, 12)
+        render_layout.setSpacing(theme.METRICS.space)
+        render_layout.addWidget(self.render_box)
+        render_layout.addLayout(fade_row)
+        render_layout.addWidget(self.destination_label)
+        render_layout.addWidget(self.frame_label)
 
         # --- per class --------------------------------------------------------
         self.audio_boxes: dict[str, QCheckBox] = {}
@@ -268,6 +300,7 @@ class ExportScreen(QWidget):
         body = QWidget()
         body_layout = QVBoxLayout(body)
         body_layout.addWidget(options_box)
+        body_layout.addWidget(self.render_card)
         body_layout.addWidget(per_class_box)
         body_layout.addWidget(run_box)
         body_layout.addStretch(1)
@@ -427,6 +460,7 @@ class ExportScreen(QWidget):
         that can drop the clip instead.
         """
         manifest = self._state.manifest
+        self._refresh_destination()
         if manifest is None or not self.render_box.isChecked():
             self.frame_label.clear()
             return
@@ -437,6 +471,19 @@ class ExportScreen(QWidget):
         self.frame_label.setText(
             f"Clips exported at one size, {width}x{height}, the smallest clip in the edit"
         )
+
+    def _refresh_destination(self) -> None:
+        """Name what this screen writes and where, so the card says where it all lands."""
+        out = self._state.output_dir
+        manifest = self._state.manifest
+        if out is None:
+            self.destination_label.clear()
+            return
+        if manifest is not None and self.render_box.isChecked():
+            rendered = render_path(manifest, self._state.config).name
+            self.destination_label.setText(f"{SELECTS_DIR}/ and {rendered}, in {out}")
+        else:
+            self.destination_label.setText(f"{SELECTS_DIR}/ in {out}")
 
     def _overrides(self) -> ExportOverrides:
         return ExportOverrides(

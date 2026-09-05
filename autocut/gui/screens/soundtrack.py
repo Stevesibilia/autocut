@@ -132,6 +132,7 @@ class SoundtrackScreen(QWidget):
 
         prompt_box = QGroupBox("Prompt")
         prompt_layout = QVBoxLayout(prompt_box)
+        prompt_layout.setSpacing(theme.METRICS.space + 2)
         prompt_layout.addWidget(self.matched_label)
         prompt_layout.addLayout(controls)
         prompt_layout.addWidget(self.editor, 1)
@@ -141,13 +142,17 @@ class SoundtrackScreen(QWidget):
         # --- the track half --------------------------------------------------
         self.waveform = WaveformView()
         self.track_label = QLabel("No track loaded")
+        self.track_label.setProperty("role", "title")
         self.comparison_label = QLabel()
         self.comparison_label.setWordWrap(True)
         self.distribution_label = QLabel()
         self.distribution_label.setWordWrap(True)
         self.distribution_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.distribution_label.setProperty("role", "muted")
+        self.distribution_label.setFont(theme.font(theme.METRICS.body_size, mono=True))
 
         self.load_button = QPushButton("Load a track…")
+        self.load_button.setProperty("variant", "primary")
         self.load_button.clicked.connect(self._browse_track)
         self.override_field = QDoubleSpinBox()
         # Wider than the prompt's own field: a beat tracker reading double a slow track
@@ -158,6 +163,7 @@ class SoundtrackScreen(QWidget):
         self.override_field.setSpecialValueText("measured")
         self.override_field.valueChanged.connect(self._override_changed)
         self.apply_button = QPushButton("Apply sync")
+        self.apply_button.setProperty("variant", "quiet")
         self.apply_button.clicked.connect(self.apply_sync)
         self.apply_button.setEnabled(False)
         self.play_with_track_button = QPushButton("Play with track")
@@ -166,9 +172,11 @@ class SoundtrackScreen(QWidget):
         self.montage = MontagePlayer(self)
         self.montage.setVisible(False)
 
+        bpm_label = QLabel("Use BPM")
+        bpm_label.setProperty("role", "label")
         track_actions = QHBoxLayout()
         track_actions.addWidget(self.load_button)
-        track_actions.addWidget(QLabel("Use BPM"))
+        track_actions.addWidget(bpm_label)
         track_actions.addWidget(self.override_field)
         track_actions.addWidget(self.apply_button)
         track_actions.addWidget(self.play_with_track_button)
@@ -176,6 +184,7 @@ class SoundtrackScreen(QWidget):
 
         track_box = QGroupBox("Track")
         track_layout = QVBoxLayout(track_box)
+        track_layout.setSpacing(theme.METRICS.space + 2)
         track_layout.addWidget(self.track_label)
         track_layout.addWidget(self.waveform, 1)
         track_layout.addLayout(track_actions)

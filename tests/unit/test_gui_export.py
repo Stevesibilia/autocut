@@ -579,3 +579,39 @@ def test_the_frame_line_appears_with_the_render_toggle(screen: ExportScreen) -> 
     screen.render_box.setChecked(False)
 
     assert screen.frame_label.text() == ""
+
+
+# --- the export profile and the render card ---------------------------------
+
+
+def test_the_three_profile_choices_are_chips(screen: ExportScreen) -> None:
+    assert list(screen.profile.chips) == ["mode", "codec", "vertical"]
+    assert screen.profile.chips["mode"].box is screen.mode_box
+    assert screen.mode_box.isHidden()
+
+
+def test_a_chip_follows_its_box(screen: ExportScreen) -> None:
+    screen.mode_box.setCurrentText("fast")
+
+    assert screen.profile.chips["mode"].text() == "Cut  fast"
+    assert screen.profile.chips["mode"].active
+
+
+def test_the_render_card_names_what_it_writes_and_where(screen: ExportScreen) -> None:
+    screen.render_box.setChecked(False)
+    screen.refresh_frame()
+    clips_only = screen.destination_label.text()
+
+    screen.render_box.setChecked(True)
+    screen.refresh_frame()
+    with_render = screen.destination_label.text()
+
+    assert clips_only.startswith("_selects/ in ")
+    assert "montage.mp4" in with_render
+    assert str(screen._state.output_dir) in with_render
+
+
+def test_the_render_card_holds_the_toggle_and_its_fade(screen: ExportScreen) -> None:
+    assert screen.render_box.parent() is screen.render_card
+    assert screen.fade_field.parent() is screen.render_card
+    assert screen.render_card.objectName() == "card"

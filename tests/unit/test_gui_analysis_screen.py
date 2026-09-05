@@ -101,8 +101,9 @@ def test_the_steps_and_the_bar_follow_the_progress_events(
     assert screen.bar.value() == 2
     assert "GX01.MP4" in screen.current_file.text()
     assert "elapsed" in screen.timing.text()
-    assert screen.steps.item(0).text().startswith("done")
-    assert "->" in screen.steps.item(1).text()
+    assert screen.steps.state("scan") == "done"
+    assert screen.steps.state("probe") == "running"
+    assert screen.steps.state("analyze") == "waiting"
 
 
 def test_a_cached_file_is_labelled_as_one(
@@ -279,3 +280,61 @@ def test_a_cancelled_run_keeps_what_it_analysed_and_can_be_resumed(
     readable = [source for source in finished.files.values() if source.error is None]
     assert len({segment.file_id for segment in finished.segments.values()}) >= len(readable) - 1
     assert not screen.is_incomplete()
+
+
+# --- the stage cards --------------------------------------------------------
+
+
+def test_a_screen_without_a_project_offers_to_open_one(
+    state_and_screen: tuple[ProjectState, AnalysisScreen],
+) -> None:
+    _state, screen = state_and_screen
+    asked: list[int] = []
+    screen.open_project_requested.connect(lambda: asked.append(1))
+
+    assert screen.stack.currentWidget() is screen.empty
+    screen.open_project_button.click()
+
+    assert asked == [1]
+
+
+def test_every_stage_has_a_card_and_starts_waiting(
+    state_and_screen: tuple[ProjectState, AnalysisScreen],
+) -> None:
+    from autocut.gui.screens.analysis import STAGE_TITLES
+
+    _state, screen = state_and_screen
+
+    assert list(screen.steps.cards) == [key for key, _ in STAGE_TITLES]
+    assert all(card.state == "waiting" for card in screen.steps.cards.values())
+    assert all(
+        card.title == title
+        for (_, title), card in zip(STAGE_TITLES, screen.steps.cards.values(), strict=True)
+    )
+
+
+def test_a_running_stage_carries_a_mono_counter(
+    state_and_screen: tuple[ProjectState, AnalysisScreen],
+) -> None:
+    from autocut.core.events import ProgressEvent
+
+    _state, screen = state_and_screen
+
+    screen._on_progress(ProgressEvent(stage="probe", current=12, total=72, message="", path=None))
+
+    assert screen.steps.cards["probe"].counter.text() == "12 / 72"
+    assert screen.steps.state("probe") == "running"
+
+
+def test_finishing_ticks_every_stage_and_drops_the_counters(
+    state_and_screen: tuple[ProjectState, AnalysisScreen],
+) -> None:
+    from autocut.core.events import ProgressEvent
+
+    _state, screen = state_and_screen
+
+    screen._on_progress(ProgressEvent(stage="probe", current=12, total=72, message="", path=None))
+    screen._on_finished("analysis")
+
+    assert all(card.state == "done" for card in screen.steps.cards.values())
+    assert screen.steps.cards["probe"].counter.text() == ""

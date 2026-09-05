@@ -143,9 +143,10 @@ class MainWindow(QMainWindow):
         project_screen.settings_requested.connect(self.open_settings)
         project_screen.machine_checked.connect(self._machine_checked)
 
-        review_screen = self.screens["review"]
-        assert isinstance(review_screen, ReviewScreen)
-        review_screen.open_project_requested.connect(lambda: self.go_to("project"))
+        for key in ("review", "analysis"):
+            screen = self.screens[key]
+            assert isinstance(screen, ReviewScreen | AnalysisScreen)
+            screen.open_project_requested.connect(lambda: self.go_to("project"))
 
         self.state.segments_changed.connect(lambda _ids: self.refresh_navigation())
         self.state.selection_changed.connect(self.refresh_navigation)

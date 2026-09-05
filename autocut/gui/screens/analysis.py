@@ -11,21 +11,24 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QListWidget,
     QProgressBar,
     QPushButton,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from autocut.core.cache import cache_stats, prune
 from autocut.core.events import ProgressEvent
+from autocut.gui import theme
 from autocut.gui.state import AnalysisOutcome, ProjectState
+from autocut.gui.widgets.empty import EmptyState
+from autocut.gui.widgets.stages import StageList
 
 #: The stages of one analysis run, in the order the core reports them.
 STAGE_TITLES: tuple[tuple[str, str], ...] = (
@@ -63,6 +66,9 @@ def estimate_remaining(elapsed: float, current: int, total: int) -> float | None
 class AnalysisScreen(QWidget):
     """Steps, a progress bar, the current file, cancel, resume and the summary."""
 
+    open_project_requested = Signal()
+    """The empty state's one action: the window sends the user to the Project screen."""
+
     def __init__(self, state: ProjectState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("screen-analysis")
@@ -70,19 +76,20 @@ class AnalysisScreen(QWidget):
         self._started_at = 0.0
         self._stage: str = ""
 
-        self.steps = QListWidget()
-        self.steps.setSelectionMode(QListWidget.SelectionMode.NoSelection)
-        for _, title in STAGE_TITLES:
-            self.steps.addItem(f"    {title}")
+        self.steps = StageList(STAGE_TITLES)
 
         self.bar = QProgressBar()
         self.bar.setRange(0, 100)
         self.bar.setValue(0)
         self.current_file = QLabel("Nothing running")
         self.current_file.setTextFormat(Qt.TextFormat.PlainText)
+        self.current_file.setProperty("role", "muted")
         self.timing = QLabel()
+        self.timing.setFont(theme.font(theme.METRICS.body_size, mono=True))
+        self.timing.setProperty("role", "muted")
 
         self.run_button = QPushButton("Run analysis")
+        self.run_button.setProperty("variant", "primary")
         self.run_button.clicked.connect(self.run)
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.setEnabled(False)
@@ -100,10 +107,13 @@ class AnalysisScreen(QWidget):
 
         progress_box = QGroupBox("Progress")
         progress_layout = QVBoxLayout(progress_box)
+        progress_layout.setSpacing(theme.METRICS.space + 2)
         progress_layout.addWidget(self.steps)
         progress_layout.addWidget(self.bar)
-        progress_layout.addWidget(self.current_file)
-        progress_layout.addWidget(self.timing)
+        running = QHBoxLayout()
+        running.addWidget(self.current_file, 1)
+        running.addWidget(self.timing)
+        progress_layout.addLayout(running)
 
         buttons = QHBoxLayout()
         buttons.addWidget(self.run_button)
@@ -117,11 +127,32 @@ class AnalysisScreen(QWidget):
         result_layout.addWidget(self.warnings)
         result_layout.addStretch(1)
 
+        # Before a project there is nothing to run, so the screen says that and offers
+        # the one thing that would change it rather than showing six dead stages.
+        self.open_project_button = QPushButton("Open a project…")
+        self.open_project_button.setProperty("variant", "primary")
+        self.open_project_button.clicked.connect(self.open_project_requested.emit)
+        self.empty = EmptyState(
+            "No project open. Open or create one and its footage can be analysed.",
+            icon="folder",
+            action=self.open_project_button,
+        )
+
+        self.body = QWidget()
+        body_layout = QVBoxLayout(self.body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(theme.METRICS.space * 2)
+        body_layout.addWidget(progress_box)
+        body_layout.addLayout(buttons)
+        body_layout.addWidget(result_box, 1)
+
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.empty)
+        self.stack.addWidget(self.body)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
-        layout.addWidget(progress_box)
-        layout.addLayout(buttons)
-        layout.addWidget(result_box, 1)
+        layout.addWidget(self.stack)
 
         state.progress.connect(self._on_progress)
         state.stage_started.connect(self._on_started)
@@ -137,6 +168,7 @@ class AnalysisScreen(QWidget):
         """Label the run button for what it would actually do, and enable what can run."""
         manifest = self._state.manifest
         running = self._state.is_running
+        self.stack.setCurrentWidget(self.body if manifest is not None else self.empty)
         self.run_button.setEnabled(manifest is not None and not running)
         self.cancel_button.setEnabled(running)
         self.clear_cache_button.setEnabled(not running)
@@ -205,6 +237,7 @@ class AnalysisScreen(QWidget):
         if event.total > 0:
             self.bar.setRange(0, event.total)
             self.bar.setValue(event.current)
+            self.steps.set_counter(event.stage, f"{event.current} / {event.total}")
         else:
             self.bar.setRange(0, 0)  # An indeterminate stage, so an indeterminate bar.
         name = Path(event.path).name if event.path else event.message
@@ -219,26 +252,15 @@ class AnalysisScreen(QWidget):
         )
 
     def _mark_steps(self, stage: str) -> None:
-        """Tick every step up to the running one. The core reports them in order."""
-        keys = [key for key, _ in STAGE_TITLES]
-        if stage not in keys:
-            return
-        position = keys.index(stage)
-        for row, (_, title) in enumerate(STAGE_TITLES):
-            if row < position:
-                self.steps.item(row).setText(f"done  {title}")
-            elif row == position:
-                self.steps.item(row).setText(f"  ->  {title}")
-            else:
-                self.steps.item(row).setText(f"    {title}")
+        """Tick every stage up to the running one. The core reports them in order."""
+        self.steps.mark_up_to(stage)
 
     def _on_finished(self, name: str) -> None:
         if name != "analysis":
             return
         self.bar.setRange(0, 100)
         self.bar.setValue(100)
-        for row, (_, title) in enumerate(STAGE_TITLES):
-            self.steps.item(row).setText(f"done  {title}")
+        self.steps.mark_all_done()
         elapsed = time.monotonic() - self._started_at
         self.current_file.setText(f"Finished in {format_seconds(elapsed)}")
         self.summary.setText(self.describe_outcome(self._state.last_result))

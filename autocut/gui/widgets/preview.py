@@ -37,6 +37,7 @@ from autocut.gui import theme
 from autocut.gui.models import clock_label
 from autocut.gui.state import ProjectState
 from autocut.gui.widgets.scrubber import StripCache
+from autocut.gui.widgets.video import checked_video_output
 
 if TYPE_CHECKING:  # pragma: no cover - imported for the annotations only
     from PySide6.QtMultimedia import QMediaPlayer
@@ -125,7 +126,9 @@ class PreviewPanel(QWidget):
         self.clear_button.clicked.connect(self._clear_bounds)
         self.play_button = QPushButton("Play clip")
         self.play_button.setProperty("variant", "quiet")
-        self.play_button.clicked.connect(self.play)
+        # Through a lambda, not straight to play: clicked carries the button's checked
+        # state, and connecting it directly handed False to setVideoOutput.
+        self.play_button.clicked.connect(lambda: self.play())
         self.stop_button = QPushButton("Stop")
         self.stop_button.clicked.connect(self.stop)
         self.stop_button.setEnabled(False)
@@ -324,7 +327,7 @@ class PreviewPanel(QWidget):
         if not path.exists():
             self.note.setText(f"{path} is not where the manifest says it is.")
             return False
-        player = self._build_player(video_output)
+        player = self._build_player(checked_video_output(video_output, "PreviewPanel.play"))
         if player is None:
             return False
 

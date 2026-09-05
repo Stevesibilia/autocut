@@ -311,7 +311,10 @@ class ExportScreen(QWidget):
         self.render_button.clicked.connect(self.open_render)
         self.stale_button = QPushButton("Delete the stale files")
         self.stale_button.setEnabled(False)
-        self.stale_button.clicked.connect(self.delete_stale)
+        # Through a lambda for the same reason as the Play buttons, and it matters more
+        # here: connected directly, clicked(False) landed in `confirm` and the button
+        # deleted the stale files without ever asking.
+        self.stale_button.clicked.connect(lambda: self.delete_stale())
 
         actions = QHBoxLayout()
         actions.addWidget(self.run_button)

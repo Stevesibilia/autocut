@@ -17,6 +17,7 @@ import pytest
 pytest.importorskip("PySide6")
 pytest.importorskip("PySide6.QtMultimedia")
 
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtMultimedia import QMediaPlayer, QVideoSink  # noqa: E402
 
 from autocut.core.manifest import Manifest, Metrics, Segment, SourceFile  # noqa: E402
@@ -263,3 +264,41 @@ def test_playing_twice_starts_from_the_in_point_again(panel: PreviewPanel, qtbot
     assert wait_for(
         qtbot, lambda: player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
     )
+
+
+# --- the Play buttons, pressed the way a user presses them -------------------
+
+
+def test_pressing_play_builds_a_player_with_a_video_widget(panel: PreviewPanel, qtbot: Any) -> None:
+    """The macOS regression: `clicked` carries a bool, and it reached setVideoOutput.
+
+    Pressed through the widget rather than by calling `play()`, because calling the
+    method directly is exactly what the broken connection did not do. On the Mac this
+    raised inside Qt with a message about argument types and nothing about the button.
+    """
+    from PySide6.QtMultimediaWidgets import QVideoWidget
+
+    qtbot.mouseClick(panel.play_button, Qt.MouseButton.LeftButton)
+
+    assert panel._player is not None
+    assert isinstance(panel.video, QVideoWidget)
+    assert panel._player.videoOutput() is panel.video
+    panel.stop()
+
+
+def test_a_bool_video_output_is_refused_by_name(panel: PreviewPanel) -> None:
+    """What a direct `clicked.connect(self.play)` would hand in, caught where it means
+    something rather than deep inside Qt."""
+    with pytest.raises(TypeError, match="PreviewPanel.play"):
+        panel.play(False)
+    with pytest.raises(TypeError, match="zero argument slot"):
+        panel.play(True)
+
+
+def test_a_real_video_output_is_still_accepted(panel: PreviewPanel) -> None:
+    """The guard must not get in the way of the sink the other tests count frames in."""
+    sink = QVideoSink()
+    assert panel.play(sink)
+    assert panel._player is not None
+    assert panel._player.videoOutput() is sink
+    panel.stop()

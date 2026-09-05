@@ -46,8 +46,10 @@ from autocut.core.manifest import Manifest
 from autocut.core.montage import clear_preview, is_current
 from autocut.core.naming import SELECTS_DIR, STALE_DIR
 from autocut.core.render import RenderResult, render_edit, render_path, resolve_track
+from autocut.gui import theme
 from autocut.gui.settings import write_config
 from autocut.gui.state import ProjectState
+from autocut.gui.widgets.chips import FilterChips
 
 #: The export fields the screen writes back to ``autocut.toml``. The per class ones are
 #: written whole, since a table with one key changed is still the whole table.
@@ -95,6 +97,23 @@ def folder_size(path: Path) -> int:
     return total
 
 
+def short_path(path: Path, keep: int = 2) -> str:
+    """The last `keep` parts of `path`, so a deep project folder still fits the card.
+
+    An absolute path has no spaces in it, so a word wrapped label asks for its whole
+    length and takes the screen with it. The full path lives on the tooltip.
+    """
+    shortened = "…/" + "/".join(path.parts[-keep:])
+    # A path that is already short gains nothing from an ellipsis and loses the root.
+    return str(path) if len(shortened) >= len(str(path)) else shortened
+
+
+#: Wide enough for a frame height and no wider.
+NUMBER_FIELD_WIDTH = 96
+#: The LUT path is the one field on the screen that is worth stretching.
+LUT_FIELD_WIDTH = 260
+
+
 class ExportScreen(QWidget):
     """The options, a dry run summary, the progress, and the folder at the end."""
 
@@ -132,24 +151,63 @@ class ExportScreen(QWidget):
         self.fade_field.setSingleStep(0.5)
         self.fade_field.setSuffix(" s")
 
+        # The three choices that decide what kind of export this is are chips, because
+        # they are picked once and then read at a glance; the numbers stay a form.
+        self.profile = FilterChips()
+        self.profile.add_box("mode", "Cut", self.mode_box)
+        self.profile.add_box("codec", "Codec", self.codec_box)
+        self.profile.add_box("vertical", "Vertical", self.vertical_box)
+
+        # A number is four characters wide. Left to itself a QFormLayout gives the field
+        # column every pixel that is going, and a CRF box a thousand pixels wide reads
+        # as a text area someone forgot to fill in.
+        for number in (self.crf_field, self.fps_field, self.width_field, self.height_field):
+            number.setFixedWidth(NUMBER_FIELD_WIDTH)
+        self.fade_field.setFixedWidth(NUMBER_FIELD_WIDTH)
+
         form = QFormLayout()
-        form.addRow("Cut", self.mode_box)
-        form.addRow("Codec", self.codec_box)
+        form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
         form.addRow("Quality (CRF)", self.crf_field)
         form.addRow("Target fps", self.fps_field)
         form.addRow("Maximum width", self.width_field)
         form.addRow("Maximum height", self.height_field)
-        form.addRow("Vertical clips", self.vertical_box)
         form.addRow("", self.rejects_box)
-        form.addRow("", self.render_box)
-        form.addRow("Fade out", self.fade_field)
-        self.frame_label = QLabel()
-        self.frame_label.setTextFormat(Qt.TextFormat.PlainText)
-        form.addRow("", self.frame_label)
 
         options_box = QGroupBox("Output")
         options_layout = QVBoxLayout(options_box)
+        options_layout.setSpacing(theme.METRICS.space + 2)
+        options_layout.addWidget(self.profile)
         options_layout.addLayout(form)
+
+        # The final render is a decision of its own, not one more row of the export
+        # form: it produces a different file, in a different place, from a different
+        # input. Its own card says so.
+        self.frame_label = QLabel()
+        self.frame_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.frame_label.setProperty("role", "muted")
+        self.destination_label = QLabel("")
+        self.destination_label.setProperty("role", "muted")
+        self.destination_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.destination_label.setWordWrap(True)
+
+        fade_label = QLabel("Fade out")
+        fade_label.setProperty("role", "label")
+        fade_row = QHBoxLayout()
+        fade_row.setSpacing(theme.METRICS.space)
+        fade_row.addWidget(fade_label)
+        fade_row.addWidget(self.fade_field)
+        fade_row.addStretch(1)
+
+        self.render_card = QWidget()
+        self.render_card.setObjectName("card")
+        render_layout = QVBoxLayout(self.render_card)
+        render_layout.setContentsMargins(14, 12, 14, 12)
+        render_layout.setSpacing(theme.METRICS.space)
+        render_layout.addWidget(self.render_box)
+        render_layout.addLayout(fade_row)
+        render_layout.addWidget(self.destination_label)
+        render_layout.addWidget(self.frame_label)
 
         # --- per class --------------------------------------------------------
         self.audio_boxes: dict[str, QCheckBox] = {}
@@ -159,7 +217,7 @@ class ExportScreen(QWidget):
         grid = QGridLayout()
         for column, header in enumerate(("Class", "Keep audio", "Slow motion", "Lens", "LUT")):
             label = QLabel(header)
-            label.setStyleSheet("font-weight: 600;")
+            label.setProperty("role", "title")
             # The three middle columns are checkboxes, which Qt draws at their own
             # width: centred under the header they belong to rather than left against
             # the name of the class in the column before.
@@ -172,7 +230,10 @@ class ExportScreen(QWidget):
                 else Qt.AlignmentFlag.AlignLeft,
             )
         grid.setColumnMinimumWidth(0, 90)
-        grid.setColumnStretch(4, 1)
+        # The class column takes the slack, not the LUT path: a row of checkboxes
+        # pushed to the far right of a wide window is a row nobody can follow back to
+        # the class it belongs to.
+        grid.setColumnStretch(5, 1)
         for row, source_class in enumerate(SOURCE_CLASSES, start=1):
             grid.addWidget(QLabel(source_class), row, 0)
             keep_audio = QCheckBox()
@@ -180,8 +241,12 @@ class ExportScreen(QWidget):
             lens = QCheckBox()
             lut = QLineEdit()
             lut.setPlaceholderText("none")
+            lut.setFixedWidth(LUT_FIELD_WIDTH)
             browse = QPushButton("…")
-            browse.setFixedWidth(30)
+            # Compact: the shared button rule pads by 14 px a side, which left a 30 px
+            # button with no room at all for the character on it.
+            browse.setProperty("variant", "compact")
+            browse.setFixedWidth(36)
             browse.clicked.connect(lambda _checked=False, name=source_class: self._browse_lut(name))
             for column, box in ((1, keep_audio), (2, slow), (3, lens)):
                 grid.addWidget(box, row, column, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -190,7 +255,7 @@ class ExportScreen(QWidget):
             holder.addWidget(browse)
             wrapper = QWidget()
             wrapper.setLayout(holder)
-            grid.addWidget(wrapper, row, 4)
+            grid.addWidget(wrapper, row, 4, alignment=Qt.AlignmentFlag.AlignLeft)
             self.audio_boxes[source_class] = keep_audio
             self.slow_boxes[source_class] = slow
             self.lens_boxes[source_class] = lens
@@ -232,7 +297,7 @@ class ExportScreen(QWidget):
         self.problems = QLabel()
         self.problems.setWordWrap(True)
         self.problems.setTextFormat(Qt.TextFormat.PlainText)
-        self.problems.setStyleSheet("color: palette(link-visited);")
+        self.problems.setProperty("role", "error")
 
         self.run_button = QPushButton("Export")
         self.run_button.clicked.connect(self.run)
@@ -268,6 +333,7 @@ class ExportScreen(QWidget):
         body = QWidget()
         body_layout = QVBoxLayout(body)
         body_layout.addWidget(options_box)
+        body_layout.addWidget(self.render_card)
         body_layout.addWidget(per_class_box)
         body_layout.addWidget(run_box)
         body_layout.addStretch(1)
@@ -427,6 +493,7 @@ class ExportScreen(QWidget):
         that can drop the clip instead.
         """
         manifest = self._state.manifest
+        self._refresh_destination()
         if manifest is None or not self.render_box.isChecked():
             self.frame_label.clear()
             return
@@ -437,6 +504,21 @@ class ExportScreen(QWidget):
         self.frame_label.setText(
             f"Clips exported at one size, {width}x{height}, the smallest clip in the edit"
         )
+
+    def _refresh_destination(self) -> None:
+        """Name what this screen writes and where, so the card says where it all lands."""
+        out = self._state.output_dir
+        manifest = self._state.manifest
+        if out is None:
+            self.destination_label.clear()
+            return
+        if manifest is not None and self.render_box.isChecked():
+            rendered = render_path(manifest, self._state.config).name
+            written = f"{SELECTS_DIR}/ and {rendered}"
+        else:
+            written = f"{SELECTS_DIR}/"
+        self.destination_label.setText(f"{written}, in {short_path(out)}")
+        self.destination_label.setToolTip(str(out))
 
     def _overrides(self) -> ExportOverrides:
         return ExportOverrides(

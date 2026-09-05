@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -32,6 +33,7 @@ from autocut.core.ingest import ACCEPTED_EXTENSIONS
 from autocut.gui.profiles import PROFILES, PROFILES_BY_KEY, apply_profile, diff
 from autocut.gui.recent import load_recent, remember
 from autocut.gui.state import MANIFEST_NAME, ProjectState
+from autocut.gui.widgets.recent import RecentList
 
 
 def doctor_rows(report: DoctorReport) -> list[tuple[str, str, str]]:
@@ -144,6 +146,8 @@ class ProjectScreen(QWidget):
 
     project_opened = Signal()
     settings_requested = Signal()
+    machine_checked = Signal()
+    """The doctor report was rebuilt, so the rail can say what this machine can do."""
 
     def __init__(self, state: ProjectState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -158,10 +162,13 @@ class ProjectScreen(QWidget):
         remove_button = self.remove_button = QPushButton("Remove")
         remove_button.clicked.connect(self.sources.remove_selected)
         self.count_label = QLabel("No source folders yet")
+        self.count_label.setProperty("role", "muted")
 
         source_box = QGroupBox("Footage")
         source_layout = QVBoxLayout(source_box)
-        source_layout.addWidget(QLabel("Drop card folders here, or browse for them."))
+        hint = QLabel("Drop card folders here, or browse for them.")
+        hint.setProperty("role", "muted")
+        source_layout.addWidget(hint)
         source_layout.addWidget(self.sources, 1)
         buttons = QHBoxLayout()
         buttons.addWidget(add_button)
@@ -185,9 +192,11 @@ class ProjectScreen(QWidget):
         self.profile.currentIndexChanged.connect(self._refresh_profile_note)
         self.profile_note = QLabel()
         self.profile_note.setWordWrap(True)
+        self.profile_note.setProperty("role", "muted")
 
         self.output_note = QLabel()
         self.output_note.setWordWrap(True)
+        self.output_note.setProperty("role", "muted")
 
         settings_box = QGroupBox("Edit")
         form = QFormLayout(settings_box)
@@ -197,18 +206,22 @@ class ProjectScreen(QWidget):
         form.addRow("", self.profile_note)
 
         self.create_button = QPushButton("Create project")
+        self.create_button.setProperty("variant", "primary")
         self.create_button.clicked.connect(self.create_project)
         open_button = self.open_button = QPushButton("Open existing…")
         open_button.clicked.connect(self._browse_open)
         settings_button = QPushButton("Settings…")
         settings_button.clicked.connect(self.settings_requested.emit)
 
-        self.recent = QListWidget()
-        self.recent.itemDoubleClicked.connect(self._open_recent)
+        self.recent = RecentList()
+        self.recent.opened.connect(self._open_recent)
         self.refresh_recent()
+        recent_scroll = QScrollArea()
+        recent_scroll.setWidgetResizable(True)
+        recent_scroll.setWidget(self.recent)
         recent_box = QGroupBox("Recent projects")
         recent_layout = QVBoxLayout(recent_box)
-        recent_layout.addWidget(self.recent)
+        recent_layout.addWidget(recent_scroll)
 
         self.doctor = QLabel()
         self.doctor.setWordWrap(True)
@@ -345,11 +358,10 @@ class ProjectScreen(QWidget):
         """The doctor report, so a missing ffmpeg is seen before a run, not during one."""
         self.doctor_report = inspect_environment(self._state.config)
         self.doctor.setText(doctor_table(self.doctor_report))
+        self.machine_checked.emit()
 
     def refresh_recent(self) -> None:
-        self.recent.clear()
-        for folder in load_recent():
-            self.recent.addItem(str(folder))
+        self.recent.set_projects(load_recent())
 
     # --- the two things this screen actually does --------------------------
 
@@ -406,7 +418,6 @@ class ProjectScreen(QWidget):
         self.project_opened.emit()
         return True
 
-    def _open_recent(self, item: object) -> None:
-        text = item.text() if hasattr(item, "text") else ""
-        if text:
-            self.open_project(Path(text))
+    def _open_recent(self, folder: str) -> None:
+        if folder:
+            self.open_project(Path(folder))

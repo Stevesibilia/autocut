@@ -54,6 +54,7 @@ EDITED_PATHS: tuple[str, ...] = (
     "weights.colorfulness",
     "selection.max_clips",
     "selection.diversity_lambda",
+    "gui.theme",
 )
 
 
@@ -183,6 +184,14 @@ class SettingsDialog(QDialog):
         self.forget_key.clicked.connect(self._forget_key)
         form.addRow("", self.forget_key)
 
+        self.theme = QComboBox()
+        self.theme.addItems(["dark", "light", "system"])
+        self.theme.setCurrentText(str(config.gui.theme))
+        form.addRow("Theme", self.theme)
+        self.theme_note = QLabel("Applied the next time the window opens.")
+        self.theme_note.setProperty("role", "muted")
+        form.addRow("", self.theme_note)
+
         self.hwaccel = QComboBox()
         self.hwaccel.addItems(["auto", "off", "videotoolbox", "vaapi"])
         self.hwaccel.setCurrentText(str(config.analysis.hwaccel))
@@ -260,6 +269,7 @@ class SettingsDialog(QDialog):
         config.providers.cloud = self.cloud.isChecked()
         write_path(config, "providers.describe_scope", self.scope.currentText())
         write_path(config, "analysis.hwaccel", self.hwaccel.currentText())
+        write_path(config, "gui.theme", self.theme.currentText())
         config.analysis.workers = self.workers.value() or None
         typed = self.cache_dir.text().strip()
         config.cache.dir = Path(typed) if typed else None

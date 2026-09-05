@@ -9,7 +9,6 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QCloseEvent  # noqa: E402
 
 from autocut.gui.app import SCREENS, MainWindow, build_window, screen_available  # noqa: E402
@@ -30,14 +29,27 @@ def window(qtbot: Any) -> MainWindow:
 
 
 def enabled(win: MainWindow, key: str) -> bool:
-    row = next(index for index, spec in enumerate(SCREENS) if spec.key == key)
-    return bool(win.nav.item(row).flags() & Qt.ItemFlag.ItemIsEnabled)
+    return win.rail.buttons[key].isEnabled()
 
 
 def test_the_five_screens_are_listed_in_order(window: MainWindow) -> None:
-    labels = [window.nav.item(row).text() for row in range(window.nav.count())]
+    labels = [button.text() for button in window.rail.buttons.values()]
 
     assert labels == ["Project", "Analysis", "Review", "Soundtrack", "Export"]
+
+
+def test_the_rail_marks_the_screen_on_show(window: MainWindow) -> None:
+    window.go_to("review")
+
+    assert window.rail.buttons["review"].isChecked()
+    assert not window.rail.buttons["project"].isChecked()
+    assert window.current_key == "review"
+
+
+def test_clicking_the_rail_changes_the_screen(window: MainWindow) -> None:
+    window.rail.screen_chosen.emit("export")
+
+    assert window.stack.currentWidget() is window.screens["export"]
 
 
 def test_without_a_project_only_the_project_screen_is_reachable(window: MainWindow) -> None:

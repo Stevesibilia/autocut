@@ -579,3 +579,50 @@ def test_the_frame_line_appears_with_the_render_toggle(screen: ExportScreen) -> 
     screen.render_box.setChecked(False)
 
     assert screen.frame_label.text() == ""
+
+
+# --- the export profile and the render card ---------------------------------
+
+
+def test_the_three_profile_choices_are_chips(screen: ExportScreen) -> None:
+    assert list(screen.profile.chips) == ["mode", "codec", "vertical"]
+    assert screen.profile.chips["mode"].box is screen.mode_box
+    assert screen.mode_box.isHidden()
+
+
+def test_a_chip_follows_its_box(screen: ExportScreen) -> None:
+    screen.mode_box.setCurrentText("fast")
+
+    assert screen.profile.chips["mode"].text() == "Cut  fast"
+    assert screen.profile.chips["mode"].active
+
+
+def test_the_render_card_names_what_it_writes_and_where(screen: ExportScreen) -> None:
+    screen.render_box.setChecked(False)
+    screen.refresh_frame()
+    clips_only = screen.destination_label.text()
+
+    screen.render_box.setChecked(True)
+    screen.refresh_frame()
+    with_render = screen.destination_label.text()
+
+    assert clips_only.startswith("_selects/, in ")
+    assert "montage.mp4" in with_render
+    # The label is shortened so a deep path cannot stretch the screen; the whole of it
+    # is on the tooltip, which is where a user goes when the name is not enough.
+    assert screen.destination_label.toolTip() == str(screen._state.output_dir)
+    assert screen.destination_label.text().endswith("edit")
+
+
+def test_the_render_card_holds_the_toggle_and_its_fade(screen: ExportScreen) -> None:
+    assert screen.render_box.parent() is screen.render_card
+    assert screen.fade_field.parent() is screen.render_card
+    assert screen.render_card.objectName() == "card"
+
+
+def test_a_deep_path_is_shortened_rather_than_stretching_the_screen() -> None:
+    from autocut.gui.screens.export import short_path
+
+    assert short_path(Path("/home/steve/holidays/sardegna/edit")) == "…/sardegna/edit"
+    assert short_path(Path("/edit")) == "/edit"
+    assert short_path(Path("/home/edit")) == "/home/edit"

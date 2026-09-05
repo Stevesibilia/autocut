@@ -19,13 +19,19 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from autocut.gui.app import SCREENS, build_window  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
+
+from autocut.gui.app import SCREENS, apply_theme, build_window  # noqa: E402
 from autocut.gui.screens.export import ExportScreen  # noqa: E402
 from autocut.gui.screens.review import ReviewScreen  # noqa: E402
 from autocut.gui.screens.soundtrack import SoundtrackScreen  # noqa: E402
 from autocut.gui.state import ProjectState  # noqa: E402
 
 pytestmark = [pytest.mark.gui, pytest.mark.ffmpeg]
+
+#: Both token sets, because the light one is a design nobody has looked at until it is
+#: rendered and half a design system is the one that is never checked.
+THEMES = ("dark", "light")
 
 
 def shots_dir() -> Path | None:
@@ -34,47 +40,63 @@ def shots_dir() -> Path | None:
     return Path(raw) if raw else None
 
 
-def test_every_screen_can_be_grabbed_on_the_synthetic_project(
+def test_every_screen_can_be_grabbed_in_both_themes(
     tmp_path: Path, synthetic_dir: Path, qtbot: Any
 ) -> None:
-    """Walk the screens on an analysed project, and save a PNG each when asked to.
+    """Walk the screens on an analysed project, in each theme, saving a PNG each.
 
     The grab itself runs whether or not a directory was given, because a screen that
     cannot be rendered is a bug worth failing on in CI, where nobody collects images.
+
+    A fresh window per theme rather than restyling the one that is already up: the rail
+    builds its icons in the colours of the theme that was active when it was made, and
+    a light window wearing the dark rail's icons would be a screenshot of a bug that
+    does not exist.
     """
     out = tmp_path / "edit"
     state = ProjectState()
     state.new_project([synthetic_dir], out)
     state.config.cache.dir = tmp_path / "cache"
 
-    window = build_window(state)
-    qtbot.addWidget(window)
-    window.resize(1280, 800)
-
+    first = build_window(state)
+    qtbot.addWidget(first)
     with qtbot.waitSignal(state.stage_finished, timeout=180_000):
-        analysis = window.screens["analysis"]
-        assert analysis.run()  # type: ignore[attr-defined]
+        assert first.screens["analysis"].run()  # type: ignore[attr-defined]
     assert state.run_selection()
-    window.refresh_navigation()
 
     directory = shots_dir()
-    if directory is not None:
-        directory.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
-    for spec in SCREENS:
-        window.go_to(spec.key)
-        qtbot.wait(50)
-        image = window.grab().toImage()
-        assert not image.isNull(), spec.key
-        assert image.width() > 0 and image.height() > 0
-        if directory is not None:
-            path = directory / f"{spec.key}.png"
-            assert image.save(str(path)), path
-            written.append(path)
+    for name in THEMES:
+        state.config.gui.theme = name
+        window = build_window(state)
+        qtbot.addWidget(window)
+        window.resize(1280, 800)
+        window.refresh_navigation()
+
+        into = directory / name if directory is not None else None
+        if into is not None:
+            into.mkdir(parents=True, exist_ok=True)
+        for spec in SCREENS:
+            window.go_to(spec.key)
+            qtbot.wait(50)
+            image = window.grab().toImage()
+            assert not image.isNull(), f"{name}/{spec.key}"
+            assert image.width() > 0 and image.height() > 0
+            if into is not None:
+                path = into / f"{spec.key}.png"
+                assert image.save(str(path)), path
+                written.append(path)
+        # Not closed: closing a window closes the project it is showing, and the next
+        # theme would have been grabbed on an empty one.
+        window.hide()
 
     if directory is not None:
-        assert [path.name for path in written] == [f"{spec.key}.png" for spec in SCREENS]
+        assert [path.name for path in written] == [
+            f"{spec.key}.png" for _ in THEMES for spec in SCREENS
+        ]
         assert all(path.stat().st_size > 0 for path in written)
+    # Back to the default, so the tests that follow are grabbed in the approved set.
+    apply_theme(QApplication.instance(), "dark")
 
 
 def test_every_review_state_is_grabbed(tmp_path: Path, synthetic_dir: Path, qtbot: Any) -> None:

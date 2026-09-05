@@ -451,6 +451,14 @@ geocode = true
 min_interval_s = 1.0
 # user_agent = "autocut/0.0.1"   # defaults to autocut/<version>
 
+# The window. Everything here is about the desktop application and is ignored by the
+# commands. The theme is applied when the window opens, so a change takes effect at the
+# next start; "system" reads the desktop palette once and picks dark or light from it.
+[gui]
+theme = "dark"                  # "dark", "light" or "system"
+# slider_debounce_ms = 250
+# grid_thumbnail_px = 196
+
 # The analysis cache and the model weights are separate on purpose. The cache is about
 # one project's footage and can live anywhere; a checkpoint is about this machine, and
 # following the cache directory meant every project with its own cache downloaded its

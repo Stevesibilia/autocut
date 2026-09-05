@@ -13,20 +13,16 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPaintEvent, QPen
+from PySide6.QtGui import QMouseEvent, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from autocut.core.beatsync import envelope
+from autocut.gui import theme
 
 #: Cached beside the manifest, keyed by the audio file's size and modification time:
 #: decoding a three minute track is a second, and it happens on every screen open.
 ENVELOPE_DIRNAME = "waveforms"
 ENVELOPE_POINTS = 2000
-
-WAVE = QColor(120, 150, 190)
-BEAT = QColor(230, 170, 60)
-CURSOR = QColor(240, 240, 240)
-BACKGROUND = QColor(28, 30, 34)
 
 
 def envelope_path(output_dir: Path, audio: Path) -> Path:
@@ -108,17 +104,18 @@ class WaveformView(QWidget):
         self.clicked_time.emit(seconds)
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+        colors = theme.current().palette
         painter = QPainter(self)
-        painter.fillRect(self.rect(), BACKGROUND)
+        painter.fillRect(self.rect(), theme.qcolor(colors.surface))
         width, height = self.width(), self.height()
         middle = height / 2.0
 
         if self._pairs.size == 0:
-            painter.setPen(QPen(QColor(150, 150, 150)))
+            painter.setPen(QPen(theme.qcolor(colors.text_muted)))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "no track loaded")
             return
 
-        painter.setPen(QPen(WAVE))
+        painter.setPen(QPen(theme.qcolor(colors.accent_muted)))
         count = int(self._pairs.shape[0])
         # One line per pixel column, taking the loudest and quietest of the pairs that
         # fall in it, so a wide widget and a narrow one draw the same shape.
@@ -135,7 +132,7 @@ class WaveformView(QWidget):
             )
 
         if self._duration > 0 and self._beats:
-            pen = QPen(BEAT)
+            pen = QPen(theme.qcolor(colors.amber))
             pen.setWidth(1)
             painter.setPen(pen)
             for beat in self._beats:
@@ -143,7 +140,7 @@ class WaveformView(QWidget):
                 painter.drawLine(QPointF(tick, height * 0.82), QPointF(tick, float(height)))
 
         if self._cursor is not None and self._duration > 0:
-            pen = QPen(CURSOR)
+            pen = QPen(theme.qcolor(colors.text))
             pen.setWidth(2)
             painter.setPen(pen)
             cursor = self._cursor / self._duration * width

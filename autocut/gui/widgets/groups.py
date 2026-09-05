@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from autocut.core.manifest import Manifest, Segment
+from autocut.gui import theme
 from autocut.gui.state import ProjectState
 
 THUMB_HEIGHT = 96
@@ -40,10 +41,41 @@ class Group:
     title: str
     pick: Segment | None
     others: list[Segment] = field(default_factory=list)
+    #: "cluster" for a visual stack, "visit" for a place. The summary counts by this
+    #: rather than by picking the key apart.
+    kind: str = ""
 
     @property
     def size(self) -> int:
         return len(self.others) + (1 if self.pick is not None else 0)
+
+
+def groups_summary(manifest: Manifest | None) -> str:
+    """The one line the right panel ends with, e.g. `13 stacks · 6 places · 2 held back`.
+
+    A pure function of the manifest so the sentence can be tested without building the
+    stacks, and so the panel and the groups view cannot disagree about the count.
+    """
+    if manifest is None:
+        return "No project open."
+    groups = build_groups(manifest)
+    stacks = sum(1 for group in groups if group.kind == "cluster")
+    places = sum(1 for group in groups if group.kind == "visit")
+    held = sum(
+        1
+        for segment in manifest.segments.values()
+        if segment.outcome != "selected" and segment.reason == "place_cap"
+    )
+    if not groups and not held:
+        return "No near duplicates yet. Run the selection first."
+    parts = [_plural(stacks, "stack"), _plural(places, "place")]
+    if held:
+        parts.append(f"{held} held back by the place cap")
+    return " · ".join(parts)
+
+
+def _plural(count: int, word: str) -> str:
+    return f"{count} {word}" if count == 1 else f"{count} {word}s"
 
 
 def build_groups(manifest: Manifest) -> list[Group]:
@@ -79,6 +111,7 @@ def build_groups(manifest: Manifest) -> list[Group]:
                     title=f"{label} {value}, {len(members)} clips",
                     pick=pick,
                     others=others,
+                    kind=kind,
                 )
             )
     return groups
@@ -92,13 +125,19 @@ class GroupCard(QFrame):
 
     def __init__(self, group: Group, state: ProjectState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFrameShape(QFrame.Shape.StyledPanel)
+        # A card rather than a framed panel: the same object the review grid is made of,
+        # so a stack reads as a group of clips and not as a dialog.
+        self.setObjectName("card")
+        self.setFrameShape(QFrame.Shape.NoFrame)
         self.group = group
         self._state = state
+        metrics = theme.current().metrics
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setSpacing(metrics.space)
         header = QLabel(group.title)
-        header.setStyleSheet("font-weight: 600;")
+        header.setProperty("role", "title")
         layout.addWidget(header)
 
         row = QHBoxLayout()
@@ -109,35 +148,42 @@ class GroupCard(QFrame):
             row.addWidget(self._thumb(other, chosen=False))
         hidden = len(group.others) - len(shown)
         if hidden:
-            row.addWidget(QLabel(f"and {hidden} more"))
+            more = QLabel(f"and {hidden} more")
+            more.setProperty("role", "muted")
+            row.addWidget(more)
         row.addStretch(1)
         layout.addLayout(row)
 
     def _thumb(self, segment: Segment, chosen: bool) -> QWidget:
+        colors = theme.current().palette
         holder = QWidget()
         column = QVBoxLayout(holder)
         column.setContentsMargins(2, 2, 2, 2)
 
         picture = _ClickableLabel(segment.id)
         picture.setFixedHeight(THUMB_HEIGHT)
+        picture.setProperty("role", "placeholder")
         pixmap = QPixmap(str(segment.thumbnail)) if segment.thumbnail else QPixmap()
         if pixmap.isNull():
             picture.setText("no thumbnail")
-            picture.setStyleSheet("background: #222; color: #999;")
+            picture.setStyleSheet(f"background: {colors.surface}; color: {colors.text_muted};")
         else:
             picture.setPixmap(
                 pixmap.scaledToHeight(THUMB_HEIGHT, Qt.TransformationMode.SmoothTransformation)
             )
         if chosen:
-            picture.setStyleSheet("border: 2px solid #5aa0f0;")
+            picture.setStyleSheet(f"border: 2px solid {colors.accent};")
         elif segment.user_rejected:
-            picture.setStyleSheet("border: 2px solid #dc5a5a;")
+            picture.setStyleSheet(f"border: 2px solid {colors.red};")
         picture.clicked.connect(self._clicked)
         column.addWidget(picture)
 
         score = f"{segment.score:.2f}" if segment.score is not None else "unscored"
         state = "in the edit" if chosen else ("rejected" if segment.user_rejected else "behind")
-        column.addWidget(QLabel(f"{score}  {state}"))
+        caption = QLabel(f"{score}  {state}")
+        caption.setProperty("role", "muted")
+        caption.setFont(theme.font(theme.current().metrics.label_size))
+        column.addWidget(caption)
         name = QLabel(self.describe(segment))
         name.setToolTip(segment.id)
         column.addWidget(name)
@@ -197,7 +243,7 @@ class GroupsView(QScrollArea):
         self._layout = QVBoxLayout(self._body)
         self.setWidget(self._body)
         self.empty = QLabel("No near duplicates to compare yet. Run the selection first.")
-        self.empty.setStyleSheet("color: palette(mid);")
+        self.empty.setProperty("role", "muted")
         self._layout.addWidget(self.empty)
         self._layout.addStretch(1)
         self.cards: list[GroupCard] = []

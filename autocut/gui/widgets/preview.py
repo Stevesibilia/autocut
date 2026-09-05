@@ -33,6 +33,8 @@ from PySide6.QtWidgets import (
 )
 
 from autocut.core.manifest import Segment
+from autocut.gui import theme
+from autocut.gui.models import clock_label
 from autocut.gui.state import ProjectState
 from autocut.gui.widgets.scrubber import StripCache
 
@@ -73,12 +75,20 @@ class PreviewPanel(QWidget):
         self._segment_id = ""
         self._strips = StripCache(self)
 
+        metrics = theme.current().metrics
         self.title = QLabel("Nothing selected")
-        self.title.setStyleSheet("font-weight: 600;")
+        self.title.setProperty("role", "title")
+        # Where in the day and how long the source clip is, in the mono face, on the
+        # right of the file name. The numbers a reviewer compares live in one column.
+        self.meta = QLabel("")
+        self.meta.setProperty("role", "muted")
+        self.meta.setFont(theme.font(metrics.body_size, mono=True))
+        self.meta.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
         self.frame = QLabel()
-        self.frame.setMinimumHeight(180)
+        self.frame.setMinimumHeight(metrics.preview_height)
         self.frame.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.frame.setStyleSheet("background: #222; color: #999;")
+        self.frame.setProperty("role", "placeholder")
         self.frame.setText("no preview")
 
         # The strip and the video take the same place rather than sitting one above
@@ -101,13 +111,20 @@ class PreviewPanel(QWidget):
         self.end_slider.valueChanged.connect(self._bounds_moved)
 
         self.bounds_label = QLabel("")
+        self.bounds_label.setFont(theme.font(metrics.body_size, mono=True))
+        self.bounds_label.setProperty("role", "muted")
+        self.bounds_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.bounds_heading = QLabel("In · Out")
+        self.bounds_heading.setProperty("role", "label")
+
         self.note = QLabel("")
         self.note.setWordWrap(True)
-        self.note.setStyleSheet("color: palette(mid);")
+        self.note.setProperty("role", "muted")
 
-        self.clear_button = QPushButton("Use the automatic window")
+        self.clear_button = QPushButton("Automatic window")
         self.clear_button.clicked.connect(self._clear_bounds)
-        self.play_button = QPushButton("Play")
+        self.play_button = QPushButton("Play clip")
+        self.play_button.setProperty("variant", "quiet")
         self.play_button.clicked.connect(self.play)
         self.stop_button = QPushButton("Stop")
         self.stop_button.clicked.connect(self.stop)
@@ -117,25 +134,40 @@ class PreviewPanel(QWidget):
         self.sound_box = QCheckBox("Sound")
         self.sound_box.toggled.connect(self._sound_toggled)
 
-        buttons = QHBoxLayout()
-        buttons.addWidget(self.play_button)
-        buttons.addWidget(self.stop_button)
-        buttons.addWidget(self.sound_box)
-        buttons.addWidget(self.clear_button)
-        buttons.addStretch(1)
+        heading = QHBoxLayout()
+        heading.setSpacing(metrics.space)
+        heading.addWidget(self.title, 1)
+        heading.addWidget(self.meta)
 
+        bounds_heading = QHBoxLayout()
+        bounds_heading.setSpacing(metrics.space)
+        bounds_heading.addWidget(self.bounds_heading)
+        bounds_heading.addWidget(self.bounds_label, 1)
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(metrics.space)
+        buttons.addWidget(self.play_button, 1)
+        buttons.addWidget(self.clear_button, 1)
+
+        transport = QHBoxLayout()
+        transport.setSpacing(metrics.space)
+        transport.addWidget(self.stop_button)
+        transport.addWidget(self.sound_box)
+        transport.addStretch(1)
+
+        # The order the spec fixes: the file, the picture, the bounds as numbers and as
+        # a bar, then the two actions. Everything a reviewer does to one clip, downwards.
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.title)
+        layout.setSpacing(metrics.space + 2)
+        layout.addLayout(heading)
         layout.addWidget(self.picture_stack, 1)
-        layout.addWidget(QLabel("Scrub"))
         layout.addWidget(self.scrub)
-        layout.addWidget(QLabel("In"))
+        layout.addLayout(bounds_heading)
         layout.addWidget(self.start_slider)
-        layout.addWidget(QLabel("Out"))
         layout.addWidget(self.end_slider)
-        layout.addWidget(self.bounds_label)
         layout.addLayout(buttons)
+        layout.addLayout(transport)
         layout.addWidget(self.note)
 
         self._player: QMediaPlayer | None = None
@@ -172,6 +204,7 @@ class PreviewPanel(QWidget):
             widget.setEnabled(enabled)
         if segment is None:
             self.title.setText("Nothing selected")
+            self.meta.clear()
             self.frame.setText("no preview")
             self.show_strip()
             self.bounds_label.clear()
@@ -180,7 +213,10 @@ class PreviewPanel(QWidget):
 
         source = self._state.manifest.files.get(segment.file_id) if self._state.manifest else None
         name = Path(source.path).name if source is not None else segment.file_id
-        self.title.setText(f"{name}  {segment.start_s:.1f} to {segment.end_s:.1f} s")
+        self.title.setText(name)
+        length = f"{segment.end_s - segment.start_s:.1f} s"
+        clock = clock_label(source, segment.start_s)
+        self.meta.setText(f"{clock} · {length}" if clock else length)
         self._span = _trimmed(segment)
         start, end = segment.effective_bounds
         for slider, value in ((self.start_slider, start), (self.end_slider, end)):
@@ -418,8 +454,9 @@ class PreviewPanel(QWidget):
         self._show_frame(self.start_slider.value() / MS)
 
     def _update_bounds_label(self) -> None:
+        """`5.50 s → 9.80 s · 4.30 s`, in the mono face, beside its label."""
         start, end = self.bounds()
-        self.bounds_label.setText(f"in {start:.2f} s, out {end:.2f} s, {end - start:.2f} s long")
+        self.bounds_label.setText(f"{start:.2f} s → {end:.2f} s · {end - start:.2f} s")
 
     def _commit_bounds(self) -> None:
         """Save the drag. A span shorter than one sampled frame is a slip, not a decision."""

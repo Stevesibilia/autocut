@@ -14,7 +14,10 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QPoint, Qt  # noqa: E402
 from PySide6.QtGui import QPixmap  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import (
+    QApplication,  # noqa: E402
+    QLabel,  # noqa: E402
+)
 
 from autocut.core.cache import CacheEntry, write_entry  # noqa: E402
 from autocut.core.config import AutocutConfig  # noqa: E402
@@ -27,11 +30,13 @@ from autocut.core.manifest import (  # noqa: E402
     SourceFile,
     Tag,
 )
-from autocut.gui.screens.review import ReviewScreen, duration_label  # noqa: E402
+from autocut.gui import theme  # noqa: E402
+from autocut.gui.screens.review import ReviewScreen  # noqa: E402
 from autocut.gui.state import ProjectState  # noqa: E402
 from autocut.gui.widgets.groups import build_groups  # noqa: E402
 from autocut.gui.widgets.preview import snap  # noqa: E402
 from autocut.gui.widgets.scrubber import SpriteStrip  # noqa: E402
+from autocut.gui.widgets.topbar import duration_label  # noqa: E402
 
 pytestmark = pytest.mark.gui
 
@@ -188,10 +193,14 @@ def test_the_rejected_clips_can_be_revealed(screen: ReviewScreen) -> None:
     assert "f7:0" in screen.grid.visible_ids()
 
 
-def test_the_header_counts_the_edit_and_not_the_filter(screen: ReviewScreen) -> None:
-    """The scenario from the spec: filter to one place, the header stays project wide."""
-    before = screen.counts.text()
-    assert "3 clips" in before
+def counter(screen: ReviewScreen, label: str) -> str:
+    """The value of one top bar counter, by the word under it."""
+    return next(c.value for c in screen.bar_counters() if c.label == label)
+
+
+def test_the_counters_count_the_edit_and_not_the_filter(screen: ReviewScreen) -> None:
+    """The scenario from the spec: filter to one place, the counters stay project wide."""
+    assert counter(screen, "clips") == "3"
     manifest = screen._state.manifest
     assert manifest is not None
     place = sorted({s.place_id for s in manifest.segments.values() if s.place_id is not None})[0]
@@ -202,7 +211,7 @@ def test_the_header_counts_the_edit_and_not_the_filter(screen: ReviewScreen) -> 
     assert shown
     assert all(manifest.segments[sid].place_id == place for sid in shown)
     assert len(shown) < 7
-    assert "3 clips" in screen.counts.text()
+    assert counter(screen, "clips") == "3"
 
 
 def test_the_place_filter_names_the_place(screen: ReviewScreen) -> None:
@@ -266,7 +275,7 @@ def test_rejecting_with_the_keyboard_re_runs_the_selection(screen: ReviewScreen)
     assert selected.user_decision == "reject"
     assert selected.outcome != "selected"
     assert sum(1 for s in manifest.segments.values() if s.outcome == "selected") == 3
-    assert "rejected by hand" in screen.counts.text()
+    assert counter(screen, "kept · rejected").endswith("· 1")
 
 
 def test_keeping_with_the_keyboard_pins_the_clip(screen: ReviewScreen) -> None:
@@ -769,7 +778,7 @@ def test_exporting_the_report_shows_the_review(screen: ReviewScreen) -> None:
     assert path is not None
     html = path.read_text(encoding="utf-8")
     assert "user rejected" in html
-    assert "2 rejected by hand" in screen.counts.text()
+    assert counter(screen, "kept · rejected").endswith("· 2")
 
 
 def test_the_report_button_writes_beside_the_manifest(screen: ReviewScreen) -> None:
@@ -998,11 +1007,10 @@ def test_the_header_shows_the_edit_and_not_the_montage(
     assert manifest is not None
     selected = [s for s in manifest.segments.values() if s.outcome == "selected"]
 
-    header = screen.counts.text()
+    edit = counter(screen, "edit")
     note = screen.montage_note.text()
 
-    assert "of edit" in header
-    assert duration_label(total_duration(selected)) in header
+    assert edit == duration_label(total_duration(selected))
     # The montage's own length lives in the transport row, not under the header.
     assert f"{manifest.preview.duration_s:.1f}" not in note
     assert "Montage of" in note
@@ -1055,7 +1063,7 @@ def test_the_screen_follows_a_different_project(
     assert screen.grid.count == 3
     # The filters were rebuilt for this project: it has places of its own.
     assert screen.place_box.count() >= 2
-    assert screen.counts.text() != "No project open"
+    assert screen.bar_counters()
 
 
 def test_an_empty_state_says_so(qtbot: Any) -> None:
@@ -1064,7 +1072,7 @@ def test_an_empty_state_says_so(qtbot: Any) -> None:
     qtbot.addWidget(widget)
 
     assert widget.grid.count == 0
-    assert "No project open" in widget.counts.text()
+    assert widget.bar_counters() == []
 
 
 def _key(key: Qt.Key) -> Any:
@@ -1100,3 +1108,149 @@ def test_a_review_is_saved_without_being_asked(screen: ReviewScreen, qtbot: Any)
     reloaded = Manifest.load(state.output_dir / "manifest.json")  # type: ignore[operator]
     assert reloaded.segments[segment_id].user_decision == "reject"
     assert time.monotonic() - started < 5.0
+
+
+def test_a_screen_without_a_project_offers_to_open_one(qtbot: Any) -> None:
+    """The empty state, and its one action: the window is asked for the Project screen."""
+    state = ProjectState()
+    widget = ReviewScreen(state)
+    qtbot.addWidget(widget)
+    asked: list[int] = []
+    widget.open_project_requested.connect(lambda: asked.append(1))
+
+    assert widget.stack.currentWidget() is widget.empty
+    assert "No project open" in widget.empty.message.text()
+    widget.open_project_button.click()
+
+    assert asked == [1]
+
+
+def test_opening_a_project_replaces_the_empty_state_with_the_grid(screen: ReviewScreen) -> None:
+    assert screen.stack.currentWidget() is screen.grid
+    assert screen.grid.count
+
+
+# --- the filter chips -------------------------------------------------------
+
+
+def test_a_chip_says_what_its_box_says(screen: ReviewScreen) -> None:
+    chip = screen.filters.chips["place"]
+    assert chip.text().startswith("Place")
+    assert "any" in chip.text()
+
+
+def test_choosing_a_place_through_the_chip_filters_the_grid(screen: ReviewScreen) -> None:
+    """The scenario from the spec, driven through the chip rather than the box."""
+    manifest = screen._state.manifest
+    assert manifest is not None
+    place = sorted({s.place_id for s in manifest.segments.values() if s.place_id is not None})[0]
+    chip = screen.filters.chips["place"]
+    row = chip.box.findData(place)
+    assert row >= 0
+
+    chip._fill()
+    next(a for a in chip._menu.actions() if a.text() == chip.box.itemText(row)).trigger()
+
+    shown = screen.grid.visible_ids()
+    assert shown
+    assert all(manifest.segments[sid].place_id == place for sid in shown)
+    assert chip.text() == f"Place  {chip.box.itemText(row)}"
+    assert chip.active
+    assert screen.bar_counters()[0].value == "3"
+
+
+def test_a_chip_on_its_neutral_entry_does_not_look_active(screen: ReviewScreen) -> None:
+    assert screen.filters.active_keys == []
+    screen.class_box.setCurrentIndex(1)
+    assert "class" in screen.filters.active_keys
+    screen.class_box.setCurrentIndex(0)
+    assert screen.filters.active_keys == []
+
+
+def test_the_score_chip_shows_its_range_and_wakes_when_narrowed(screen: ReviewScreen) -> None:
+    chip = screen.filters.chips["score"]
+    assert chip.text() == "Score  0.00 – 1.00"
+    assert not chip.active
+
+    screen.min_score.setValue(0.5)
+
+    assert chip.text() == "Score  0.50 – 1.00"
+    assert chip.active
+
+
+def test_the_chip_menu_is_rebuilt_from_its_box(screen: ReviewScreen) -> None:
+    """Places and clusters appear only after a selection, so the menu cannot be cached."""
+    chip = screen.filters.chips["place"]
+    chip._fill()
+    before = [action.text() for action in chip._menu.actions()]
+
+    chip.box.addItem("Somewhere new", 99)
+    chip._fill()
+
+    after = [action.text() for action in chip._menu.actions()]
+    assert after == [*before, "Somewhere new"]
+
+
+def test_the_boxes_are_kept_out_of_sight_and_out_of_their_own_window(
+    screen: ReviewScreen,
+) -> None:
+    for chip in screen.filters.chips.values():
+        box = getattr(chip, "box", None)
+        if box is not None:
+            assert box.isHidden()
+            assert box.parent() is chip
+
+
+# --- the right panel --------------------------------------------------------
+
+
+def test_the_right_panel_is_the_fixed_width_the_tokens_set(screen: ReviewScreen) -> None:
+    assert screen.panel.width() == theme.METRICS.panel_width
+    assert screen.panel.widgetResizable()
+
+
+def test_the_panel_holds_the_sections_in_the_order_the_spec_fixes(screen: ReviewScreen) -> None:
+    body = screen.panel.widget()
+    order = [body.layout().itemAt(i).widget() for i in range(body.layout().count())]
+    assert order[0] is screen.preview
+    assert order[1] is screen.sliders
+    assert screen.groups_summary in order
+    assert order.index(screen.sliders) < order.index(screen.groups_summary)
+
+
+def test_the_preview_names_the_file_and_its_time_separately(screen: ReviewScreen) -> None:
+    screen.grid.setCurrentIndex(screen.grid.proxy.index(0, 0))
+
+    assert screen.preview.title.text().endswith(".MP4")
+    assert " s" in screen.preview.meta.text()
+
+
+def test_the_bounds_read_as_one_mono_line(screen: ReviewScreen) -> None:
+    screen.grid.setCurrentIndex(screen.grid.proxy.index(0, 0))
+
+    text = screen.preview.bounds_label.text()
+
+    assert "→" in text
+    assert text.count(" s") == 3
+    assert screen.preview.bounds_heading.text() == "In · Out"
+
+
+def test_the_diversity_slider_says_which_way_is_which(screen: ReviewScreen) -> None:
+    from autocut.gui.widgets.sliders import DIVERSITY_ENDS
+
+    words = {label.text() for label in screen.sliders.findChildren(QLabel)}
+
+    assert set(DIVERSITY_ENDS) <= words
+
+
+def test_the_weights_carry_the_quieter_slider_variant(screen: ReviewScreen) -> None:
+    for name in screen.sliders._sliders:
+        assert screen.sliders._sliders[name].property("variant") == "weight"
+    assert screen.sliders.diversity.property("variant") is None
+
+
+def test_the_summary_counts_the_stacks_and_the_places(screen: ReviewScreen) -> None:
+    from autocut.gui.widgets.groups import groups_summary
+
+    assert screen.groups_summary.text() == groups_summary(screen._state.manifest)
+    assert screen.groups_summary.text()

@@ -65,6 +65,8 @@ autocut gui               # or: autocut gui ./edit to open a project
 
 The window reads and writes the same `manifest.json` and `autocut.toml` as the commands above, so the two can be used on one project in any order.
 
+It brings its own look rather than borrowing the desktop's, so it renders the same on Linux and on macOS: dark by default, with `gui.theme = "light"` or `"system"` in `autocut.toml` for the other two, applied at the next start. Space Grotesk, IBM Plex Mono and a subset of the Lucide icons ship inside the package for that reason. Their licences are listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) and shipped beside the files.
+
 ## Cloud features
 
 When `OPENROUTER_API_KEY` is set, semantic tags, captions and prompt refinement use a hosted model. Only downscaled thumbnails and derived signals are sent, never the video files. Pass `--no-cloud` or set `providers.cloud = false` to stay fully local.

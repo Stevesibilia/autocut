@@ -270,3 +270,39 @@ def test_the_cache_line_says_where_and_how_big(state: ProjectState, qtbot: Any) 
 
     assert "entries" in dialog.cache_label.text()
     assert "MB" in dialog.cache_label.text()
+
+
+def test_the_theme_round_trips_to_the_config_and_the_file(state: ProjectState, qtbot: Any) -> None:
+    dialog = SettingsDialog(state)
+    qtbot.addWidget(dialog)
+    assert dialog.theme.currentText() == "dark"
+    assert [dialog.theme.itemText(row) for row in range(dialog.theme.count())] == [
+        "dark",
+        "light",
+        "system",
+    ]
+
+    dialog.theme.setCurrentText("light")
+    dialog.accept()
+
+    assert state.config.gui.theme == "light"
+    written = tomllib.loads((state.config_path or Path()).read_text(encoding="utf-8"))
+    assert written["gui"]["theme"] == "light"
+
+
+def test_the_theme_field_says_when_it_takes_effect(state: ProjectState, qtbot: Any) -> None:
+    """The window is dressed at start up, so a user who changes it has to be told."""
+    dialog = SettingsDialog(state)
+    qtbot.addWidget(dialog)
+    assert "next time" in dialog.theme_note.text()
+
+
+def test_a_reopened_dialog_shows_the_saved_theme(state: ProjectState, qtbot: Any) -> None:
+    first = SettingsDialog(state)
+    qtbot.addWidget(first)
+    first.theme.setCurrentText("system")
+    first.accept()
+
+    second = SettingsDialog(state)
+    qtbot.addWidget(second)
+    assert second.theme.currentText() == "system"

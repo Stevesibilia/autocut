@@ -9,6 +9,7 @@ back in step.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, TypeAlias
 
@@ -22,7 +23,7 @@ from PySide6.QtCore import (
     Qt,
 )
 
-from autocut.core.manifest import Manifest, Outcome, Segment
+from autocut.core.manifest import Manifest, Outcome, Segment, SourceFile
 from autocut.gui.state import ProjectState
 
 
@@ -45,6 +46,12 @@ class SegmentRole:
     ORDER_OR_TIME = int(Qt.ItemDataRole.UserRole) + 14
     TAGS = int(Qt.ItemDataRole.UserRole) + 15
     SPRITE = int(Qt.ItemDataRole.UserRole) + 16
+    PLACE_NAME = int(Qt.ItemDataRole.UserRole) + 17
+    CLOCK = int(Qt.ItemDataRole.UserRole) + 18
+    BEATS = int(Qt.ItemDataRole.UserRole) + 19
+    HERO = int(Qt.ItemDataRole.UserRole) + 20
+    LOST_TO_ORDER = int(Qt.ItemDataRole.UserRole) + 21
+    SIMILARITY = int(Qt.ItemDataRole.UserRole) + 22
 
 
 #: Qt hands a view's model either kind of index, and an override has to accept both.
@@ -53,6 +60,35 @@ AnyIndex: TypeAlias = QModelIndex | QPersistentModelIndex
 #: Qt calls ``rowCount`` with no argument to mean the root, and the default has to be
 #: an index object. One instance, because an invalid index carries no state.
 ROOT = QModelIndex()
+
+
+def place_name(manifest: Manifest | None, place_id: int | None) -> str:
+    """What to call this clip's place, or nothing when it has none yet."""
+    if manifest is None or place_id is None:
+        return ""
+    place = manifest.places.get(str(place_id))
+    return place.label if place is not None else ""
+
+
+def clock_label(source: SourceFile | None, start_s: float) -> str:
+    """The time of day this clip was shot, as `HH:MM`.
+
+    The file's creation time plus the offset into it: a card is read against the day
+    the footage was shot, and a clip six minutes into a file was not shot when the file
+    was opened. Empty when the file carries no timestamp, which is common enough on
+    footage that has been through an editor.
+    """
+    if source is None or source.creation_time is None:
+        return ""
+    return (source.creation_time + timedelta(seconds=start_s)).strftime("%H:%M")
+
+
+def lost_to_order(manifest: Manifest | None, lost_to: str | None) -> int | None:
+    """The edit position of the clip a candidate lost to, so the card can name it."""
+    if manifest is None or not lost_to:
+        return None
+    winner = manifest.segments.get(lost_to)
+    return winner.order if winner is not None and winner.order is not None else None
 
 
 def segment_duration(segment: Segment) -> float:
@@ -172,6 +208,20 @@ class SegmentListModel(QAbstractListModel):
             return [tag.label for tag in segment.tags]
         if role == SegmentRole.SPRITE:
             return str(segment.sprite) if segment.sprite else ""
+        if role == SegmentRole.PLACE_NAME:
+            return place_name(manifest, segment.place_id)
+        if role == SegmentRole.CLOCK:
+            return clock_label(source, segment.start_s)
+        if role == SegmentRole.BEATS:
+            return segment.beats if segment.beats is not None else 0
+        if role == SegmentRole.HERO:
+            # The duration rule that fired is what makes a clip a hero: it is the one
+            # that was given room to breathe, and nothing else records the decision.
+            return segment.duration_reason == "hero"
+        if role == SegmentRole.LOST_TO_ORDER:
+            return lost_to_order(manifest, segment.lost_to)
+        if role == SegmentRole.SIMILARITY:
+            return segment.similarity_to_selected if segment.similarity_to_selected else 0.0
         if role == SegmentRole.ORDER_OR_TIME:
             # Capture order: the file's position in the project, then the offset in it.
             # The sort has to be stable across files, and a start time alone is not,

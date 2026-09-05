@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QSplitter,
+    QScrollArea,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -29,25 +29,26 @@ from autocut.core.manifest import Manifest
 from autocut.core.montage import MontageResult, discard
 from autocut.core.report import render_report
 from autocut.core.rules import EXCLUSIONS
+from autocut.gui import theme
 from autocut.gui.state import ProjectState
-from autocut.gui.widgets.groups import GroupsView
+from autocut.gui.widgets.chips import FilterChips
+from autocut.gui.widgets.empty import EmptyState
+from autocut.gui.widgets.groups import GroupsView, groups_summary
 from autocut.gui.widgets.montage import MontagePlayer, clip_labels
 from autocut.gui.widgets.preview import PreviewPanel
 from autocut.gui.widgets.sliders import SliderPanel
 from autocut.gui.widgets.thumb_grid import ThumbGrid
+from autocut.gui.widgets.topbar import Counter, edit_counters
 
 ANY = "any"
-
-
-def duration_label(seconds: float) -> str:
-    minutes, secs = divmod(int(round(seconds)), 60)
-    return f"{minutes}:{secs:02d}"
 
 
 class ReviewScreen(QWidget):
     """Filters and header on top, grid or groups on the left, preview and sliders right."""
 
     report_written = Signal(str)
+    open_project_requested = Signal()
+    """The empty state's one action: the window sends the user to the Project screen."""
 
     def __init__(self, state: ProjectState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -57,20 +58,34 @@ class ReviewScreen(QWidget):
         self.grid = ThumbGrid(state, self)
         self.groups = GroupsView(state, self)
         self.montage = MontagePlayer(self)
+        # Shown instead of the grid when there is nothing to review: one sentence and
+        # the one thing that would fix it, which here is opening a project.
+        self.open_project_button = QPushButton("Open a project…")
+        self.open_project_button.setProperty("variant", "primary")
+        self.open_project_button.clicked.connect(self.open_project_requested.emit)
+        self.empty = EmptyState(
+            "No project open. Open one and analyse it to review its clips.",
+            icon="folder",
+            action=self.open_project_button,
+        )
+
         self.stack = QStackedWidget()
+        self.stack.addWidget(self.empty)
         self.stack.addWidget(self.grid)
         self.stack.addWidget(self.groups)
         self.stack.addWidget(self.montage)
 
         self.preview = PreviewPanel(state, self)
         self.sliders = SliderPanel(state, self)
+        metrics = theme.current().metrics
 
-        # --- header ---------------------------------------------------------
-        self.counts = QLabel()
-        self.counts.setStyleSheet("font-size: 15px; font-weight: 600;")
+        # --- notices ---------------------------------------------------------
+        # The counters live in the window's top bar now: they are about the project and
+        # every screen wants to read them. What is left here is what only this screen
+        # can say, which is when the edit disagrees with the settings.
         self.warning = QLabel()
         self.warning.setWordWrap(True)
-        self.warning.setStyleSheet("color: palette(link-visited);")
+        self.warning.setProperty("role", "warning")
 
         # --- filters --------------------------------------------------------
         self.sort_box = QComboBox()
@@ -105,7 +120,7 @@ class ReviewScreen(QWidget):
         self.play_all_button.clicked.connect(self.play_all)
         self.montage_note = QLabel()
         self.montage_note.setWordWrap(True)
-        self.montage_note.setStyleSheet("color: palette(mid);")
+        self.montage_note.setProperty("role", "muted")
 
         self.keep_button = QPushButton("Keep (K)")
         self.reject_button = QPushButton("Reject (R)")
@@ -118,54 +133,76 @@ class ReviewScreen(QWidget):
         self.undo_button.clicked.connect(self.undo)
         self.report_button.clicked.connect(self.export_report)
 
-        filters = QHBoxLayout()
-        filters.addWidget(QLabel("Sort"))
-        filters.addWidget(self.sort_box)
-        for label, box in (
-            ("Class", self.class_box),
-            ("Tag", self.tag_box),
-            ("Place", self.place_box),
-            ("Outcome", self.outcome_box),
-            ("Reason", self.reason_box),
+        # The boxes above are the filter model and stay exactly as they were; the chips
+        # are a face over them, so the proxy and everything that drives a box directly
+        # are untouched. The boxes themselves are never shown.
+        self.filters = FilterChips()
+        self.filters.add_box("sort", "Sort", self.sort_box)
+        for key, label, box in (
+            ("class", "Class", self.class_box),
+            ("tag", "Tag", self.tag_box),
+            ("place", "Place", self.place_box),
+            ("outcome", "Outcome", self.outcome_box),
+            ("reason", "Reason", self.reason_box),
         ):
-            filters.addWidget(QLabel(label))
-            filters.addWidget(box)
-        filters.addWidget(QLabel("Score"))
-        filters.addWidget(self.min_score)
-        filters.addWidget(self.max_score)
-        filters.addStretch(1)
-        filters.addWidget(self.show_rejected)
-        filters.addWidget(self.groups_toggle)
+            self.filters.add_box(key, label, box)
+        self.filters.add_range("score", "Score", self.min_score, self.max_score)
+        self.filters.add_toggle(self.show_rejected)
+        self.filters.add_toggle(self.groups_toggle)
 
+        # Play all and Export report are handed to the top bar by bar_actions; what
+        # stays here is the decision row, which belongs beside the grid it acts on.
         actions = QHBoxLayout()
-        actions.addWidget(self.play_all_button)
         actions.addWidget(self.keep_button)
         actions.addWidget(self.reject_button)
         actions.addWidget(self.clear_button)
         actions.addWidget(self.undo_button)
         actions.addStretch(1)
-        actions.addWidget(self.report_button)
 
-        right = QWidget()
-        right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(8, 0, 0, 0)
-        right_layout.addWidget(self.preview, 3)
-        right_layout.addWidget(self.sliders, 2)
+        # The right panel, in the order the spec fixes: the file and its preview, the
+        # bounds and the two actions on them, then diversity, then the weights, and last
+        # a line about what the caps held back. It scrolls, because six weight sliders
+        # and a preview do not fit a laptop at the panel's fixed width.
+        self.groups_summary = QLabel("")
+        self.groups_summary.setWordWrap(True)
+        self.groups_summary.setProperty("role", "muted")
+        summary_heading = QLabel("Similar groups")
+        summary_heading.setProperty("role", "label")
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self.stack)
-        splitter.addWidget(right)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
+        panel_body = QWidget()
+        panel_layout = QVBoxLayout(panel_body)
+        panel_layout.setContentsMargins(20, 18, 20, 18)
+        panel_layout.setSpacing(metrics.space * 2)
+        panel_layout.addWidget(self.preview)
+        panel_layout.addWidget(self.sliders)
+        panel_layout.addStretch(1)
+        panel_layout.addWidget(summary_heading)
+        panel_layout.addWidget(self.groups_summary)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.addWidget(self.counts)
-        layout.addWidget(self.warning)
-        layout.addWidget(self.montage_note)
-        layout.addLayout(filters)
-        layout.addWidget(splitter, 1)
-        layout.addLayout(actions)
+        self.panel = QScrollArea()
+        self.panel.setObjectName("rightPanel")
+        self.panel.setWidgetResizable(True)
+        self.panel.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.panel.setFixedWidth(metrics.panel_width)
+        self.panel.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.panel.setWidget(panel_body)
+
+        centre = QWidget()
+        centre_layout = QVBoxLayout(centre)
+        centre_layout.setContentsMargins(metrics.space * 3, 14, metrics.space * 3, 0)
+        centre_layout.setSpacing(metrics.space + 4)
+        centre_layout.addWidget(self.filters)
+        centre_layout.addWidget(self.warning)
+        centre_layout.addWidget(self.montage_note)
+        centre_layout.addWidget(self.stack, 1)
+        centre_layout.addWidget(self.montage.take_strip())
+        centre_layout.addLayout(actions)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(centre, 1)
+        layout.addWidget(self.panel)
 
         # --- wiring ---------------------------------------------------------
         self.grid.keep_requested.connect(lambda sid: self._decide("keep", sid))
@@ -201,6 +238,8 @@ class ReviewScreen(QWidget):
         self._fill_filters(manifest)
         self.groups.refresh()
         self.refresh_header()
+        self.groups_summary.setText(groups_summary(manifest))
+        self._show_grid_or_empty()
         if manifest is not None and self.grid.count and not self.grid.current_id():
             self.grid.setCurrentIndex(self.grid.proxy.index(0, 0))
 
@@ -230,6 +269,9 @@ class ReviewScreen(QWidget):
                 box.blockSignals(True)
                 box.setCurrentIndex(index)
                 box.blockSignals(False)
+        # The blocked signals above are how the boxes keep the proxy from re-filtering
+        # six times per project open, so the chips have to be told by hand instead.
+        self.filters.refresh()
 
     def _rebuild_filters(self, manifest: Manifest | None) -> None:
         classes = sorted(
@@ -285,26 +327,37 @@ class ReviewScreen(QWidget):
 
     # --- header ------------------------------------------------------------
 
-    def refresh_header(self) -> None:
-        """Selected clips and total duration, project wide, whatever the filters show.
+    def bar_counters(self) -> list[Counter]:
+        """The edit, counted for the top bar: project wide, whatever the filters show.
 
-        Project wide on purpose: the header answers "how long is my edit", and a
+        Project wide on purpose. The counters answer "how long is my edit", and a
         number that changed when a filter changed would answer nothing.
         """
         manifest = self._state.manifest
         if manifest is None:
-            self.counts.setText("No project open")
+            return []
+        selected = [s for s in manifest.segments.values() if s.outcome == "selected"]
+        return edit_counters(
+            clips=len(selected),
+            duration_s=total_duration(selected),
+            # The synced tempo, not the measured one: a measurement is not a sync,
+            # and the counter is about the edit the clips were actually cut to.
+            bpm=round(manifest.soundtrack.synced_bpm) if manifest.soundtrack.synced_bpm else None,
+            kept=sum(1 for s in manifest.segments.values() if s.kept),
+            rejected=sum(1 for s in manifest.segments.values() if s.user_rejected),
+        )
+
+    def bar_actions(self) -> list[QWidget]:
+        """The two things this screen does that are about the whole edit."""
+        return [self.play_all_button, self.report_button]
+
+    def refresh_header(self) -> None:
+        """The one notice only this screen can give: the edit against the settings."""
+        manifest = self._state.manifest
+        if manifest is None:
             self.warning.clear()
             return
-        selected = [s for s in manifest.segments.values() if s.outcome == "selected"]
         kept = sum(1 for s in manifest.segments.values() if s.kept)
-        rejected = sum(1 for s in manifest.segments.values() if s.user_rejected)
-        total = total_duration(selected)
-        showing = self.grid.count
-        self.counts.setText(
-            f"{len(selected)} clips, {duration_label(total)} of edit  "
-            f"({showing} shown, {kept} kept by hand, {rejected} rejected by hand)"
-        )
         cap = self._state.config.selection.max_clips
         if kept > cap:
             self.warning.setText(
@@ -387,6 +440,7 @@ class ReviewScreen(QWidget):
         self._fill_filters(self._state.manifest)
         self.groups.refresh()
         self.refresh_header()
+        self.groups_summary.setText(groups_summary(self._state.manifest))
         if current:
             self.grid.select_segment(current)
         self.preview.show_segment(self.grid.current_id())
@@ -423,6 +477,13 @@ class ReviewScreen(QWidget):
         self.stack.setCurrentWidget(self.groups if groups else self.grid)
         if groups:
             self.groups.refresh()
+
+    def _show_grid_or_empty(self) -> None:
+        """The grid when there is a project, the empty state when there is not."""
+        if self._state.manifest is None:
+            self.stack.setCurrentWidget(self.empty)
+        elif self.stack.currentWidget() is self.empty:
+            self.stack.setCurrentWidget(self.grid)
 
     def _set_running(self, running: bool) -> None:
         """No decisions while a stage owns the manifest."""

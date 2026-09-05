@@ -12,6 +12,8 @@ build/
 
 # Fixtures: synthetic ones are regenerated, private ones never leave this machine
 tests/fixtures/synthetic/
+# Half built fixture sets from a concurrent scripts/make_fixtures.py run
+tests/fixtures/.synthetic-*/
 tests/fixtures/private/*
 !tests/fixtures/private/.gitignore
 

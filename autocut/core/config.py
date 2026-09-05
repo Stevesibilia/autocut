@@ -893,6 +893,13 @@ class GuiConfig(BaseModel):
         le=51,
         description="Quality of the montage parts. Lower than the export's on purpose.",
     )
+    theme: Literal["dark", "light", "system"] = Field(
+        default="dark",
+        description="Which token set the window is drawn with. Dark by default because "
+        "that is the design that was approved and because footage reads better against "
+        "it; 'system' picks one from the desktop palette at start up. Applied when the "
+        "window opens, so a change takes effect on the next start (ADR 10).",
+    )
 
 
 class CacheConfig(BaseModel):

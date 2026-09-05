@@ -183,7 +183,7 @@ def test_creating_a_project_applies_the_profile_and_remembers_it(
     assert state.manifest.config_snapshot["weights"]["motion"] == pytest.approx(1.4)
     assert opened == [1]
     assert str(out.resolve()) in recent_in_tmp.read_text(encoding="utf-8")
-    assert screen.recent.count() == 1
+    assert len(screen.recent.cards) == 1
 
 
 def test_reopening_a_project_puts_its_sources_back(screen: ProjectScreen, tmp_path: Path) -> None:

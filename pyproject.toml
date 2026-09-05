@@ -72,11 +72,26 @@ autocut = "autocut.cli.main:app"
 [tool.hatch.build.targets.wheel]
 packages = ["autocut"]
 # The report template ships with the package: the renderer loads it from the
-# installed tree, not from the source checkout.
-artifacts = ["autocut/core/templates/*.j2"]
+# installed tree, not from the source checkout. The GUI design system ships the
+# same way: the window registers the fonts and renders the icons out of the
+# installed tree, so a wheel without them opens with the platform fonts and no
+# icons at all. The PyInstaller specification (ADR 7) has to collect the same
+# directory.
+artifacts = [
+  "autocut/core/templates/*.j2",
+  "autocut/gui/theme/assets/**",
+]
 
 [tool.hatch.build.targets.sdist]
-include = ["autocut", "scripts", "tests", "SPEC.md", "AGENTS.md", "README.md"]
+include = [
+  "autocut",
+  "scripts",
+  "tests",
+  "SPEC.md",
+  "AGENTS.md",
+  "README.md",
+  "THIRD_PARTY_LICENSES.md",
+]
 
 [tool.ruff]
 line-length = 100

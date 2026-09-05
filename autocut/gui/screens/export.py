@@ -8,6 +8,7 @@ do" is on screen before anything is written.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
@@ -39,6 +40,7 @@ from autocut.core.ffmpeg_cmd import ExportOverrides, resolve_target_fps, slow_mo
 from autocut.core.manifest import Manifest
 from autocut.core.montage import clear_preview, is_current
 from autocut.core.naming import SELECTS_DIR, STALE_DIR
+from autocut.core.render import RenderResult, render_edit, render_path, resolve_track
 from autocut.gui.settings import write_config
 from autocut.gui.state import ProjectState
 
@@ -57,7 +59,21 @@ EXPORT_PATHS: tuple[str, ...] = (
     "export.slow_motion_auto",
     "export.lens_correction",
     "export.lut",
+    "render.enabled",
+    "render.fade_out_seconds",
 )
+
+
+@dataclass(slots=True)
+class ExportOutcome:
+    """What one press of Export produced: the clips, and the render when asked for.
+
+    One stage runs both, because the render's input is the export and a second
+    ``run_stage`` would be refused while the first worker is still winding down.
+    """
+
+    export: ExportResult
+    render: RenderResult | None = None
 
 
 def folder_size(path: Path) -> int:
@@ -84,6 +100,7 @@ class ExportScreen(QWidget):
         self.setObjectName("screen-export")
         self._state = state
         self._result: ExportResult | None = None
+        self._render: RenderResult | None = None
 
         # --- the options ------------------------------------------------------
         self.mode_box = QComboBox()
@@ -103,6 +120,12 @@ class ExportScreen(QWidget):
         self.vertical_box = QComboBox()
         self.vertical_box.addItems(["exclude", "center_crop", "blur_pad", "keep"])
         self.rejects_box = QCheckBox("Also export the rejected clips")
+        self.render_box = QCheckBox("Also render the montage with the track (hard cuts)")
+        self.fade_field = QDoubleSpinBox()
+        self.fade_field.setRange(0.0, 30.0)
+        self.fade_field.setDecimals(1)
+        self.fade_field.setSingleStep(0.5)
+        self.fade_field.setSuffix(" s")
 
         form = QFormLayout()
         form.addRow("Cut", self.mode_box)
@@ -113,6 +136,8 @@ class ExportScreen(QWidget):
         form.addRow("Maximum height", self.height_field)
         form.addRow("Vertical clips", self.vertical_box)
         form.addRow("", self.rejects_box)
+        form.addRow("", self.render_box)
+        form.addRow("Fade out", self.fade_field)
 
         options_box = QGroupBox("Output")
         options_layout = QVBoxLayout(options_box)
@@ -177,6 +202,8 @@ class ExportScreen(QWidget):
             spin.valueChanged.connect(self._options_changed)
         self.fps_field.valueChanged.connect(self._options_changed)
         self.rejects_box.toggled.connect(self._options_changed)
+        self.render_box.toggled.connect(self._options_changed)
+        self.fade_field.valueChanged.connect(self._options_changed)
         for boxes in (self.audio_boxes, self.slow_boxes, self.lens_boxes):
             for box in boxes.values():
                 box.toggled.connect(self._options_changed)
@@ -206,6 +233,9 @@ class ExportScreen(QWidget):
         self.cancel_button.clicked.connect(state.cancel)
         self.open_button = QPushButton("Open the folder")
         self.open_button.clicked.connect(self.open_folder)
+        self.render_button = QPushButton("Open the render")
+        self.render_button.setEnabled(False)
+        self.render_button.clicked.connect(self.open_render)
         self.stale_button = QPushButton("Delete the stale files")
         self.stale_button.setEnabled(False)
         self.stale_button.clicked.connect(self.delete_stale)
@@ -215,6 +245,7 @@ class ExportScreen(QWidget):
         actions.addWidget(self.cancel_button)
         actions.addStretch(1)
         actions.addWidget(self.stale_button)
+        actions.addWidget(self.render_button)
         actions.addWidget(self.open_button)
 
         run_box = QGroupBox("Run")
@@ -268,6 +299,9 @@ class ExportScreen(QWidget):
             self.height_field.setValue(export.max_height)
             self.vertical_box.setCurrentText(export.vertical_strategy)
             self.rejects_box.setChecked(export.keep_rejects)
+            self.render_box.setChecked(self._state.config.render.enabled)
+            self.fade_field.setValue(self._state.config.render.fade_out_seconds)
+            self.fade_field.setEnabled(self._state.config.render.enabled)
             for source_class in SOURCE_CLASSES:
                 # The config asks whether to remove the audio; the screen asks whether
                 # to keep it, which is the question a person actually has.
@@ -302,6 +336,10 @@ class ExportScreen(QWidget):
         export.max_height = self.height_field.value()
         export.vertical_strategy = self.vertical_box.currentText()  # type: ignore[assignment]
         export.keep_rejects = self.rejects_box.isChecked()
+        render = self._state.config.render
+        render.enabled = self.render_box.isChecked()
+        render.fade_out_seconds = self.fade_field.value()
+        self.fade_field.setEnabled(render.enabled)
         for source_class in SOURCE_CLASSES:
             setattr(
                 export.remove_audio,
@@ -363,6 +401,13 @@ class ExportScreen(QWidget):
             lines.append(f"{synced} clips are cut to the beat grid")
         else:
             lines.append("No beat sync yet: lengths come from the selection")
+        if self.render_box.isChecked():
+            track = resolve_track(manifest)
+            name = track.name if track is not None else "no track, so the clips' own sound"
+            lines.append(
+                f"Then {render_path(manifest, config).name} with {name}, "
+                f"{self.fade_field.value():g} s fade out"
+            )
         self.plan_label.setText("\n".join(lines))
 
     def _overrides(self) -> ExportOverrides:
@@ -386,13 +431,26 @@ class ExportScreen(QWidget):
         self.summary.clear()
         self.bar.setValue(0)
 
-        def work(progress: ProgressCallback) -> ExportResult:
-            return export_clips(manifest, config, progress, overrides)
+        wanted = self.render_box.isChecked()
+        track = resolve_track(manifest)
+
+        def work(progress: ProgressCallback) -> ExportOutcome:
+            outcome = ExportOutcome(export_clips(manifest, config, progress, overrides))
+            if wanted and not outcome.export.failed:
+                # The export has just run, so the render finds its clips current and
+                # only joins them.
+                outcome.render = render_edit(manifest, config, track=track, progress=progress)
+            return outcome
 
         return state.run_stage("export", work)
 
     def _on_progress(self, event: object) -> None:
-        if not isinstance(event, ProgressEvent) or event.stage != "export":
+        if not isinstance(event, ProgressEvent):
+            return
+        if event.stage == "render":
+            self.current_label.setText(event.message or "Rendering the montage")
+            return
+        if event.stage != "export":
             return
         if event.total > 0:
             self.bar.setRange(0, event.total)
@@ -404,14 +462,16 @@ class ExportScreen(QWidget):
         self._set_running(False)
         if name != "export":
             return
-        result = self._state.last_result
-        if isinstance(result, ExportResult):
-            self._result = result
-            self.summary.setText(self.describe(result))
-            self.problems.setText(self.describe_problems(result))
+        outcome = self._state.last_result
+        if isinstance(outcome, ExportOutcome):
+            self._result = outcome.export
+            self._render = outcome.render
+            self.summary.setText(self.describe(outcome.export, outcome.render))
+            self.problems.setText(self.describe_problems(outcome.export, outcome.render))
             self.bar.setValue(self.bar.maximum())
             self.current_label.setText("Finished")
         self.refresh_stale()
+        self.refresh_render()
         self.exported.emit()
 
     def _stage_cancelled(self, name: str) -> None:
@@ -419,7 +479,7 @@ class ExportScreen(QWidget):
         if name == "export":
             self.current_label.setText("Cancelled. The clips already written are in the folder.")
 
-    def describe(self, result: ExportResult) -> str:
+    def describe(self, result: ExportResult, render: RenderResult | None = None) -> str:
         """The run in the numbers a person checks before opening CapCut."""
         manifest = self._state.manifest
         selects = result.selects_dir or (
@@ -442,11 +502,19 @@ class ExportScreen(QWidget):
         ]
         if result.stale_moved:
             lines.append(f"{result.stale_moved} stale files moved to {STALE_DIR}")
+        if render is not None and render.ok and render.path is not None:
+            sound = f"with {render.track.name}" if render.track else "silent"
+            lines.append(
+                f"{render.path.name}: {render.duration_s:.1f} s, "
+                f"{render.size_bytes / 1e6:.0f} MB, {render.clips} clips {sound}, hard cuts"
+            )
         return "\n".join(lines)
 
-    def describe_problems(self, result: ExportResult) -> str:
+    def describe_problems(self, result: ExportResult, render: RenderResult | None = None) -> str:
         lines = [f"{segment_id}: {error}" for segment_id, error in result.errors]
         lines += list(result.warnings)
+        if render is not None:
+            lines += [f"render: {error}" for _where, error in render.errors]
         return "\n".join(lines)
 
     def _set_running(self, running: bool) -> None:
@@ -461,11 +529,14 @@ class ExportScreen(QWidget):
             self.height_field,
             self.vertical_box,
             self.rejects_box,
+            self.render_box,
             self.stale_button,
         ):
             widget.setEnabled(not running)
+        self.fade_field.setEnabled(not running and self.render_box.isChecked())
         if not running:
             self.refresh_stale()
+            self.refresh_render()
 
     def _can_run(self) -> bool:
         manifest = self._state.manifest
@@ -559,6 +630,29 @@ class ExportScreen(QWidget):
             self._state.schedule_save()
         self.refresh_stale()
         return removed
+
+    def render_file(self) -> Path | None:
+        """The rendered file for this project, when one is on disk."""
+        manifest = self._state.manifest
+        if manifest is None:
+            return None
+        recorded = manifest.render.path
+        path = Path(recorded) if recorded else render_path(manifest, self._state.config)
+        return path if path.exists() else None
+
+    def refresh_render(self) -> None:
+        """Offer the render only when there is one to open."""
+        self.render_button.setEnabled(self.render_file() is not None)
+
+    def open_render(self) -> bool:
+        """Play the finished file in whatever the system uses for video."""
+        path = self.render_file()
+        if path is None:
+            self.problems.setText("Nothing rendered yet.")
+            return False
+        from PySide6.QtCore import QUrl
+
+        return bool(QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))))
 
     def open_folder(self) -> bool:
         """Show the output in the OS file manager, which is where CapCut imports from."""

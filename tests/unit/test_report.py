@@ -988,3 +988,43 @@ def test_a_project_before_sync_shows_no_beat_panel(project: Manifest) -> None:
     summary = build_summary(project, build_cards(project, Path(project.output_dir)))
     assert summary.measured_bpm is None
     assert summary.synced_count == 0
+
+
+def rendered(project: Manifest) -> Manifest:
+    """A project whose finished file exists, which is what puts it in the header."""
+    path = Path(project.output_dir) / "montage.mp4"
+    path.write_bytes(b"\x00" * 2048)
+    project.render.path = path
+    project.render.fingerprint = "abc123"
+    project.render.duration_s = 73.6
+    project.render.size_bytes = 512_000_000
+    project.render.clips = 29
+    project.render.has_audio = True
+    return project
+
+
+def test_the_header_shows_the_render(project: Manifest) -> None:
+    html = render_report(rendered(project), Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert "<h2>Rendered</h2>" in html
+    assert 'href="montage.mp4"' in html
+    assert "29 clips" in html
+    assert "512 MB" in html
+    assert "with the track" in html
+
+
+def test_a_project_with_no_render_shows_no_panel(project: Manifest) -> None:
+    html = render_report(project, Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert "<h2>Rendered</h2>" not in html
+
+
+def test_a_render_that_was_deleted_is_not_offered(project: Manifest) -> None:
+    """The file lives in a folder the user opens, so it can be moved or thrown away."""
+    manifest = rendered(project)
+    assert manifest.render.path is not None
+    Path(manifest.render.path).unlink()
+
+    html = render_report(manifest, Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert "<h2>Rendered</h2>" not in html

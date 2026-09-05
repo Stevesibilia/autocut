@@ -20,11 +20,17 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
-import subprocess
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
+from autocut.core.avmux import (
+    CONCAT_TIMEOUT_S,
+    concat_command,
+    probe_duration,
+    run_ffmpeg,
+    write_concat_list,
+)
 from autocut.core.config import AutocutConfig
 from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
 from autocut.core.ffmpeg_cmd import ExportPlan, even, plan_export, resolve_target_fps
@@ -53,8 +59,8 @@ def index_path_for(montage: Path) -> Path:
 
 
 #: A part is seconds of work at 360 px; a whole montage of a long holiday is minutes.
+#: The concat's own timeout is shared with the final render, in ``avmux``.
 PART_TIMEOUT_S = 300.0
-CONCAT_TIMEOUT_S = 600.0
 
 
 class MontageCancelled(Exception):  # noqa: N818 - a cancellation, not an error
@@ -251,77 +257,6 @@ def part_command(plan: ExportPlan, height: int, config: AutocutConfig, output: P
     ]
 
 
-def concat_command(
-    list_file: Path, track: Path | None, output: Path, duration_s: float = 0.0
-) -> list[str]:
-    """Join the parts by stream copy, muxing the track when there is one.
-
-    The video length is the montage's length, never the track's. ``-shortest`` was the
-    obvious flag and it is the wrong one: measured on the real project, a twenty
-    second track cut a seventy-seven second edit down to twenty seconds, which is the
-    opposite of a preview of the edit. So the audio is padded with silence and the
-    output is cut to the video's own duration: a short track leaves the rest of the
-    montage silent, and a long one is trimmed.
-    """
-    command = [
-        "ffmpeg",
-        "-v",
-        "error",
-        "-nostdin",
-        "-y",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        str(list_file),
-    ]
-    if track is not None:
-        command += ["-i", str(track)]
-    command += ["-map", "0:v:0"]
-    if track is not None:
-        # Re-encoded rather than copied: the track can be anything Suno felt like
-        # returning, and an mp4 will not hold every one of them.
-        command += ["-map", "1:a:0", "-c:a", "aac", "-b:a", "160k", "-af", "apad"]
-    else:
-        command += ["-an"]
-    # -dn drops the parts' data streams, and -write_tmcd 0 stops the mp4 muxer writing
-    # a timecode track of its own from the copied video stream: without it the montage
-    # comes out as video, audio and an unknown data stream, which is a file some
-    # players refuse. The export command carries the same pair for the same reason.
-    command += ["-sn", "-dn", "-write_tmcd", "0", "-c:v", "copy", "-movflags", "+faststart"]
-    if duration_s > 0:
-        command += ["-t", f"{duration_s:.3f}"]
-    command.append(str(output))
-    return command
-
-
-def probe_duration(path: Path) -> float:
-    """The duration ffmpeg says the file has, which is what the index has to use.
-
-    Measured rather than computed from the frame count: the index is what a player
-    maps a position onto, so it has to describe the file that exists and not the file
-    that was asked for.
-    """
-    command = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-select_streams",
-        "v:0",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
-        str(path),
-    ]
-    try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
-        return float(completed.stdout.strip())
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return 0.0
-
-
 def write_index(manifest: Manifest, parts: list[Part], output: Path) -> Path:
     """The index beside the montage: which clip is playing at any second of it."""
     payload = {
@@ -411,7 +346,7 @@ def render_parts(
         path = directory / f"{digest}.mp4"
         reused = path.exists() and path.stat().st_size > 0
         if not reused:
-            error = _run(part_command(plan, height, config, path), PART_TIMEOUT_S, path)
+            error = run_ffmpeg(part_command(plan, height, config, path), PART_TIMEOUT_S, path)
             if error is not None:
                 errors.append((segment.id, error))
                 progress(
@@ -453,35 +388,10 @@ def concat_montage(parts: list[Part], track: Path | None, output: Path) -> str |
         return "there are no parts to join"
     duration = parts[-1].end_s
     output.parent.mkdir(parents=True, exist_ok=True)
-    list_file = output.parent / "parts.txt"
-    # Single quotes doubled, which is how the concat demuxer escapes them.
-    lines = [f"file '{str(part.path).replace(chr(39), chr(39) * 2)}'" for part in parts]
-    list_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return _run(concat_command(list_file, track, output, duration), CONCAT_TIMEOUT_S, output)
-
-
-def _run(command: list[str], timeout: float, output: Path) -> str | None:
-    """Run ffmpeg. Returns an error message, or ``None`` when the file was written."""
-    try:
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-            stdin=subprocess.DEVNULL,
-        )
-    except FileNotFoundError:
-        return "ffmpeg not found on PATH"
-    except subprocess.SubprocessError as exc:
-        return str(exc)
-    if completed.returncode != 0 or not output.exists() or output.stat().st_size == 0:
-        output.unlink(missing_ok=True)
-        for line in completed.stderr.splitlines():
-            if line.strip():
-                return line.strip()
-        return f"ffmpeg exit status {completed.returncode}"
-    return None
+    list_file = write_concat_list([part.path for part in parts], output.parent / "parts.txt")
+    # No fade: the preview is watched to judge the cuts, and a fade at the end of it
+    # would only hide the last one.
+    return run_ffmpeg(concat_command(list_file, track, output, duration), CONCAT_TIMEOUT_S, output)
 
 
 def build_montage(

@@ -14,7 +14,7 @@ The problem is screening, not editing. Watching 150 files to find the 3 good sec
 
 ## 2. Non-goals
 
-- **No editing.** No timeline, no rendering of the final edit.
+- **No editing.** No timeline, no transitions or titles. A hard cut render of the edit with its track is an optional output for edits that need nothing more; anything past that stays in CapCut.
 - **No transitions, titles, subtitles or effects.**
 - **No music synthesis inside the app.** The app produces a prompt for an external generator (Suno by default) and consumes the resulting track.
 - **No collaboration.** Single user, single machine at a time.
@@ -335,6 +335,14 @@ Transformations:
 
 **Resumable.** Every clip records a digest of everything its output depends on: the source, the window, the target frame rate and size, the mode, the codec and the filters. A clip whose file is on disk with a matching digest is skipped, so a re-export after a settings change re-encodes only what the change touched. Clips run in a process pool half the size of the core count, because libx264 is already threaded.
 
+**The final render (optional).** `autocut render <project>` joins the exported clips in edit order and mixes the synced track over them, writing `montage.mp4` beside `_selects/`. It exists because an edit whose clips, order and lengths are all decided needs nothing from an editor: the clips are already uniform, so the join is a stream copy plus one audio encode and costs seconds rather than a re-encode.
+
+- Nothing is re-encoded except the track. If the exported clips do not share codec, size, pixel format, frame rate and audio layout, the render refuses rather than writing a file that plays for ten seconds and then falls apart. A fast mode export is the usual way to end up with clips that differ.
+- The track is padded with silence when it is shorter than the edit, trimmed when it is longer, and faded out over `render.fade_out_seconds` (default 1.5). Without a track the render is silent, unless a class kept its own audio, in which case that audio is carried through.
+- The render runs the export first when a clip has changed since the last one, because a render over stale clips would show an edit that no longer exists.
+- It is keyed by the export fingerprints, the track and the fade, so a second run on an unchanged edit writes nothing. `render.enabled` makes an export run it as well, which is what the Export screen's toggle sets.
+- Hard cuts only. No transitions, no titles, no color work, no speed ramps.
+
 ### 7.8 Output naming
 
 CapCut imports in alphabetical order, so the filename carries chronology. The date is the local date of the clip, which is how the user reads it back against the days of a holiday:
@@ -361,7 +369,8 @@ output/
 ├── report.html       # visual review
 ├── manifest.json     # full analysis state, project file
 ├── suno-prompt.md    # prompt for the music generator
-└── beatmap.txt       # beat positions, for reference in CapCut
+├── beatmap.txt       # beat positions, for reference in CapCut
+└── montage.mp4       # the finished edit with the track, when a render was asked for
 ```
 
 An output in `_selects/` that no longer belongs to a selected clip is moved to `_selects/_stale/`, never deleted. A mistaken `select` run should cost a re-encode, not the previous edit.

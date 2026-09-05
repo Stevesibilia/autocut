@@ -747,6 +747,39 @@ class ExportConfig(BaseModel):
     keep_rejects: bool = False
 
 
+class RenderConfig(BaseModel):
+    """The optional finished file: the exported clips joined with the track.
+
+    Off by default. SPEC.md section 2 keeps editing out of AutoCut, and this is the one
+    exception the user asked for: an edit whose clips, order and lengths are already
+    decided needs nothing from CapCut but the export, so the render saves the round
+    trip. Hard cuts only; anything that needs a transition still belongs in an editor.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="Whether an export also writes the joined file. Off, because the "
+        "normal path ends in CapCut and a render nobody asked for is a minute of disk "
+        "and time for a file they will not open.",
+    )
+    fade_out_seconds: float = Field(
+        default=1.5,
+        ge=0.0,
+        le=30.0,
+        description="How long the track fades at the end of the edit. Short by "
+        "default: a long fade over a musical peak is worse than a clean stop.",
+    )
+    filename: str = Field(
+        default="montage.mp4",
+        description="Name of the rendered file, written beside _selects/.",
+    )
+    audio_bitrate: str = Field(
+        default="192k",
+        description="AAC bitrate for the muxed track. Higher than the preview's, "
+        "because this file is the one that gets watched.",
+    )
+
+
 DescribeScope = Literal["candidates", "selected"]
 
 
@@ -876,6 +909,7 @@ class AutocutConfig(BaseModel):
     tags: TagsConfig = TagsConfig()
     soundtrack: SoundtrackConfig = SoundtrackConfig()
     export: ExportConfig = ExportConfig()
+    render: RenderConfig = RenderConfig()
     providers: ProvidersConfig = ProvidersConfig()
     places: PlacesConfig = PlacesConfig()
     gui: GuiConfig = GuiConfig()

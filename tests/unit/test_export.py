@@ -229,6 +229,37 @@ def test_a_deleted_output_is_encoded_again(tmp_path: Path, monkeypatch: pytest.M
     assert again.exported == 1
 
 
+def test_a_clip_that_moved_up_the_edit_is_encoded_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two clips of the same day, class, tag and length differ only by their index.
+
+    So when the first one is rejected, the second inherits its name, and a skip decided
+    on the fingerprint alone would leave the rejected clip's footage in the folder under
+    the name of the clip that is still in the edit.
+    """
+    stub_encoder(monkeypatch)
+    manifest = project(tmp_path)
+    for index in range(2):
+        add_file(manifest, f"f{index}")
+        add_segment(manifest, f"f{index}:0", f"f{index}", order=index + 1)
+    config = one_worker(AutocutConfig())
+    export_clips(manifest, config)
+    first, second = manifest.segments["f0:0"], manifest.segments["f1:0"]
+    assert first.exported_path is not None and second.exported_path is not None
+    assert first.exported_path.name.startswith("001_")
+    assert second.exported_path.name.startswith("002_")
+
+    first.outcome = "rejected"
+    first.order = None
+    second.order = 1
+    again = export_clips(manifest, config)
+
+    assert again.exported == 1 and again.skipped == 0
+    assert second.exported_path is not None
+    assert second.exported_path.name.startswith("001_")
+
+
 def test_a_dropped_clip_leaves_its_output_in_stale(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

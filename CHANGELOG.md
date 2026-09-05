@@ -29,6 +29,12 @@ All notable changes to this project are documented in this file. The format foll
 - `gui.montage_height`, `gui.montage_preset` and `gui.montage_crf`; a `preview` block on the manifest.
 - The export screen offers to delete a montage preview built from an edit that no longer exists, alongside the stale clip files.
 
+- The final render: `autocut render <project> [--track] [--out]` joins the exported clips in edit order by stream copy and mixes the synced track over them, writing `montage.mp4` beside `_selects/`. It exports first when a clip has changed, refuses clips that do not share codec, size, pixel format, frame rate and audio layout rather than writing a file that falls apart, pads a short track with silence, trims a long one and fades it out, and writes nothing when the edit and the track have not changed.
+- `autocut/core/avmux.py` holds the concat list, the audio filter, the joined command and the ffmpeg runner that the montage preview and the final render share.
+- "Also render the montage with the track" and its fade length on the Export screen, written to `autocut.toml`: an export with the toggle on finishes with the render, and the summary names the file with its duration, size and track and offers to open it.
+- The report header shows the rendered file with its duration, size and clip count when one exists.
+- `render.enabled` (false), `render.fade_out_seconds` (1.5), `render.filename` (`montage.mp4`) and `render.audio_bitrate` (192k); a `render` block on the manifest.
+
 ### Added
 
 - Project specification in English with the decisions from the 2026-09-03 review.
@@ -111,6 +117,8 @@ All notable changes to this project are documented in this file. The format foll
 - Rebuilding the montage wrote over the file the player still had open, which produced `Invalid NAL unit size` errors and a black picture. Each montage is written to a file named after its fingerprint, the player is unloaded before a rebuild and pointed at the new file after it, and the old file is deleted only then.
 - Loading a track, and moving the BPM override, refresh Play with track: it stayed enabled from a previous sync.
 - The line under the Review header showed the montage's duration next to the header's edit total. The montage's length is in the player's transport row alone.
+
+- An export skipped a clip whose position in the edit had changed, leaving another clip's footage under its name. The output name carries the index, and the fingerprint covers only what the bytes look like, so rejecting a clip could hand its neighbour a file it did not write. A clip is skipped only when the file recorded for it is the one its plan would write.
 
 - A failed stage left the Review, Soundtrack and Export screens disabled: it emits neither `stage_finished` nor `stage_cancelled`, and nothing else re-enabled them until the next stage ran.
 

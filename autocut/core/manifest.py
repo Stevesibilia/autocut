@@ -570,6 +570,31 @@ class PreviewInfo(BaseModel):
     built_at: datetime | None = None
 
 
+class RenderInfo(BaseModel):
+    """The finished file this project last rendered, and what it was made from.
+
+    Separate from ``PreviewInfo`` because the two answer different questions: the
+    preview is a 360 px throwaway rebuilt whenever the edit moves, and this is the
+    export quality file a person keeps. They can be current at the same time, or
+    neither.
+    """
+
+    fingerprint: str | None = Field(
+        default=None,
+        description="Hash of every exported clip's own fingerprint in edit order, the "
+        "track identity and the fade length. A render whose fingerprint no longer "
+        "matches the project is stale.",
+    )
+    path: Path | None = None
+    duration_s: float = 0.0
+    size_bytes: int = 0
+    clips: int = 0
+    has_audio: bool = False
+    fade_out_s: float = 0.0
+    track_path: Path | None = None
+    rendered_at: datetime | None = None
+
+
 class Manifest(BaseModel):
     """Root document written to ``manifest.json``."""
 
@@ -593,6 +618,10 @@ class Manifest(BaseModel):
     analysis: AnalysisRun = AnalysisRun()
     selection: SelectionRun = SelectionRun()
     export: ExportRun = ExportRun()
+    render: RenderInfo = Field(
+        default_factory=RenderInfo,
+        description="The finished file rendered from the current export, when one is.",
+    )
     soundtrack: Soundtrack = Soundtrack()
     config_snapshot: dict[str, object] = Field(default_factory=dict)
 

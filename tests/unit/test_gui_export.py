@@ -13,7 +13,7 @@ pytest.importorskip("PySide6")
 from autocut.core.config import AutocutConfig  # noqa: E402
 from autocut.core.export import ExportResult  # noqa: E402
 from autocut.core.naming import SELECTS_DIR, STALE_DIR  # noqa: E402
-from autocut.gui.screens.export import ExportScreen, folder_size  # noqa: E402
+from autocut.gui.screens.export import ExportOutcome, ExportScreen, folder_size  # noqa: E402
 from autocut.gui.state import ProjectState  # noqa: E402
 from tests.unit.test_gui_review import reviewable  # noqa: E402
 
@@ -232,8 +232,9 @@ def test_an_export_writes_the_clips_and_summarises(real_clips: ExportScreen, qtb
     with qtbot.waitSignal(state.stage_finished, timeout=180_000):
         assert screen.run()
 
-    result = state.last_result
-    assert isinstance(result, ExportResult)
+    outcome = state.last_result
+    assert isinstance(outcome, ExportOutcome)
+    result = outcome.export
     assert result.exported >= 1
     assert result.failed == 0
     assert "clips written" in screen.summary.text()
@@ -250,14 +251,16 @@ def test_a_second_export_skips_everything(real_clips: ExportScreen, qtbot: Any) 
     state = screen._state
     with qtbot.waitSignal(state.stage_finished, timeout=180_000):
         screen.run()
-    first = state.last_result
-    assert isinstance(first, ExportResult)
+    first_outcome = state.last_result
+    assert isinstance(first_outcome, ExportOutcome)
+    first = first_outcome.export
 
     with qtbot.waitSignal(state.stage_finished, timeout=180_000):
         screen.run()
-    second = state.last_result
+    second_outcome = state.last_result
 
-    assert isinstance(second, ExportResult)
+    assert isinstance(second_outcome, ExportOutcome)
+    second = second_outcome.export
     assert second.skipped == first.exported + first.skipped
     assert second.exported == 0
     assert f"{second.skipped} unchanged and skipped" in screen.summary.text()
@@ -280,8 +283,9 @@ def test_one_unreadable_source_is_listed_and_the_others_are_written(
     with qtbot.waitSignal(state.stage_finished, timeout=180_000):
         assert screen.run()
 
-    result = state.last_result
-    assert isinstance(result, ExportResult)
+    outcome = state.last_result
+    assert isinstance(outcome, ExportOutcome)
+    result = outcome.export
     assert result.failed == 1
     assert result.exported == len(selected) - 1
     assert screen.describe_problems(result)
@@ -479,3 +483,85 @@ def test_the_summary_names_the_selects_folder(screen: ExportScreen) -> None:
     assert "25 fps, 1 slowed down, 2 resampled" in text
     assert f"3 stale files moved to {STALE_DIR}" in text
     assert SELECTS_DIR in text
+
+
+# --- the render ---------------------------------------------------------------
+
+
+def test_the_render_toggle_starts_off_and_the_fade_with_it(screen: ExportScreen) -> None:
+    """SPEC.md keeps editing out of AutoCut; the render is the one opt in exception."""
+    assert not screen.render_box.isChecked()
+    assert not screen.fade_field.isEnabled()
+    assert screen.fade_field.value() == pytest.approx(1.5)
+
+
+def test_the_toggle_and_the_fade_are_written_to_the_config(screen: ExportScreen) -> None:
+    state = screen._state
+
+    screen.render_box.setChecked(True)
+    screen.fade_field.setValue(3.0)
+
+    assert state.config.render.enabled
+    assert state.config.render.fade_out_seconds == pytest.approx(3.0)
+    path = state.config_path
+    assert path is not None
+    written = read_toml(path)["render"]
+    assert written["enabled"] is True
+    assert written["fade_out_seconds"] == pytest.approx(3.0)
+    assert screen.fade_field.isEnabled()
+
+
+def test_the_dry_run_says_the_render_will_follow(screen: ExportScreen) -> None:
+    screen.render_box.setChecked(True)
+
+    assert "montage.mp4" in screen.plan_label.text()
+    assert "fade out" in screen.plan_label.text()
+
+
+@pytest.mark.ffmpeg
+def test_the_toggle_renders_the_montage_after_the_clips(
+    real_clips: ExportScreen, qtbot: Any, synthetic_dir: Path
+) -> None:
+    """The scenario from the spec, with the click fixture standing in for a real track."""
+    screen = real_clips
+    state = screen._state
+    manifest = state.manifest
+    assert manifest is not None
+    manifest.soundtrack.audio_path = synthetic_dir / "click_120bpm.wav"
+    manifest.soundtrack.synced_audio_path = synthetic_dir / "click_120bpm.wav"
+    screen.render_box.setChecked(True)
+
+    with qtbot.waitSignal(state.stage_finished, timeout=180_000):
+        assert screen.run()
+    state.wait_for_stage()
+
+    outcome = state.last_result
+    assert isinstance(outcome, ExportOutcome)
+    assert outcome.render is not None and outcome.render.ok, outcome.render
+    rendered = Path(manifest.output_dir) / "montage.mp4"
+    assert rendered.exists()
+    assert rendered.parent == screen.selects_dir().parent  # type: ignore[union-attr]
+    summary = screen.summary.text()
+    assert "montage.mp4" in summary
+    assert "MB" in summary and "clips" in summary
+    assert "click_120bpm.wav" in summary
+    assert screen.render_button.isEnabled()
+    assert screen.render_file() == rendered
+
+
+@pytest.mark.ffmpeg
+def test_without_the_toggle_nothing_is_rendered(real_clips: ExportScreen, qtbot: Any) -> None:
+    screen = real_clips
+    state = screen._state
+    manifest = state.manifest
+    assert manifest is not None
+
+    with qtbot.waitSignal(state.stage_finished, timeout=180_000):
+        assert screen.run()
+    state.wait_for_stage()
+
+    outcome = state.last_result
+    assert isinstance(outcome, ExportOutcome)
+    assert outcome.render is None
+    assert not (Path(manifest.output_dir) / "montage.mp4").exists()
+    assert not screen.render_button.isEnabled()

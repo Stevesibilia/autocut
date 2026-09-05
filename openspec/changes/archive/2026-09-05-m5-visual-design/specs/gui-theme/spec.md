@@ -30,7 +30,7 @@ The application SHALL apply the Fusion style, a palette built from the active to
 
 ### Requirement: Bundled fonts
 
-Space Grotesk and IBM Plex Mono SHALL ship as package data and be registered with the font database at startup. Text SHALL use Space Grotesk; scores, durations, timecodes, BPM and counters SHALL use IBM Plex Mono. When a bundled font fails to register the application SHALL fall back to the platform sans and monospace fonts and log one warning, never fail.
+Space Grotesk (Regular, Medium, Bold; the family publishes no static SemiBold) and IBM Plex Mono (Regular, Medium) SHALL ship as package data and be registered with the font database at startup. Text SHALL use Space Grotesk; scores, durations, timecodes, BPM and counters SHALL use IBM Plex Mono. When a bundled font fails to register the application SHALL fall back to the platform sans and monospace fonts and log one warning, never fail.
 
 #### Scenario: Fonts registered
 

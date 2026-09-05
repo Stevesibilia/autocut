@@ -129,3 +129,5 @@ All notable changes to this project are documented in this file. The format foll
 - The preview says when a file ends before its out point instead of leaving "playing from the in point" under a still picture. Found on a 1.9 s clip from the real footage.
 
 - GUI tests waited for a signal a worker emits from inside its own run and then ended, so a `QThread` could be collected while its thread was still running, which makes Qt abort the process. About one run in fifteen locally, with the suite still reporting every test passed.
+
+- `scripts/make_fixtures.py` returns immediately when the synthetic set is already complete, and otherwise builds it in a temporary directory and moves each file into place, so several test runs starting at once no longer regenerate the same files on top of each other. Pass `--force` to rebuild a complete set.

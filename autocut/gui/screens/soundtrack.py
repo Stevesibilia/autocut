@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -55,6 +56,16 @@ AUDIO_FILTER = "Audio (*.mp3 *.wav *.m4a *.flac *.ogg *.aac);;All files (*)"
 
 MOOD_POSITIONS: tuple[MoodDirection, ...] = ("calmer", "keep", "energetic")
 ROOM_POSITIONS: tuple[RoomDirection, ...] = ("intimate", "keep", "cinematic")
+
+
+def _scrolled(inner: QWidget) -> QScrollArea:
+    """`inner` in a scroll area that never scrolls sideways, only down."""
+    area = QScrollArea()
+    area.setWidgetResizable(True)
+    area.setFrameShape(QScrollArea.Shape.NoFrame)
+    area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    area.setWidget(inner)
+    return area
 
 
 class SoundtrackScreen(QWidget):
@@ -192,10 +203,13 @@ class SoundtrackScreen(QWidget):
         track_layout.addWidget(self.distribution_label)
         track_layout.addWidget(self.montage, 1)
 
+        # Each half in its own scroll area. The prompt column alone is taller than a
+        # 680 px window, and a screen that cannot scroll is a screen with controls the
+        # user cannot reach.
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
-        layout.addWidget(prompt_box, 3)
-        layout.addWidget(track_box, 2)
+        layout.addWidget(_scrolled(prompt_box), 3)
+        layout.addWidget(_scrolled(track_box), 2)
 
         state.project_changed.connect(self.reload)
         state.selection_changed.connect(self.refresh_preview)

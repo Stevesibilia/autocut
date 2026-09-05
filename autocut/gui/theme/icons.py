@@ -34,6 +34,7 @@ NAMES: tuple[str, ...] = (
     "layers",
     "map-pin",
     "music",
+    "panel-right",
     "pause",
     "play",
     "rotate-ccw",

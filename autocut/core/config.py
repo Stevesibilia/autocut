@@ -893,6 +893,28 @@ class GuiConfig(BaseModel):
         le=51,
         description="Quality of the montage parts. Lower than the export's on purpose.",
     )
+    min_window_width: int = Field(
+        default=1100,
+        ge=800,
+        le=3840,
+        description="Narrowest the window may be dragged. Every row of controls has to "
+        "wrap or scroll above this, because Qt refuses to shrink a window under its "
+        "layout's minimum and the user is then stuck with whatever the layout asked for.",
+    )
+    min_window_height: int = Field(
+        default=680,
+        ge=500,
+        le=2160,
+        description="Shortest the window may be dragged. 680 leaves a 720p laptop its "
+        "menu bar and dock.",
+    )
+    panel_collapse_width: int = Field(
+        default=1280,
+        ge=800,
+        le=3840,
+        description="Window width under which the Review screen starts with its right "
+        "panel collapsed, so the grid keeps the width on a small display.",
+    )
     theme: Literal["dark", "light", "system"] = Field(
         default="dark",
         description="Which token set the window is drawn with. Dark by default because "

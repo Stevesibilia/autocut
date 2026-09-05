@@ -158,6 +158,11 @@ class ProjectState(QObject):
         self.manifest: Manifest | None = None
         self.config = AutocutConfig()
         self.output_dir: Path | None = None
+        #: Whether the Review right panel is showing. Session state, not project state:
+        #: it is about the width of the window in front of the user, so it survives
+        #: opening another project and is never written to the manifest. None until the
+        #: window has decided from its own width.
+        self.review_panel_visible: bool | None = None
         self._worker: CoreWorker | None = None
         self._flag = CancelFlag()
         self._save_timer = QTimer(self)

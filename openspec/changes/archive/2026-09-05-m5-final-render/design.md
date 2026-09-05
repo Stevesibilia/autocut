@@ -1,6 +1,6 @@
 ## Context
 
-Exported clips share codec, pixel format, resolution and frame rate by construction of the export planner, and the preview montage already proves the concat plus audio mux path (`apad`, trim to length, `-dn -write_tmcd 0`). The user wants that at full quality as an optional final output. SPEC.md section 2 says no rendering of the final edit; the user has decided otherwise for the hard-cut case.
+Exported clips share codec, pixel format and frame rate by construction of the export planner. They do not share resolution: the export scales down to a maximum and never up, so a mixed edit keeps 4K drone clips next to 1080p action cam clips, which the implementation found on the real footage and which `m5-render-uniform-frame` addresses. The preview montage already proves the concat plus audio mux path (`apad`, trim to length, `-dn -write_tmcd 0`), and the preview montage already proves the concat plus audio mux path (`apad`, trim to length, `-dn -write_tmcd 0`). The user wants that at full quality as an optional final output. SPEC.md section 2 says no rendering of the final edit; the user has decided otherwise for the hard-cut case.
 
 ## Goals / Non-Goals
 

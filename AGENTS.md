@@ -103,10 +103,10 @@ curl -s https://pypi.org/pypi/<package>/json | jq '{version: .info.version, requ
 
 GitHub Actions.
 
-| Workflow      | Trigger                       | Purpose                                                      |
-| ------------- | ----------------------------- | ------------------------------------------------------------ |
-| `ci.yml`      | push to `main`, pull requests | ruff, mypy, fixtures, pytest on Python 3.11, 3.12 and 3.14   |
-| `release.yml` | tags `v*`                     | macOS arm64 PyInstaller `.dmg`, attached to a GitHub release |
+| Workflow      | Trigger                                                | Purpose                                                                                                                                 |
+| ------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `ci.yml`      | pull requests that touch code, weekly schedule, manual | ruff, mypy, fixtures, pytest on 3.12 per PR, full 3.11/3.12/3.14 matrix weekly; `ai` and `gui` Docker jobs only when their files change |
+| `release.yml` | tags `v*`                                              | macOS arm64 PyInstaller `.dmg`, attached to a GitHub release                                                                            |
 
 ## Command Safety
 

@@ -1,21 +1,72 @@
 name: CI
 
+# Minutes are billed on this private repository, so the workflow runs the least that
+# still proves a change. Documentation only changes run nothing, a pull request runs
+# one interpreter, the Docker jobs run only when the files they cover change, and the
+# full matrix runs on a weekly schedule and on demand. Pushes to main are not tested
+# again: every merge comes from a pull request whose head already passed.
 on:
-  push:
-    branches: [main]
   pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "openspec/**"
+      - ".gitignore"
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  # Which parts of the tree a pull request touches, so the Docker jobs below can skip.
+  # A scheduled or manual run reports everything as changed.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      gui: ${{ steps.filter.outputs.gui }}
+      ai: ${{ steps.filter.outputs.ai }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "gui=true" >> "$GITHUB_OUTPUT"
+            echo "ai=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")"
+          printf '%s\n' "$changed"
+          shared='^(pyproject\.toml|Dockerfile\.dev|compose\.yaml|\.github/workflows/ci\.yml|tests/conftest\.py|scripts/make_fixtures\.py)$'
+          if printf '%s\n' "$changed" | grep -Eq "$shared|^autocut/gui/|^tests/unit/test_gui_|^tests/unit/test_cli_gui"; then
+            echo "gui=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "gui=false" >> "$GITHUB_OUTPUT"
+          fi
+          if printf '%s\n' "$changed" | grep -Eq "$shared|^autocut/core/(embeddings|tags|describe|similarity)\.py$|^autocut/core/providers/|^tests/unit/test_(embeddings|tags|describe|similarity)"; then
+            echo "ai=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ai=false" >> "$GITHUB_OUTPUT"
+          fi
+
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python: ["3.11", "3.12", "3.14"]
+        # One interpreter per pull request; the oldest and newest join on the schedule.
+        python: ${{ fromJSON(github.event_name == 'pull_request' && '["3.12"]' || '["3.11", "3.12", "3.14"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+          cache: pip
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Install project
@@ -36,6 +87,8 @@ jobs:
   # install: the ai extra is optional and the default job stays light. This job
   # builds the second Docker target and runs only the tests marked "ai".
   ai:
+    needs: changes
+    if: needs.changes.outputs.ai == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +101,8 @@ jobs:
   # deliberately does not install. This job builds the third Docker target and runs
   # only the tests marked "gui", with Qt on the offscreen platform.
   gui:
+    needs: changes
+    if: needs.changes.outputs.gui == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

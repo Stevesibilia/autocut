@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast, runtime_checkable
 
+from PySide6.QtCore import QSize
 from PySide6.QtGui import QCloseEvent, QPalette
 from PySide6.QtWidgets import (
     QApplication,
@@ -27,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from autocut.core.config import AutocutConfig
+from autocut.core.config import AutocutConfig, GuiConfig
 from autocut.core.doctor import DoctorReport
 from autocut.core.manifest import Manifest
 from autocut.gui import theme
@@ -93,13 +94,43 @@ class BarScreen(Protocol):
     def bar_actions(self) -> list[QWidget]: ...
 
 
+#: What the window opens at when the screen is big enough to hold it. The design size
+#: of the approved mockup.
+DESIGN_SIZE = QSize(1440, 900)
+
+
+def available_size() -> QSize:
+    """The usable area of the primary screen, or the design size when there is none.
+
+    Offscreen there is a virtual screen with a geometry of its own, which is why the
+    test for this monkeypatches it rather than trusting whatever the platform invents.
+    """
+    screen = QApplication.primaryScreen()
+    if screen is None:
+        return DESIGN_SIZE
+    available = screen.availableGeometry()
+    return QSize(available.width(), available.height())
+
+
+def opening_size(gui: GuiConfig, available: QSize | None = None) -> QSize:
+    """The size to open at: the design size, or the screen when the screen is smaller.
+
+    Never under the configured minimum, because a window that opens smaller than it can
+    be dragged to is a window Qt immediately grows again.
+    """
+    room = available if available is not None else available_size()
+    return QSize(
+        max(min(DESIGN_SIZE.width(), room.width()), gui.min_window_width),
+        max(min(DESIGN_SIZE.height(), room.height()), gui.min_window_height),
+    )
+
+
 class MainWindow(QMainWindow):
     """The one window. Navigation on the left, the current screen filling the rest."""
 
     def __init__(self, state: ProjectState | None = None) -> None:
         super().__init__()
         self.setWindowTitle(APP_TITLE)
-        self.resize(1180, 760)
         self.state = state or ProjectState(self)
         # Before anything is built. The rail renders its icons and the few inline colours
         # it needs from the active theme at construction, so a window built first and
@@ -162,6 +193,18 @@ class MainWindow(QMainWindow):
 
         self.state.segments_changed.connect(lambda _ids: self.refresh_top_bar())
         self.state.selection_changed.connect(self.refresh_top_bar)
+
+        # After the widgets exist, so the layouts have reported what they need before
+        # the floor is imposed on them. The floor is a promise the layout has to be able
+        # to keep; a test asserts the minimum size hint of every screen fits inside it.
+        gui = self.state.config.gui
+        self.setMinimumSize(gui.min_window_width, gui.min_window_height)
+        opening = opening_size(gui)
+        self.resize(opening)
+
+        review_screen = self.screens["review"]
+        assert isinstance(review_screen, ReviewScreen)
+        review_screen.adopt_panel_state(opening.width())
 
         self.go_to("project")
         self.refresh_navigation()

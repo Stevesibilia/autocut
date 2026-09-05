@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from autocut.core.manifest import Manifest
 from autocut.core.montage import Part, clip_at, read_index
 from autocut.gui import theme
+from autocut.gui.widgets.video import checked_video_output
 
 if TYPE_CHECKING:  # pragma: no cover - for the annotations only
     from PySide6.QtMultimedia import QMediaPlayer
@@ -358,6 +359,7 @@ class MontagePlayer(QWidget):
         Attached before any source is set, for the reason issue 38 recorded: a player
         with no video output decodes every frame, throws it away and reports nothing.
         """
+        video_output = checked_video_output(video_output, "MontagePlayer video output")
         if self._player is not None:
             if video_output is not None:
                 self._player.setVideoOutput(video_output)

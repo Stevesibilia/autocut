@@ -308,3 +308,43 @@ def test_the_screens_are_grabbed_before_a_project_exists(tmp_path: Path, qtbot: 
         path = directory / "empty.png"
         assert image.save(str(path))
         assert path.stat().st_size > 0
+
+
+def test_the_review_screen_is_grabbed_at_both_window_sizes(
+    tmp_path: Path, synthetic_dir: Path, qtbot: Any
+) -> None:
+    """The design size and the smallest the window may be dragged to.
+
+    The regression these prove against was a window that could not be made smaller at
+    all, so a picture of the small one is the point of the change.
+    """
+    out = tmp_path / "edit"
+    state = ProjectState()
+    state.new_project([synthetic_dir], out)
+    state.config.cache.dir = tmp_path / "cache"
+    state.config.analysis.sprites = True
+
+    window = build_window(state)
+    qtbot.addWidget(window)
+    with qtbot.waitSignal(state.stage_finished, timeout=180_000):
+        assert window.screens["analysis"].run()  # type: ignore[attr-defined]
+    assert state.run_selection()
+    window.refresh_navigation()
+    window.go_to("review")
+
+    directory = shots_dir()
+    if directory is not None:
+        directory.mkdir(parents=True, exist_ok=True)
+
+    gui = state.config.gui
+    for width, height in ((1440, 900), (gui.min_window_width, gui.min_window_height)):
+        window.resize(width, height)
+        qtbot.wait(80)
+
+        assert (window.width(), window.height()) == (width, height)
+        image = window.grab().toImage()
+        assert not image.isNull()
+        if directory is not None:
+            path = directory / f"review-{width}x{height}.png"
+            assert image.save(str(path)), path
+            assert path.stat().st_size > 0

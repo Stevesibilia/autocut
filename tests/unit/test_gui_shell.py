@@ -15,6 +15,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QLabel, QPushButton  # noqa: E402
 
 from autocut.core.doctor import Check, DoctorReport  # noqa: E402
+from autocut.gui import theme  # noqa: E402
 from autocut.gui.widgets.rail import SCREEN_ICONS, NavRail, machine_lines  # noqa: E402
 from autocut.gui.widgets.topbar import (  # noqa: E402
     Counter,
@@ -224,6 +225,7 @@ def test_the_bar_names_the_project_and_its_footage(qtbot: Any) -> None:
     bar = TopBar()
     qtbot.addWidget(bar)
 
+    bar.resize(1200, theme.METRICS.top_bar_height)
     bar.set_project("Sardegna 2025", 72, 60)
 
     assert bar.title.text() == "Sardegna 2025"

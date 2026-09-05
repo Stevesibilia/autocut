@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -47,9 +48,15 @@ class PromptEditor(QWidget):
 
         self.title = QLineEdit()
         self.description = QPlainTextEdit()
-        self.description.setFixedHeight(70)
+        self.description.setMinimumHeight(56)
+        self.description.setMaximumHeight(70)
         self.structure = QPlainTextEdit()
-        self.structure.setMinimumHeight(260)
+        # A floor, not a demand. The block wants the room and gets it whenever there is
+        # any, but a hard 260 here was most of what put the window past a laptop screen.
+        self.structure.setMinimumHeight(120)
+        self.structure.setSizePolicy(
+            self.structure.sizePolicy().horizontalPolicy(), QSizePolicy.Policy.Expanding
+        )
         for editor in (self.description, self.structure):
             editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
             editor.textChanged.connect(self._text_changed)

@@ -188,6 +188,13 @@ class Metrics:
     card_picture_height: int = 118
     #: The preview in the right panel.
     preview_height: int = 168
+    #: The smallest the window may be dragged to, and the width under which the Review
+    #: panel starts collapsed. Mirrored from `gui` config, which is the source; these
+    #: are here so a widget can read them without reaching for a configuration object.
+    min_window_width: int = 1100
+    min_window_height: int = 680
+    panel_collapse_width: int = 1280
+
     #: The montage strip, its gap between blocks and its inner padding.
     strip_height: int = 26
     strip_gap: int = 2

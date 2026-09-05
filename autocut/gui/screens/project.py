@@ -248,10 +248,23 @@ class ProjectScreen(QWidget):
         right.addWidget(recent_box, 1)
         right.addWidget(doctor_box, 1)
 
+        columns = QWidget()
+        columns_layout = QHBoxLayout(columns)
+        columns_layout.setContentsMargins(0, 0, 0, 0)
+        columns_layout.addLayout(left, 3)
+        columns_layout.addLayout(right, 2)
+
+        # Scrolled, because the doctor report is as long as the machine is unusual and
+        # a screen that cannot scroll hides its own Create project button.
+        body = QScrollArea()
+        body.setWidgetResizable(True)
+        body.setFrameShape(QScrollArea.Shape.NoFrame)
+        body.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        body.setWidget(columns)
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
-        layout.addLayout(left, 3)
-        layout.addLayout(right, 2)
+        layout.addWidget(body)
 
         state.project_changed.connect(self.show_open_project)
         state.stage_started.connect(lambda _name: self._set_running(True))

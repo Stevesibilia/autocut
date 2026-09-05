@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -146,9 +147,17 @@ class AnalysisScreen(QWidget):
         body_layout.addLayout(buttons)
         body_layout.addWidget(result_box, 1)
 
+        # The stages, the summary and the warnings all grow with a real run, so the
+        # body scrolls rather than setting a floor the window cannot go under.
+        body_scroll = QScrollArea()
+        body_scroll.setWidgetResizable(True)
+        body_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        body_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        body_scroll.setWidget(self.body)
+
         self.stack = QStackedWidget()
         self.stack.addWidget(self.empty)
-        self.stack.addWidget(self.body)
+        self.stack.addWidget(body_scroll)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
@@ -168,7 +177,7 @@ class AnalysisScreen(QWidget):
         """Label the run button for what it would actually do, and enable what can run."""
         manifest = self._state.manifest
         running = self._state.is_running
-        self.stack.setCurrentWidget(self.body if manifest is not None else self.empty)
+        self.stack.setCurrentIndex(1 if manifest is not None else 0)
         self.run_button.setEnabled(manifest is not None and not running)
         self.cancel_button.setEnabled(running)
         self.clear_cache_button.setEnabled(not running)

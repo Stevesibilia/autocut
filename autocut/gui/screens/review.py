@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QStackedWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -33,6 +34,7 @@ from autocut.gui import theme
 from autocut.gui.state import ProjectState
 from autocut.gui.widgets.chips import FilterChips
 from autocut.gui.widgets.empty import EmptyState
+from autocut.gui.widgets.flow import FlowRow
 from autocut.gui.widgets.groups import GroupsView, groups_summary
 from autocut.gui.widgets.montage import MontagePlayer, clip_labels
 from autocut.gui.widgets.preview import PreviewPanel
@@ -151,13 +153,12 @@ class ReviewScreen(QWidget):
         self.filters.add_toggle(self.groups_toggle)
 
         # Play all and Export report are handed to the top bar by bar_actions; what
-        # stays here is the decision row, which belongs beside the grid it acts on.
-        actions = QHBoxLayout()
-        actions.addWidget(self.keep_button)
-        actions.addWidget(self.reject_button)
-        actions.addWidget(self.clear_button)
-        actions.addWidget(self.undo_button)
-        actions.addStretch(1)
+        # stays here is the decision row, which belongs beside the grid it acts on. It
+        # wraps for the same reason the chips do: four buttons in a box layout are four
+        # buttons of minimum width the window can never go under.
+        self.decisions = FlowRow(spacing=metrics.space)
+        for button in (self.keep_button, self.reject_button, self.clear_button, self.undo_button):
+            self.decisions.add(button)
 
         # The right panel, in the order the spec fixes: the file and its preview, the
         # bounds and the two actions on them, then diversity, then the weights, and last
@@ -179,6 +180,19 @@ class ReviewScreen(QWidget):
         panel_layout.addWidget(summary_heading)
         panel_layout.addWidget(self.groups_summary)
 
+        self.panel_button = QToolButton()
+        self.panel_button.setCheckable(True)
+        self.panel_button.setChecked(True)
+        self.panel_button.setToolTip("Show or hide the preview panel")
+        self.panel_button.setIcon(
+            theme.two_state_icon(
+                "panel-right",
+                theme.current().palette.text_muted,
+                theme.current().palette.accent,
+            )
+        )
+        self.panel_button.clicked.connect(lambda: self.toggle_panel())
+
         self.panel = QScrollArea()
         self.panel.setObjectName("rightPanel")
         self.panel.setWidgetResizable(True)
@@ -196,7 +210,7 @@ class ReviewScreen(QWidget):
         centre_layout.addWidget(self.montage_note)
         centre_layout.addWidget(self.stack, 1)
         centre_layout.addWidget(self.montage.take_strip())
-        centre_layout.addLayout(actions)
+        centre_layout.addWidget(self.decisions)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -348,8 +362,30 @@ class ReviewScreen(QWidget):
         )
 
     def bar_actions(self) -> list[QWidget]:
-        """The two things this screen does that are about the whole edit."""
-        return [self.play_all_button, self.report_button]
+        """The two things this screen does that are about the whole edit, and the panel."""
+        return [self.play_all_button, self.report_button, self.panel_button]
+
+    # --- the right panel ---------------------------------------------------
+
+    def set_panel_visible(self, visible: bool) -> None:
+        """Show or hide the right panel and remember it for the session."""
+        self.panel.setVisible(visible)
+        self.panel_button.setChecked(visible)
+        self._state.review_panel_visible = visible
+
+    def toggle_panel(self) -> None:
+        self.set_panel_visible(not self.panel.isVisible())
+
+    def adopt_panel_state(self, window_width: int) -> None:
+        """Decide the panel from the session, or from the width the first time.
+
+        Collapsed rather than narrowed: at 1200 px the grid needs every pixel, and a
+        panel squeezed to nothing is worse than one the user asks back.
+        """
+        remembered = self._state.review_panel_visible
+        if remembered is None:
+            remembered = window_width >= theme.current().metrics.panel_collapse_width
+        self.set_panel_visible(remembered)
 
     def refresh_header(self) -> None:
         """The one notice only this screen can give: the edit against the settings."""

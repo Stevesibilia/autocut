@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from autocut.gui import theme
+from autocut.gui.widgets.flow import FlowRow
 
 #: What a chip says when its box is on the entry that filters nothing. Matched against
 #: the box's text, so a box whose "everything" entry is worded differently still reads
@@ -136,21 +137,32 @@ ChipT = TypeVar("ChipT", FilterChip, RangeChip)
 
 
 class FilterChips(QWidget):
-    """The whole row: the chips on the left, the two view toggles on the right."""
+    """The whole row: the chips first, then the two view toggles.
+
+    A flow row rather than a box: eight chips in a `QHBoxLayout` reported the sum of
+    their widths as the row's minimum, and Qt will not shrink a window below its
+    layout's minimum, so the row alone pinned the window at 1111 px before the rail and
+    the panel were counted. Wrapping costs a second line on a narrow window and gives
+    the width back.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.chips: dict[str, Chip] = {}
-        self._row = QHBoxLayout(self)
-        self._row.setContentsMargins(0, 0, 0, 0)
-        self._row.setSpacing(theme.current().metrics.space)
-        self._row.addStretch(1)
+        self._row = FlowRow(spacing=theme.current().metrics.space)
+        holder = QHBoxLayout(self)
+        holder.setContentsMargins(0, 0, 0, 0)
+        holder.addWidget(self._row)
 
     def add_chip(self, key: str, chip: ChipT) -> ChipT:
-        """Put a chip before the stretch, so the toggles stay on the right."""
+        """Add a chip. The toggles are added after them and follow on the same flow."""
         self.chips[key] = chip
-        self._row.insertWidget(self._row.count() - 1, chip)
+        self._row.add(chip)
         return chip
+
+    def lines_at(self, width: int) -> int:
+        """How many lines the row falls onto at `width`. Read by the tests."""
+        return self._row.lines_at(width)
 
     def add_box(self, key: str, label: str, box: QComboBox) -> FilterChip:
         return self.add_chip(key, FilterChip(label, box))
@@ -161,8 +173,8 @@ class FilterChips(QWidget):
         return self.add_chip(key, RangeChip(label, low, high))
 
     def add_toggle(self, widget: QWidget) -> None:
-        """A view switch, which is not a filter and lives at the other end of the row."""
-        self._row.addWidget(widget)
+        """A view switch, which is not a filter but wraps with the rest of the row."""
+        self._row.add(widget)
 
     def refresh(self) -> None:
         """Re-read every chip, after the boxes were refilled for a new project."""

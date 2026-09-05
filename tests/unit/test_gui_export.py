@@ -626,3 +626,35 @@ def test_a_deep_path_is_shortened_rather_than_stretching_the_screen() -> None:
     assert short_path(Path("/home/steve/holidays/sardegna/edit")) == "…/sardegna/edit"
     assert short_path(Path("/edit")) == "/edit"
     assert short_path(Path("/home/edit")) == "/home/edit"
+
+
+def test_the_stale_button_asks_before_it_deletes_anything(
+    screen: ExportScreen, qtbot: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pressed, not called: the button carried the same defect as the Play buttons.
+
+    `clicked` passes the checked state, so `clicked.connect(self.delete_stale)` put
+    `False` into `confirm` and the button deleted the files with no dialog at all. Every
+    other test here calls the method, which is exactly what the broken button did not do.
+    """
+    from PySide6.QtCore import Qt
+
+    from autocut.gui.screens import export as module
+
+    selects = screen.selects_dir()
+    assert selects is not None
+    stale = selects / STALE_DIR
+    stale.mkdir(parents=True, exist_ok=True)
+    (stale / "old.mp4").write_bytes(b"stale")
+    screen.refresh_stale()
+    asked: list[str] = []
+    monkeypatch.setattr(
+        module.QMessageBox,
+        "question",
+        lambda _parent, title, _text: asked.append(title) or module.QMessageBox.StandardButton.No,
+    )
+
+    qtbot.mouseClick(screen.stale_button, Qt.MouseButton.LeftButton)
+
+    assert asked == ["Delete the stale files?"], "the button deleted without asking"
+    assert (stale / "old.mp4").exists()

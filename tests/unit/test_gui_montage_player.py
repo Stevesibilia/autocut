@@ -146,8 +146,9 @@ def test_the_transport_names_the_clip_rather_than_hashing_it(
 
     assert widget.describe(part) == "sharp_pan.mp4  0.0 s"
     widget.seek_to_clip(part.order)
-    assert "sharp_pan.mp4" in widget.status.text()
-    assert part.segment_id not in widget.status.text()
+    assert "sharp_pan.mp4" in widget.clip_line.text()
+    assert part.segment_id not in widget.clip_line.text()
+    assert widget.clip_line.text().startswith(f"Clip {part.order} of ")
 
 
 def test_without_labels_the_transport_falls_back_to_the_id(
@@ -315,3 +316,69 @@ def test_the_transport_is_disabled_until_something_is_loaded(qtbot: Any) -> None
     assert not widget.play_button.isEnabled()
     assert not widget.restart_button.isEnabled()
     assert widget.play() is False
+
+
+# --- the strip and its counter ----------------------------------------------
+
+
+def test_the_counter_reads_position_against_length() -> None:
+    from autocut.gui.widgets.montage import counter_label
+
+    assert counter_label(0.0, 73.6) == "0:00.0 / 1:13.6"
+    assert counter_label(18.4, 73.6) == "0:18.4 / 1:13.6"
+    assert counter_label(-1.0, 73.6) == "0:00.0 / 1:13.6"
+
+
+def test_the_strip_is_the_height_the_tokens_set(qtbot: Any) -> None:
+    from autocut.gui import theme
+    from autocut.gui.widgets.montage import MontageTimeline
+
+    strip = MontageTimeline()
+    qtbot.addWidget(strip)
+
+    assert strip.height() == theme.METRICS.strip_height
+
+
+def test_the_strip_draws_a_block_per_clip_in_three_states(qtbot: Any, tmp_path: Path) -> None:
+    """Played, playing and still to come have to be told apart at a glance."""
+    from autocut.gui import theme
+
+    strip = MontageTimeline()
+    qtbot.addWidget(strip)
+    strip.resize(300, theme.METRICS.strip_height)
+    strip.set_parts(
+        [
+            Part(1, "a:0", tmp_path / "a.mp4", 2.0, start_s=0.0),
+            Part(2, "b:0", tmp_path / "b.mp4", 2.0, start_s=2.0),
+            Part(3, "c:0", tmp_path / "c.mp4", 2.0, start_s=4.0),
+        ]
+    )
+    strip.set_position(3.0)
+
+    image = strip.grab().toImage()
+
+    colours = {
+        image.pixelColor(x, y).name()
+        for x in range(image.width())
+        for y in range(image.height())
+        if image.pixelColor(x, y).alpha() > 0
+    }
+    palette = theme.current().palette
+    assert palette.accent_muted in colours, "no clip is drawn as played"
+    assert palette.accent in colours, "the clip playing is not marked"
+    assert palette.upcoming in colours, "nothing is drawn as still to come"
+    assert palette.track_bed in colours, "the gaps between the blocks are gone"
+
+
+def test_the_key_hints_are_under_the_strip(qtbot: Any) -> None:
+    from PySide6.QtWidgets import QLabel
+
+    from autocut.gui.widgets.montage import KEY_HINTS
+
+    player = MontagePlayer()
+    qtbot.addWidget(player)
+
+    words = {label.text() for label in player.findChildren(QLabel)}
+    for key, meaning in KEY_HINTS:
+        assert key in words
+        assert meaning in words

@@ -121,11 +121,17 @@ class GroupCard(QFrame):
 
     def __init__(self, group: Group, state: ProjectState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFrameShape(QFrame.Shape.StyledPanel)
+        # A card rather than a framed panel: the same object the review grid is made of,
+        # so a stack reads as a group of clips and not as a dialog.
+        self.setObjectName("card")
+        self.setFrameShape(QFrame.Shape.NoFrame)
         self.group = group
         self._state = state
+        metrics = theme.current().metrics
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setSpacing(metrics.space)
         header = QLabel(group.title)
         header.setProperty("role", "title")
         layout.addWidget(header)
@@ -138,7 +144,9 @@ class GroupCard(QFrame):
             row.addWidget(self._thumb(other, chosen=False))
         hidden = len(group.others) - len(shown)
         if hidden:
-            row.addWidget(QLabel(f"and {hidden} more"))
+            more = QLabel(f"and {hidden} more")
+            more.setProperty("role", "muted")
+            row.addWidget(more)
         row.addStretch(1)
         layout.addLayout(row)
 
@@ -150,6 +158,7 @@ class GroupCard(QFrame):
 
         picture = _ClickableLabel(segment.id)
         picture.setFixedHeight(THUMB_HEIGHT)
+        picture.setProperty("role", "placeholder")
         pixmap = QPixmap(str(segment.thumbnail)) if segment.thumbnail else QPixmap()
         if pixmap.isNull():
             picture.setText("no thumbnail")
@@ -167,7 +176,10 @@ class GroupCard(QFrame):
 
         score = f"{segment.score:.2f}" if segment.score is not None else "unscored"
         state = "in the edit" if chosen else ("rejected" if segment.user_rejected else "behind")
-        column.addWidget(QLabel(f"{score}  {state}"))
+        caption = QLabel(f"{score}  {state}")
+        caption.setProperty("role", "muted")
+        caption.setFont(theme.font(theme.current().metrics.label_size))
+        column.addWidget(caption)
         name = QLabel(self.describe(segment))
         name.setToolTip(segment.id)
         column.addWidget(name)

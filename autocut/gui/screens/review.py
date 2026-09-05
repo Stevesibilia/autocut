@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QSplitter,
+    QScrollArea,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -29,10 +29,11 @@ from autocut.core.manifest import Manifest
 from autocut.core.montage import MontageResult, discard
 from autocut.core.report import render_report
 from autocut.core.rules import EXCLUSIONS
+from autocut.gui import theme
 from autocut.gui.state import ProjectState
 from autocut.gui.widgets.chips import FilterChips
 from autocut.gui.widgets.empty import EmptyState
-from autocut.gui.widgets.groups import GroupsView
+from autocut.gui.widgets.groups import GroupsView, groups_summary
 from autocut.gui.widgets.montage import MontagePlayer, clip_labels
 from autocut.gui.widgets.preview import PreviewPanel
 from autocut.gui.widgets.sliders import SliderPanel
@@ -76,6 +77,7 @@ class ReviewScreen(QWidget):
 
         self.preview = PreviewPanel(state, self)
         self.sliders = SliderPanel(state, self)
+        metrics = theme.current().metrics
 
         # --- notices ---------------------------------------------------------
         # The counters live in the window's top bar now: they are about the project and
@@ -157,25 +159,48 @@ class ReviewScreen(QWidget):
         actions.addWidget(self.undo_button)
         actions.addStretch(1)
 
-        right = QWidget()
-        right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(8, 0, 0, 0)
-        right_layout.addWidget(self.preview, 3)
-        right_layout.addWidget(self.sliders, 2)
+        # The right panel, in the order the spec fixes: the file and its preview, the
+        # bounds and the two actions on them, then diversity, then the weights, and last
+        # a line about what the caps held back. It scrolls, because six weight sliders
+        # and a preview do not fit a laptop at the panel's fixed width.
+        self.groups_summary = QLabel("")
+        self.groups_summary.setWordWrap(True)
+        self.groups_summary.setProperty("role", "muted")
+        summary_heading = QLabel("Similar groups")
+        summary_heading.setProperty("role", "label")
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self.stack)
-        splitter.addWidget(right)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
+        panel_body = QWidget()
+        panel_layout = QVBoxLayout(panel_body)
+        panel_layout.setContentsMargins(20, 18, 20, 18)
+        panel_layout.setSpacing(metrics.space * 2)
+        panel_layout.addWidget(self.preview)
+        panel_layout.addWidget(self.sliders)
+        panel_layout.addStretch(1)
+        panel_layout.addWidget(summary_heading)
+        panel_layout.addWidget(self.groups_summary)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.addWidget(self.warning)
-        layout.addWidget(self.montage_note)
-        layout.addWidget(self.filters)
-        layout.addWidget(splitter, 1)
-        layout.addLayout(actions)
+        self.panel = QScrollArea()
+        self.panel.setObjectName("rightPanel")
+        self.panel.setWidgetResizable(True)
+        self.panel.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.panel.setFixedWidth(metrics.panel_width)
+        self.panel.setWidget(panel_body)
+
+        centre = QWidget()
+        centre_layout = QVBoxLayout(centre)
+        centre_layout.setContentsMargins(metrics.space * 3, 14, metrics.space * 3, 0)
+        centre_layout.setSpacing(metrics.space + 4)
+        centre_layout.addWidget(self.filters)
+        centre_layout.addWidget(self.warning)
+        centre_layout.addWidget(self.montage_note)
+        centre_layout.addWidget(self.stack, 1)
+        centre_layout.addLayout(actions)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(centre, 1)
+        layout.addWidget(self.panel)
 
         # --- wiring ---------------------------------------------------------
         self.grid.keep_requested.connect(lambda sid: self._decide("keep", sid))
@@ -211,6 +236,7 @@ class ReviewScreen(QWidget):
         self._fill_filters(manifest)
         self.groups.refresh()
         self.refresh_header()
+        self.groups_summary.setText(groups_summary(manifest))
         self._show_grid_or_empty()
         if manifest is not None and self.grid.count and not self.grid.current_id():
             self.grid.setCurrentIndex(self.grid.proxy.index(0, 0))
@@ -412,6 +438,7 @@ class ReviewScreen(QWidget):
         self._fill_filters(self._state.manifest)
         self.groups.refresh()
         self.refresh_header()
+        self.groups_summary.setText(groups_summary(self._state.manifest))
         if current:
             self.grid.select_segment(current)
         self.preview.show_segment(self.grid.current_id())

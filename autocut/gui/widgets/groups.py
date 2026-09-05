@@ -41,10 +41,37 @@ class Group:
     title: str
     pick: Segment | None
     others: list[Segment] = field(default_factory=list)
+    #: "cluster" for a visual stack, "visit" for a place. The summary counts by this
+    #: rather than by picking the key apart.
+    kind: str = ""
 
     @property
     def size(self) -> int:
         return len(self.others) + (1 if self.pick is not None else 0)
+
+
+def groups_summary(manifest: Manifest | None) -> str:
+    """The one line the right panel ends with, e.g. `13 stacks · 6 places · 2 held back`.
+
+    A pure function of the manifest so the sentence can be tested without building the
+    stacks, and so the panel and the groups view cannot disagree about the count.
+    """
+    if manifest is None:
+        return "No project open."
+    groups = build_groups(manifest)
+    stacks = sum(1 for group in groups if group.kind == "cluster")
+    places = sum(1 for group in groups if group.kind == "visit")
+    held = sum(
+        1
+        for segment in manifest.segments.values()
+        if segment.outcome != "selected" and segment.reason == "place_cap"
+    )
+    if not groups and not held:
+        return "No near duplicates yet. Run the selection first."
+    parts = [f"{stacks} stacks", f"{places} places"]
+    if held:
+        parts.append(f"{held} held back by the place cap")
+    return " · ".join(parts)
 
 
 def build_groups(manifest: Manifest) -> list[Group]:
@@ -80,6 +107,7 @@ def build_groups(manifest: Manifest) -> list[Group]:
                     title=f"{label} {value}, {len(members)} clips",
                     pick=pick,
                     others=others,
+                    kind=kind,
                 )
             )
     return groups

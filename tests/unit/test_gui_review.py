@@ -14,7 +14,10 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QPoint, Qt  # noqa: E402
 from PySide6.QtGui import QPixmap  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import (
+    QApplication,  # noqa: E402
+    QLabel,  # noqa: E402
+)
 
 from autocut.core.cache import CacheEntry, write_entry  # noqa: E402
 from autocut.core.config import AutocutConfig  # noqa: E402
@@ -27,6 +30,7 @@ from autocut.core.manifest import (  # noqa: E402
     SourceFile,
     Tag,
 )
+from autocut.gui import theme  # noqa: E402
 from autocut.gui.screens.review import ReviewScreen  # noqa: E402
 from autocut.gui.state import ProjectState  # noqa: E402
 from autocut.gui.widgets.groups import build_groups  # noqa: E402
@@ -1195,3 +1199,58 @@ def test_the_boxes_are_kept_out_of_sight_and_out_of_their_own_window(
         if box is not None:
             assert box.isHidden()
             assert box.parent() is chip
+
+
+# --- the right panel --------------------------------------------------------
+
+
+def test_the_right_panel_is_the_fixed_width_the_tokens_set(screen: ReviewScreen) -> None:
+    assert screen.panel.width() == theme.METRICS.panel_width
+    assert screen.panel.widgetResizable()
+
+
+def test_the_panel_holds_the_sections_in_the_order_the_spec_fixes(screen: ReviewScreen) -> None:
+    body = screen.panel.widget()
+    order = [body.layout().itemAt(i).widget() for i in range(body.layout().count())]
+    assert order[0] is screen.preview
+    assert order[1] is screen.sliders
+    assert screen.groups_summary in order
+    assert order.index(screen.sliders) < order.index(screen.groups_summary)
+
+
+def test_the_preview_names_the_file_and_its_time_separately(screen: ReviewScreen) -> None:
+    screen.grid.setCurrentIndex(screen.grid.proxy.index(0, 0))
+
+    assert screen.preview.title.text().endswith(".MP4")
+    assert " s" in screen.preview.meta.text()
+
+
+def test_the_bounds_read_as_one_mono_line(screen: ReviewScreen) -> None:
+    screen.grid.setCurrentIndex(screen.grid.proxy.index(0, 0))
+
+    text = screen.preview.bounds_label.text()
+
+    assert "→" in text
+    assert text.count(" s") == 3
+    assert screen.preview.bounds_heading.text() == "In · Out"
+
+
+def test_the_diversity_slider_says_which_way_is_which(screen: ReviewScreen) -> None:
+    from autocut.gui.widgets.sliders import DIVERSITY_ENDS
+
+    words = {label.text() for label in screen.sliders.findChildren(QLabel)}
+
+    assert set(DIVERSITY_ENDS) <= words
+
+
+def test_the_weights_carry_the_quieter_slider_variant(screen: ReviewScreen) -> None:
+    for name in screen.sliders._sliders:
+        assert screen.sliders._sliders[name].property("variant") == "weight"
+    assert screen.sliders.diversity.property("variant") is None
+
+
+def test_the_summary_counts_the_stacks_and_the_places(screen: ReviewScreen) -> None:
+    from autocut.gui.widgets.groups import groups_summary
+
+    assert screen.groups_summary.text() == groups_summary(screen._state.manifest)
+    assert screen.groups_summary.text()

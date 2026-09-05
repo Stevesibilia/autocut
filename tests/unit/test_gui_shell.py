@@ -334,3 +334,12 @@ def test_an_empty_recent_list_says_so(qtbot: Any) -> None:
     assert listing.cards == []
     assert not listing.empty.isHidden()
     assert "Nothing here yet" in listing.empty.text()
+
+
+# --- the similar groups summary ---------------------------------------------
+
+
+def test_the_summary_says_so_when_there_is_no_project() -> None:
+    from autocut.gui.widgets.groups import groups_summary
+
+    assert groups_summary(None) == "No project open."

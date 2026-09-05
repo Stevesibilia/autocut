@@ -8,10 +8,11 @@ metrics already in the manifest, diversity re-runs the greedy loop over cached a
 
 from __future__ import annotations
 
+from typing import Any
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QFormLayout,
-    QGroupBox,
+    QHBoxLayout,
     QLabel,
     QPushButton,
     QSlider,
@@ -20,11 +21,19 @@ from PySide6.QtWidgets import (
 )
 
 from autocut.core.score import SCORED_METRICS
+from autocut.gui import theme
 from autocut.gui.state import ProjectState
 
 #: Sliders are integers, weights are not. One step is a hundredth.
 STEPS_PER_UNIT = 100
 MAX_WEIGHT = 3.0
+
+#: The two fixed columns of a weight row, so six of them line up as a table.
+WEIGHT_NAME_WIDTH = 88
+WEIGHT_VALUE_WIDTH = 34
+
+#: What the two ends of the diversity slider mean, in the words the mockup used.
+DIVERSITY_ENDS = ("best only", "most varied")
 
 
 def to_slider(value: float) -> int:
@@ -33,6 +42,44 @@ def to_slider(value: float) -> int:
 
 def from_slider(value: int) -> float:
     return value / STEPS_PER_UNIT
+
+
+def _section(
+    title: str, trailing: QWidget, contents: list[Any], metrics: theme.Metrics
+) -> QVBoxLayout:
+    """A heading with something on its right, then the controls under it."""
+    column = QVBoxLayout()
+    column.setContentsMargins(0, 0, 0, 0)
+    column.setSpacing(metrics.space + 2)
+
+    heading = QHBoxLayout()
+    heading.setContentsMargins(0, 0, 0, 0)
+    label = QLabel(title)
+    label.setProperty("role", "title")
+    heading.addWidget(label)
+    heading.addStretch(1)
+    heading.addWidget(trailing)
+    column.addLayout(heading)
+
+    for item in contents:
+        if isinstance(item, QWidget):
+            column.addWidget(item)
+        else:
+            column.addLayout(item)
+    return column
+
+
+def _ends() -> QHBoxLayout:
+    """The two words under the diversity slider that say which way is which."""
+    row = QHBoxLayout()
+    row.setContentsMargins(0, 0, 0, 0)
+    low, high = (QLabel(word) for word in DIVERSITY_ENDS)
+    for label in (low, high):
+        label.setProperty("role", "muted")
+    row.addWidget(low)
+    row.addStretch(1)
+    row.addWidget(high)
+    return row
 
 
 class SliderPanel(QWidget):
@@ -51,20 +98,34 @@ class SliderPanel(QWidget):
         self._sliders: dict[str, QSlider] = {}
         self._values: dict[str, QLabel] = {}
 
-        weights_box = QGroupBox("Scoring weights")
-        form = QFormLayout(weights_box)
+        metrics = theme.current().metrics
+
+        weights_rows = QVBoxLayout()
+        weights_rows.setContentsMargins(0, 0, 0, 0)
+        weights_rows.setSpacing(metrics.space + 2)
         for _metric, weight_name, _lower_is_better in SCORED_METRICS:
             slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setProperty("variant", "weight")
             slider.setRange(0, to_slider(MAX_WEIGHT))
             slider.setValue(to_slider(float(getattr(state.config.weights, weight_name))))
             slider.valueChanged.connect(lambda _value, name=weight_name: self._weight_moved(name))
             label = QLabel(f"{from_slider(slider.value()):.2f}")
-            row = QWidget()
-            row_layout = QVBoxLayout(row)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.addWidget(slider)
-            row_layout.addWidget(label)
-            form.addRow(weight_name, row)
+            label.setFont(theme.font(metrics.body_size, mono=True))
+            label.setProperty("role", "muted")
+            label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            label.setFixedWidth(WEIGHT_VALUE_WIDTH)
+            name_label = QLabel(weight_name)
+            name_label.setFixedWidth(WEIGHT_NAME_WIDTH)
+
+            # Name, bar and value on one line: six of them read as a column of numbers
+            # rather than as six stacked controls, which is what the mockup asked for.
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(metrics.space + 4)
+            row.addWidget(name_label)
+            row.addWidget(slider, 1)
+            row.addWidget(label)
+            weights_rows.addLayout(row)
             self._sliders[weight_name] = slider
             self._values[weight_name] = label
 
@@ -73,23 +134,25 @@ class SliderPanel(QWidget):
         self.diversity.setValue(to_slider(state.config.selection.diversity_lambda))
         self.diversity.valueChanged.connect(self._diversity_moved)
         self.diversity_label = QLabel(f"{from_slider(self.diversity.value()):.2f}")
+        self.diversity_label.setFont(theme.font(metrics.body_size, mono=True))
+        self.diversity_label.setProperty("role", "accent")
 
-        diversity_box = QGroupBox("Diversity")
-        diversity_layout = QVBoxLayout(diversity_box)
-        diversity_layout.addWidget(
-            QLabel("How hard a clip is penalised for looking like one already chosen.")
-        )
-        diversity_layout.addWidget(self.diversity)
-        diversity_layout.addWidget(self.diversity_label)
-
-        self.reset_button = QPushButton("Reset to the profile")
+        self.reset_button = QPushButton("reset")
+        self.reset_button.setFlat(True)
+        self.reset_button.setProperty("role", "muted")
+        self.reset_button.setToolTip("Back to the values this project was opened with")
         self.reset_button.clicked.connect(self.reset)
 
+        # Diversity first and the weights under it: diversity is the one control that
+        # changes which clips win without changing what any of them scores, so it is the
+        # one a reviewer reaches for first.
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(diversity_box)
-        layout.addWidget(weights_box)
-        layout.addWidget(self.reset_button)
+        layout.setSpacing(metrics.space * 2)
+        layout.addLayout(
+            _section("Diversity", self.diversity_label, [self.diversity, _ends()], metrics)
+        )
+        layout.addLayout(_section("Weights", self.reset_button, [weights_rows], metrics))
         layout.addStretch(1)
 
         self._defaults = {

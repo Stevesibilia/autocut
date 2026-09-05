@@ -11,10 +11,12 @@ from __future__ import annotations
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -28,9 +30,18 @@ from autocut.gui.state import ProjectState
 STEPS_PER_UNIT = 100
 MAX_WEIGHT = 3.0
 
-#: The two fixed columns of a weight row, so six of them line up as a table.
+#: The two columns of a weight row, so six of them line up as a table. The name may
+#: shrink on a narrow panel; the value is measured from the face it is drawn in, because
+#: a column sized by a literal overflows the moment the font is not the one it was
+#: written for.
 WEIGHT_NAME_WIDTH = 88
-WEIGHT_VALUE_WIDTH = 34
+WEIGHT_NAME_MIN_WIDTH = 56
+
+
+def value_column_width(label: QLabel) -> int:
+    """Wide enough for `0.00` in this label's own font, plus a little air."""
+    return QFontMetrics(label.font()).horizontalAdvance("0.00") + 6
+
 
 #: What the two ends of the diversity slider mean, in the words the mockup used.
 DIVERSITY_ENDS = ("best only", "most varied")
@@ -113,9 +124,11 @@ class SliderPanel(QWidget):
             label.setFont(theme.font(metrics.body_size, mono=True))
             label.setProperty("role", "muted")
             label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            label.setFixedWidth(WEIGHT_VALUE_WIDTH)
+            label.setFixedWidth(value_column_width(label))
             name_label = QLabel(weight_name)
-            name_label.setFixedWidth(WEIGHT_NAME_WIDTH)
+            name_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            name_label.setMinimumWidth(WEIGHT_NAME_MIN_WIDTH)
+            name_label.setMaximumWidth(WEIGHT_NAME_WIDTH)
 
             # Name, bar and value on one line: six of them read as a column of numbers
             # rather than as six stacked controls, which is what the mockup asked for.

@@ -17,7 +17,7 @@ from __future__ import annotations
 from functools import lru_cache
 from importlib.resources import files
 
-from PySide6.QtCore import QByteArray, Qt
+from PySide6.QtCore import QByteArray, QRectF, Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
@@ -81,7 +81,10 @@ def pixmap(name: str, color: str, size: int, ratio: float = 1.0) -> QPixmap:
     canvas.fill(Qt.GlobalColor.transparent)
     painter = QPainter(canvas)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    renderer.render(painter)
+    # Into the logical rectangle, not the painter's whole device. `render(painter)` fills
+    # the device rectangle in device pixels, so at ratio 2 it drew the glyph at twice the
+    # size it was asked for and only the top left quarter reached the canvas.
+    renderer.render(painter, QRectF(0, 0, size, size))
     painter.end()
     return canvas
 

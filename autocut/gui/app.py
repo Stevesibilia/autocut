@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
+from importlib.metadata import version
 from pathlib import Path
 from typing import Protocol, cast, runtime_checkable
 
@@ -380,6 +381,9 @@ def apply_theme(app: object, setting: str = "dark") -> theme.Theme:
     # window is without importing the theme.
     app.setProperty("autocut_theme", active.name)
     app.setProperty("autocut_dark", active.name == "dark")
+    # Recorded because `app.style()` answers to no name while a stylesheet is installed:
+    # Qt wraps the real style in a proxy, and the proxy has none.
+    app.setProperty("autocut_style", "Fusion")
     return active
 
 
@@ -394,6 +398,76 @@ def theme_setting(project: Path | None) -> str:
         return AutocutConfig().gui.theme
     directory = project if project.is_dir() else project.parent
     return AutocutConfig.load(directory / CONFIG_NAME).gui.theme
+
+
+def diagnose(project: Path | None = None) -> int:
+    """Print what the window sees, and exit without entering the event loop.
+
+    Every defect the macOS runs found was seen by eye and reported in prose: an icon
+    that "looks like a corner", a panel "cut off at the edge". This exists so the next
+    one arrives as numbers, from the machine that has the problem.
+    """
+    app = QApplication.instance() or QApplication(sys.argv)
+    assert isinstance(app, QApplication)
+    setting = theme_setting(project)
+    active = apply_theme(app, setting)
+    families = theme.families()
+
+    lines = [f"AutoCut {version('autocut')} diagnostics", ""]
+    primary = app.primaryScreen()
+    for screen in app.screens():
+        geometry = screen.geometry()
+        usable = screen.availableGeometry()
+        mark = " (primary)" if screen is primary else ""
+        lines.append(
+            f"screen {screen.name() or '?'}{mark}: "
+            f"geometry {geometry.width()}x{geometry.height()}, "
+            f"available {usable.width()}x{usable.height()}, "
+            f"device pixel ratio {screen.devicePixelRatio():g}, "
+            f"logical dpi {screen.logicalDotsPerInch():g}"
+        )
+    if not app.screens():
+        lines.append("screens: none reported by this platform")
+
+    lines += [
+        "",
+        f"platform: {sys.platform}, Qt platform plugin {app.platformName()}",
+        f"font text: {families.text}",
+        f"font mono: {families.mono}",
+        f"fonts bundled: {'yes' if families.bundled else 'no, fell back to the platform'}",
+        f"application font: {app.font().family()} at {app.font().pixelSize()} px",
+        f"theme setting: {setting}",
+        f"theme resolved: {active.name}",
+        f"style: {app.property('autocut_style') or 'unknown'}",
+        "",
+    ]
+
+    window = MainWindow()
+    hint = window.minimumSizeHint()
+    minimum = window.minimumSize()
+    room = available_size()
+    lines += [
+        f"window minimum size hint: {hint.width()}x{hint.height()}",
+        f"window minimum size: {minimum.width()}x{minimum.height()}",
+        f"window opening size: {window.width()}x{window.height()}",
+        f"screen available for opening: {room.width()}x{room.height()}",
+    ]
+    if window.width() > room.width() or window.height() > room.height():
+        lines.append(
+            "  note: the opening size is larger than the screen because the configured "
+            "minimum wins over it. gui.min_window_width and gui.min_window_height are "
+            "what to lower if this machine cannot hold the window."
+        )
+    for spec in SCREENS:
+        window.go_to(spec.key)
+        screen_hint = window.minimumSizeHint()
+        lines.append(
+            f"  showing {spec.key}: minimum size hint {screen_hint.width()}x{screen_hint.height()}"
+        )
+
+    print("\n".join(lines))
+    window.close()
+    return 0
 
 
 def run(project: Path | None = None) -> int:

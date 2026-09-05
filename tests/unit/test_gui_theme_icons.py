@@ -6,6 +6,8 @@ and the rail simply looks blank, so the tests check pixels rather than object id
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 pytest.importorskip("PySide6")
@@ -113,3 +115,91 @@ def test_the_names_the_window_asks_for_are_all_bundled(qapp: QApplication) -> No
     del qapp
     assert len(icons.NAMES) == len(set(icons.NAMES))
     assert sorted(icons.NAMES) == list(icons.NAMES), "keep the set sorted, it is read by people"
+
+
+# --- HiDPI, which is where the Mac saw a corner of a glyph ------------------
+
+
+def ink_box(rendered: Any) -> tuple[float, float, float, float]:
+    """The painted area's bounding box as a fraction of the canvas.
+
+    Normalised because that is the property the spec states: the whole glyph fills the
+    requested logical size whatever the device pixel ratio. A raw box in pixels doubles
+    with the ratio and says nothing.
+    """
+    image = rendered.toImage()
+    xs = [
+        x
+        for x in range(image.width())
+        for y in range(image.height())
+        if image.pixelColor(x, y).alpha() > 0
+    ]
+    ys = [
+        y
+        for x in range(image.width())
+        for y in range(image.height())
+        if image.pixelColor(x, y).alpha() > 0
+    ]
+    assert xs and ys, "nothing was painted at all"
+    return (
+        min(xs) / image.width(),
+        min(ys) / image.height(),
+        (max(xs) + 1) / image.width(),
+        (max(ys) + 1) / image.height(),
+    )
+
+
+def quadrants(image: Any) -> dict[str, int]:
+    """Painted pixels per quadrant of the canvas."""
+    half_x, half_y = image.width() // 2, image.height() // 2
+    counted = {"top left": 0, "top right": 0, "bottom left": 0, "bottom right": 0}
+    for x in range(image.width()):
+        for y in range(image.height()):
+            if image.pixelColor(x, y).alpha() == 0:
+                continue
+            vertical = "top" if y < half_y else "bottom"
+            horizontal = "left" if x < half_x else "right"
+            counted[f"{vertical} {horizontal}"] += 1
+    return counted
+
+
+@pytest.mark.parametrize("name", ["folder", "square-play", "settings"])
+def test_the_whole_glyph_fills_the_logical_size_at_ratio_two(qapp: QApplication, name: str) -> None:
+    """The macOS defect: `QSvgRenderer.render(painter)` paints in device pixels.
+
+    On a ratio 2 pixmap that is twice the size the icon was asked for, so the glyph is
+    drawn at 32 logical pixels into a 16 logical pixel box and only its top left
+    quarter survives. The rail showed a corner of each icon.
+
+    The tell is the bounding box in fractions of the canvas: with the bug it starts
+    late and runs off the right and bottom edges. It should match the ratio 1 box,
+    which is what "the whole glyph at the requested size" means.
+    """
+    del qapp
+    single = icons.pixmap(name, ACCENT, 16, 1.0)
+    double = icons.pixmap(name, ACCENT, 16, 2.0)
+
+    assert double.width() == 32
+    assert double.devicePixelRatio() == 2.0
+
+    at_one = ink_box(single)
+    at_two = ink_box(double)
+    # 0.06 separates the two states cleanly: with the whole glyph drawn the worst edge
+    # moves by 0.031, which is one pixel of antialiasing at this size, and with the bug
+    # it moves by at least 0.094.
+    for edge, one, two in zip(("left", "top", "right", "bottom"), at_one, at_two, strict=True):
+        assert abs(one - two) < 0.06, f"{name} {edge}: {at_one} at ratio 1, {at_two} at ratio 2"
+
+
+def test_ratio_one_and_ratio_two_draw_the_same_shape(qapp: QApplication) -> None:
+    """The same glyph, at twice the pixels: the share of ink per quadrant matches."""
+    del qapp
+    single = quadrants(icons.pixmap("folder", ACCENT, 16, 1.0).toImage())
+    double = quadrants(icons.pixmap("folder", ACCENT, 16, 2.0).toImage())
+
+    total_single = sum(single.values()) or 1
+    total_double = sum(double.values()) or 1
+    for corner in single:
+        share_single = single[corner] / total_single
+        share_double = double[corner] / total_double
+        assert abs(share_single - share_double) < 0.08, (corner, single, double)

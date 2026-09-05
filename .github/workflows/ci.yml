@@ -3,7 +3,7 @@ name: CI
 # Minutes are billed on this private repository, so the workflow runs the least that
 # still proves a change. Documentation only changes run nothing, a pull request runs
 # one interpreter, the Docker jobs run only when the files they cover change, and the
-# full matrix runs on a weekly schedule and on demand. Pushes to main are not tested
+# full matrix runs on demand. Pushes to main are not tested
 # again: every merge comes from a pull request whose head already passed.
 on:
   pull_request:
@@ -12,8 +12,6 @@ on:
       - "docs/**"
       - "openspec/**"
       - ".gitignore"
-  schedule:
-    - cron: "17 4 * * 1"
   workflow_dispatch:
 
 concurrency:
@@ -22,7 +20,7 @@ concurrency:
 
 jobs:
   # Which parts of the tree a pull request touches, so the Docker jobs below can skip.
-  # A scheduled or manual run reports everything as changed.
+  # A manual run reports everything as changed.
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -59,7 +57,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # One interpreter per pull request; the oldest and newest join on the schedule.
+        # One interpreter per pull request; the oldest and newest join on a manual run.
         python: ${{ fromJSON(github.event_name == 'pull_request' && '["3.12"]' || '["3.11", "3.12", "3.14"]') }}
     steps:
       - uses: actions/checkout@v4

@@ -105,7 +105,7 @@ GitHub Actions.
 
 | Workflow      | Trigger                                                | Purpose                                                                                                                                 |
 | ------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `ci.yml`      | pull requests that touch code, weekly schedule, manual | ruff, mypy, fixtures, pytest on 3.12 per PR, full 3.11/3.12/3.14 matrix weekly; `ai` and `gui` Docker jobs only when their files change |
+| `ci.yml`      | pull requests that touch code, manual dispatch | ruff, mypy, fixtures, pytest on 3.12 per PR, full 3.11/3.12/3.14 matrix on manual dispatch; `ai` and `gui` Docker jobs only when their files change |
 | `release.yml` | tags `v*`                                              | macOS arm64 PyInstaller `.dmg`, attached to a GitHub release                                                                            |
 
 ## Command Safety

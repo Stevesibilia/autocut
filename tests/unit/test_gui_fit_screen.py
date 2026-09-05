@@ -282,3 +282,79 @@ def test_a_short_name_is_left_alone(qtbot: Any) -> None:
 
     assert bar.title.text() == "edit"
     assert bar.title.toolTip() == ""
+
+
+# --- the right panel, which the Mac clipped ---------------------------------
+
+
+LONG_NAME = "DJI_0793_a_very_long_holiday_clip_name_from_the_card.MP4"
+
+
+def test_the_panel_content_fits_the_panel_with_a_long_file_name(
+    window: MainWindow, qtbot: Any
+) -> None:
+    """The macOS defect: the panel is a fixed 336 px with no horizontal scrollbar.
+
+    Anything wider is simply clipped at the window edge, and on the Mac the file name
+    row and the range label both were. Sixty characters is an ordinary name off a card.
+    """
+    review = review_of(window)
+    manifest = window.state.manifest
+    assert manifest is not None
+    source = next(iter(manifest.files.values()))
+    source.path = source.path.parent / LONG_NAME
+
+    window.go_to("review")
+    review.set_panel_visible(True)
+    review.preview.show_segment(review.grid.visible_ids()[0])
+    qtbot.wait(20)
+
+    content = review.panel.widget()
+    assert content is not None
+    assert content.minimumSizeHint().width() <= review.panel.width(), (
+        f"the panel content wants {content.minimumSizeHint().width()} px "
+        f"in a {review.panel.width()} px panel"
+    )
+
+
+def test_a_long_file_name_is_elided_with_the_whole_of_it_on_the_tooltip(
+    window: MainWindow, qtbot: Any
+) -> None:
+    review = review_of(window)
+    manifest = window.state.manifest
+    assert manifest is not None
+    source = next(iter(manifest.files.values()))
+    source.path = source.path.parent / LONG_NAME
+
+    window.go_to("review")
+    review.set_panel_visible(True)
+    review.preview.show_segment(review.grid.visible_ids()[0])
+    qtbot.wait(20)
+
+    assert review.preview.title.text() != LONG_NAME
+    assert review.preview.title.text().endswith("…")
+    assert review.preview.title.toolTip() == LONG_NAME
+
+
+def test_the_range_label_never_widens_the_panel(window: MainWindow, qtbot: Any) -> None:
+    """`1.00 s → 7.50 s · 6.50 s` in the mono face was the other thing pushing past."""
+    review = window.screens["review"]
+    assert isinstance(review, ReviewScreen)
+    window.go_to("review")
+    review.set_panel_visible(True)
+    review.preview.show_segment(review.grid.visible_ids()[0])
+    qtbot.wait(20)
+
+    label = review.preview.bounds_label
+    assert label.minimumSizeHint().width() <= review.panel.width()
+
+
+def test_the_weight_value_columns_come_from_the_font(window: MainWindow) -> None:
+    """A hardcoded 34 px column is a column that overflows in a wider face."""
+    from PySide6.QtGui import QFontMetrics
+
+    review = review_of(window)
+    label = next(iter(review.sliders._values.values()))
+    wanted = QFontMetrics(label.font()).horizontalAdvance("0.00")
+
+    assert label.width() >= wanted or label.minimumWidth() >= wanted

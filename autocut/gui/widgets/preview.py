@@ -21,11 +21,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QStackedWidget,
     QVBoxLayout,
@@ -59,6 +61,11 @@ def snap(value: float, sample_fps: float) -> float:
     return round(value * sample_fps) / sample_fps
 
 
+#: Below this an elided label says nothing at all, so it stops shrinking and the panel
+#: gets a scrollbar instead. Well under the 336 px panel either way.
+ELIDE_MIN_WIDTH = 120
+
+
 class PreviewPanel(QWidget):
     """The current clip: a picture, a scrub bar, and the two bounds.
 
@@ -79,6 +86,10 @@ class PreviewPanel(QWidget):
         metrics = theme.current().metrics
         self.title = QLabel("Nothing selected")
         self.title.setProperty("role", "title")
+        # The panel is a fixed width with no horizontal scrollbar, so anything wider is
+        # clipped at the window edge rather than scrolled to. Both of these elide, and
+        # the tooltip carries what was cut.
+        self._title_text = "Nothing selected"
         # Where in the day and how long the source clip is, in the mono face, on the
         # right of the file name. The numbers a reviewer compares live in one column.
         self.meta = QLabel("")
@@ -90,6 +101,12 @@ class PreviewPanel(QWidget):
         self.frame.setMinimumHeight(metrics.preview_height)
         self.frame.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.frame.setProperty("role", "placeholder")
+        # Wrapped and free to shrink: this label carries a sentence when there is no
+        # strip for a clip, and an unwrapped sentence is 480 px of minimum width. It was
+        # the widest thing in the panel and what actually pushed the content past 336.
+        self.frame.setWordWrap(True)
+        self.frame.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.frame.setMinimumWidth(ELIDE_MIN_WIDTH)
         self.frame.setText("no preview")
 
         # The strip and the video take the same place rather than sitting one above
@@ -112,11 +129,16 @@ class PreviewPanel(QWidget):
         self.end_slider.valueChanged.connect(self._bounds_moved)
 
         self.bounds_label = QLabel("")
+        self._bounds_text = ""
         self.bounds_label.setFont(theme.font(metrics.body_size, mono=True))
         self.bounds_label.setProperty("role", "muted")
         self.bounds_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.bounds_heading = QLabel("In · Out")
         self.bounds_heading.setProperty("role", "label")
+
+        for label in (self.title, self.bounds_label):
+            label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            label.setMinimumWidth(ELIDE_MIN_WIDTH)
 
         self.note = QLabel("")
         self.note.setWordWrap(True)
@@ -206,17 +228,20 @@ class PreviewPanel(QWidget):
         ):
             widget.setEnabled(enabled)
         if segment is None:
-            self.title.setText("Nothing selected")
+            self._title_text = "Nothing selected"
+            self._elide()
             self.meta.clear()
             self.frame.setText("no preview")
             self.show_strip()
+            self._bounds_text = ""
             self.bounds_label.clear()
             self.note.clear()
             return
 
         source = self._state.manifest.files.get(segment.file_id) if self._state.manifest else None
         name = Path(source.path).name if source is not None else segment.file_id
-        self.title.setText(name)
+        self._title_text = name
+        self._elide()
         length = f"{segment.end_s - segment.start_s:.1f} s"
         clock = clock_label(source, segment.start_s)
         self.meta.setText(f"{clock} · {length}" if clock else length)
@@ -337,6 +362,7 @@ class PreviewPanel(QWidget):
         self._pending_seek_ms = int(start * 1000)
         self._out_ms = int(end * 1000)
         self.playing_segment_id = self._segment_id
+        self.stop_button.setEnabled(True)
         self.note.setText(f"Loading {path.name}…")
         player.setSource(QUrl.fromLocalFile(str(path)))
         if player.mediaStatus() in self._ready_states():
@@ -346,10 +372,21 @@ class PreviewPanel(QWidget):
         return True
 
     def stop(self) -> None:
+        """Back to the strip at the in point, ready to play the clip again."""
         if self._player is not None:
             self._player.stop()
         self.playing_segment_id = ""
         self.show_strip()
+        self.note.clear()
+        self.stop_button.setEnabled(False)
+        self.play_button.setText("Play")
+        segment = self._state.segment(self._segment_id)
+        if segment is not None:
+            start, _end = segment.effective_bounds
+            self.scrub.blockSignals(True)
+            self.scrub.setValue(self._to_slider(start))
+            self.scrub.blockSignals(False)
+            self._show_frame(self.scrub.value() / MS)
 
     def show_strip(self) -> None:
         """Put the sprite strip back in front of the video."""
@@ -419,7 +456,10 @@ class PreviewPanel(QWidget):
         from PySide6.QtMultimedia import QMediaPlayer
 
         playing = state == QMediaPlayer.PlaybackState.PlayingState
-        self.stop_button.setEnabled(playing)
+        # Stop follows the existence of a player, not PlayingState. Playback pauses at
+        # the out point by design, and following PlayingState left the user with a
+        # paused clip and a dead Stop button.
+        self.stop_button.setEnabled(self._player is not None)
         self.play_button.setText("Play" if not playing else "Playing…")
 
     def _playback_failed(self, error: Any, message: str = "") -> None:
@@ -459,7 +499,29 @@ class PreviewPanel(QWidget):
     def _update_bounds_label(self) -> None:
         """`5.50 s → 9.80 s · 4.30 s`, in the mono face, beside its label."""
         start, end = self.bounds()
-        self.bounds_label.setText(f"{start:.2f} s → {end:.2f} s · {end - start:.2f} s")
+        self._bounds_text = f"{start:.2f} s → {end:.2f} s · {end - start:.2f} s"
+        self._elide()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        self._elide()
+
+    def _elide(self) -> None:
+        """Cut the file name and the range to the room the panel actually has.
+
+        Measured from the panel's width less whatever shares the row, not from the
+        label's own width: a label reports the width of its last layout, which on the
+        first show of a clip is whatever it had before the panel was sized.
+        """
+        gap = theme.current().metrics.space
+        for label, text, neighbour in (
+            (self.title, self._title_text, self.meta),
+            (self.bounds_label, self._bounds_text, self.bounds_heading),
+        ):
+            room = max(self.width() - neighbour.sizeHint().width() - gap, ELIDE_MIN_WIDTH)
+            shown = label.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, room)
+            label.setText(shown)
+            label.setToolTip(text if shown != text else "")
 
     def _commit_bounds(self) -> None:
         """Save the drag. A span shorter than one sampled frame is a slip, not a decision."""

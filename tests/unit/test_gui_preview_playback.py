@@ -302,3 +302,62 @@ def test_a_real_video_output_is_still_accepted(panel: PreviewPanel) -> None:
     assert panel._player is not None
     assert panel._player.videoOutput() is sink
     panel.stop()
+
+
+# --- Stop after the pause at the out point ----------------------------------
+
+
+def test_stop_is_enabled_once_playback_pauses(panel: PreviewPanel, qtbot: Any) -> None:
+    """The macOS defect: Stop followed PlayingState, so the out point pause disabled it.
+
+    Playback pauses at the out point by design, and the user was then left with a
+    paused player and a dead Stop button. Driven through the signal rather than by
+    waiting for a real pause, so the test states the rule rather than the timing.
+    """
+    assert panel.play()
+    panel._playback_state_changed(QMediaPlayer.PlaybackState.PausedState)
+
+    assert panel.stop_button.isEnabled(), "Stop is dead while the player is paused"
+    panel.stop()
+
+
+def test_stop_is_enabled_while_playing_and_dead_before_anything_plays(
+    panel: PreviewPanel, qtbot: Any
+) -> None:
+    del qtbot
+    assert not panel.stop_button.isEnabled()
+
+    assert panel.play()
+
+    assert panel.stop_button.isEnabled()
+    panel.stop()
+
+
+def test_pressing_stop_after_the_out_point_returns_to_the_strip(
+    panel: PreviewPanel, qtbot: Any
+) -> None:
+    """The scenario from the spec, pressed through the widget."""
+    assert panel.play()
+    assert wait_for(qtbot, lambda: panel.picture_stack.currentWidget() is not panel.frame)
+    panel._playback_state_changed(QMediaPlayer.PlaybackState.PausedState)
+    panel.note.setText("Loading something…")
+
+    qtbot.mouseClick(panel.stop_button, Qt.MouseButton.LeftButton)
+
+    assert panel.picture_stack.currentWidget() is panel.frame
+    assert panel.note.text() == ""
+    assert panel.play_button.isEnabled()
+    assert panel.playing_segment_id == ""
+
+
+def test_stopping_puts_the_scrub_back_at_the_in_point(panel: PreviewPanel, qtbot: Any) -> None:
+    """A stopped clip is ready to play again from where it starts, not from the end."""
+    segment = panel._state.segment("f0:0")
+    assert segment is not None
+    start, _end = segment.effective_bounds
+    assert panel.play()
+    assert wait_for(qtbot, lambda: panel.scrub.value() > panel._to_slider(start))
+
+    panel.stop()
+
+    assert panel.scrub.value() == panel._to_slider(start)

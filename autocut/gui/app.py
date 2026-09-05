@@ -12,6 +12,7 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QCloseEvent, QPalette
@@ -28,14 +29,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from autocut.core.config import AutocutConfig
 from autocut.core.manifest import Manifest
+from autocut.gui import theme
 from autocut.gui.screens.analysis import AnalysisScreen
 from autocut.gui.screens.export import ExportScreen
 from autocut.gui.screens.project import ProjectScreen
 from autocut.gui.screens.review import ReviewScreen
 from autocut.gui.screens.soundtrack import SoundtrackScreen
 from autocut.gui.settings import SettingsDialog
-from autocut.gui.state import ProjectState
+from autocut.gui.state import CONFIG_NAME, ProjectState
+from autocut.gui.theme import icons
 
 APP_TITLE = "AutoCut"
 
@@ -130,7 +134,7 @@ class MainWindow(QMainWindow):
 
         self.nav.setCurrentRow(0)
         self.refresh_navigation()
-        apply_theme(QApplication.instance())
+        apply_theme(QApplication.instance(), self.state.config.gui.theme)
 
     # --- navigation ---------------------------------------------------------
 
@@ -186,26 +190,110 @@ class MainWindow(QMainWindow):
         event.accept()
 
 
-def apply_theme(app: object) -> None:
-    """Follow the OS. Fusion on Linux, the platform style everywhere else.
+def resolve_theme(setting: str, app: QApplication) -> theme.ThemeName:
+    """Which token set `setting` means on this desktop right now.
 
-    macOS has a native style that already tracks light and dark, so touching it there
-    would only make AutoCut look less like a Mac application. Linux has no single
-    answer, and Fusion at least reads the desktop palette instead of inventing one.
+    `system` is a setting rather than a theme, so it is answered here, once, from the
+    palette the platform hands the application before anything is styled. Everything
+    downstream sees `dark` or `light` and nothing else.
+    """
+    if setting in ("dark", "light"):
+        return cast("theme.ThemeName", setting)
+    window = app.palette().color(QPalette.ColorRole.Window)
+    return "dark" if window.lightness() < 128 else "light"
+
+
+def theme_palette(tokens: theme.Palette) -> QPalette:
+    """A `QPalette` carrying the token colours.
+
+    The stylesheet covers the widgets the window uses, but Qt paints a few things from
+    the palette whatever the stylesheet says: the text cursor, a drag highlight, the
+    frame a native dialog draws. Building the palette from the same tokens means those
+    match instead of arriving in the desktop's colours.
+    """
+    palette = QPalette()
+    background = theme.qcolor(tokens.background)
+    surface = theme.qcolor(tokens.surface)
+    text = theme.qcolor(tokens.text)
+    muted = theme.qcolor(tokens.text_muted)
+    accent = theme.qcolor(tokens.accent)
+
+    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+        palette.setColor(group, QPalette.ColorRole.Window, background)
+        palette.setColor(group, QPalette.ColorRole.Base, surface)
+        palette.setColor(group, QPalette.ColorRole.AlternateBase, theme.qcolor(tokens.rail))
+        palette.setColor(group, QPalette.ColorRole.Button, surface)
+        palette.setColor(group, QPalette.ColorRole.ToolTipBase, theme.qcolor(tokens.surface_raised))
+        palette.setColor(group, QPalette.ColorRole.WindowText, text)
+        palette.setColor(group, QPalette.ColorRole.Text, text)
+        palette.setColor(group, QPalette.ColorRole.ButtonText, text)
+        palette.setColor(group, QPalette.ColorRole.ToolTipText, text)
+        palette.setColor(group, QPalette.ColorRole.BrightText, theme.qcolor(tokens.amber))
+        palette.setColor(group, QPalette.ColorRole.PlaceholderText, muted)
+        palette.setColor(group, QPalette.ColorRole.Link, accent)
+        palette.setColor(group, QPalette.ColorRole.LinkVisited, accent)
+        palette.setColor(group, QPalette.ColorRole.Highlight, theme.qcolor(tokens.accent_surface))
+        palette.setColor(group, QPalette.ColorRole.HighlightedText, accent)
+        palette.setColor(group, QPalette.ColorRole.Mid, theme.qcolor(tokens.border))
+        palette.setColor(group, QPalette.ColorRole.Dark, theme.qcolor(tokens.border_strong))
+
+    disabled = QPalette.ColorGroup.Disabled
+    for role in (
+        QPalette.ColorRole.WindowText,
+        QPalette.ColorRole.Text,
+        QPalette.ColorRole.ButtonText,
+        QPalette.ColorRole.HighlightedText,
+    ):
+        palette.setColor(disabled, role, muted)
+    palette.setColor(disabled, QPalette.ColorRole.Window, background)
+    palette.setColor(disabled, QPalette.ColorRole.Base, surface)
+    palette.setColor(disabled, QPalette.ColorRole.Button, surface)
+    palette.setColor(disabled, QPalette.ColorRole.Highlight, theme.qcolor(tokens.surface_raised))
+    return palette
+
+
+def apply_theme(app: object, setting: str = "dark") -> theme.Theme:
+    """Dress the application: Fusion, the token palette, the bundled fonts, the sheet.
+
+    Fusion on every platform, which is the decision ADR 10 records: the native macOS
+    style paints its own controls and ignores most of a stylesheet, so it is the one
+    style a design system cannot be applied on top of. Everything the window looks
+    like is decided here and in `autocut/gui/theme`.
     """
     if not isinstance(app, QApplication):
-        return
-    if sys.platform.startswith("linux"):
-        app.setStyle("Fusion")
-    palette = app.palette()
-    dark = palette.color(QPalette.ColorRole.Window).lightness() < 128
-    app.setProperty("autocut_dark", dark)
+        return theme.current()
+    app.setStyle("Fusion")
+    active = theme.activate(resolve_theme(setting, app))
+    theme.register()
+    icons.clear_cache()
+    app.setPalette(theme_palette(active.palette))
+    app.setFont(theme.font(active.metrics.body_size))
+    app.setStyleSheet(theme.stylesheet(active))
+    # Read by the screenshot test and by anything that has to know which way round the
+    # window is without importing the theme.
+    app.setProperty("autocut_theme", active.name)
+    app.setProperty("autocut_dark", active.name == "dark")
+    return active
+
+
+def theme_setting(project: Path | None) -> str:
+    """The theme this start should use, read from the project being opened if there is one.
+
+    The window is dressed before it is built, so the configuration has to be read here
+    rather than waiting for the project to open: a light project that flashed dark for
+    a frame would be worse than one that never changed at all.
+    """
+    if project is None:
+        return AutocutConfig().gui.theme
+    directory = project if project.is_dir() else project.parent
+    return AutocutConfig.load(directory / CONFIG_NAME).gui.theme
 
 
 def run(project: Path | None = None) -> int:
     """Start the application. Returns the exit code, so ``autocut gui`` can pass it on."""
     app = QApplication.instance() or QApplication(sys.argv)
     assert isinstance(app, QApplication)
+    apply_theme(app, theme_setting(project))
     window = MainWindow()
     if project is not None:
         try:

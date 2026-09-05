@@ -48,7 +48,11 @@ autocut report     ./edit
 # generate the track externally, then
 autocut sync       ./edit --audio track.mp3
 autocut export     ./edit
+# optional: the finished edit as one file, hard cuts only
+autocut render     ./edit --track track.mp3
 ```
+
+`autocut render` joins the exported clips in edit order without re-encoding them and mixes the track over the result, writing `montage.mp4` beside `_selects/`. It exports first when a clip has changed, and writes nothing when the edit has not. Set `render.enabled = true` to have every export finish with it. Transitions, titles and everything else still belong in CapCut.
 
 Configuration lives in `autocut.toml`. Start from `autocut.example.toml`.
 

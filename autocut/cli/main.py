@@ -51,6 +51,7 @@ from autocut.core.ingest import ingest
 from autocut.core.manifest import Manifest
 from autocut.core.providers import clear_key, cloud_enabled, find_key, set_key
 from autocut.core.providers.openrouter import OpenRouterProvider
+from autocut.core.render import RenderResult, render_edit
 from autocut.core.report import render_report
 from autocut.core.select import SelectionOverrides, select_clips
 from autocut.core.soundtrack.build import SoundtrackResult, build_soundtrack
@@ -875,8 +876,93 @@ def export(
     for segment_id, error in result.errors:
         console.print(f"[red]failed[/red] {segment_id}: {error}")
     console.print(f"Report written to {report_path}")
+    # The same switch the Export screen's toggle writes, so a project configured in the
+    # window behaves the same way from the command line.
+    if cfg.render.enabled and not result.failed:
+        rendered = render_edit(manifest, cfg)
+        manifest.save(project / "manifest.json")
+        _print_render(rendered)
+        render_report(manifest, project)
     if result.failed:
         raise typer.Exit(code=1)
+
+
+@app.command()
+def render(
+    project: Annotated[Path, typer.Argument(help="Output folder holding manifest.json.")],
+    track: Annotated[
+        Path | None,
+        typer.Option("--track", help="Track to mux. Defaults to the one the edit is synced to."),
+    ] = None,
+    out: Annotated[
+        Path | None, typer.Option("--out", help="Where to write. Defaults to the output folder.")
+    ] = None,
+    config: ConfigOpt = None,
+    no_cloud: NoCloudOpt = False,
+) -> None:
+    """Join the exported clips and the track into one finished file. Hard cuts only."""
+    cfg = _load_config(config, no_cloud)
+    manifest = _open_project(project)
+    manifest.output_dir = project
+
+    if not any(segment.outcome == "selected" for segment in manifest.segments.values()):
+        console.print("[red]Nothing selected[/red]. Run autocut select first.")
+        raise typer.Exit(code=1)
+    if track is not None and not track.exists():
+        console.print(f"[red]No such track[/red]: {track}")
+        raise typer.Exit(code=1)
+
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as bar:
+        task = bar.add_task("Rendering", total=3)
+
+        def on_event(event: ProgressEvent) -> None:
+            name = event.path.name if event.path else event.message
+            bar.update(task, completed=event.current, total=event.total, description=name)
+
+        result = render_edit(manifest, cfg, track=track, progress=on_event, out=out)
+
+    manifest.updated_at = datetime.now(UTC)
+    manifest.save(project / "manifest.json")
+    _print_render(result)
+    if not result.ok:
+        raise typer.Exit(code=1)
+    console.print(f"Report written to {render_report(manifest, project)}")
+
+
+def _print_render(result: RenderResult) -> None:
+    if result.skipped_reason:
+        console.print(f"[yellow]Nothing rendered[/yellow]: {result.skipped_reason}")
+        return
+    if result.export is not None:
+        console.print(
+            f"Exported [bold]{result.export.exported}[/bold] clips first, "
+            f"{result.export.skipped} were already current"
+        )
+    for where, error in result.errors:
+        console.print(f"[red]{where}[/red]: {error}")
+    if not result.ok:
+        return
+    if result.reused:
+        console.print(f"Nothing changed since the last render: {result.path}")
+        return
+    console.print(
+        f"Rendered [bold]{result.clips}[/bold] clips, "
+        f"[bold]{result.duration_s:.1f} s[/bold], {result.size_bytes / 1e6:.0f} MB "
+        f"to {result.path}"
+    )
+    if result.track is not None:
+        console.print(f"  track {result.track.name}, {result.fade_out_s:g} s fade out")
+    elif result.has_audio:
+        console.print("  the clips' own audio, since no track was given")
+    else:
+        console.print("  no audio: the clips are silent and no track was given")
+    console.print("  hard cuts only; anything that needs a transition belongs in an editor")
 
 
 @app.command()

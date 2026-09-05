@@ -24,6 +24,7 @@ Stage = Literal[
     "soundtrack",
     "sync",
     "export",
+    "render",
 ]
 
 

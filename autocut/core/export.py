@@ -297,12 +297,39 @@ def export_clips(
     return result
 
 
+def export_is_current(
+    manifest: Manifest,
+    config: AutocutConfig,
+    overrides: ExportOverrides | None = None,
+) -> bool:
+    """Whether every selected clip on disk was written from exactly these settings.
+
+    The same jobs and the same test the export itself uses, so a caller that needs an
+    export before it can do its own work asks one question rather than re-deriving the
+    plan and getting a subtly different answer.
+    """
+    jobs, _warnings = _build_jobs(
+        manifest, config, overrides or ExportOverrides(), Path(manifest.output_dir)
+    )
+    selects = [job for job in jobs if job.plan.output.parent.name == SELECTS_DIR]
+    return bool(selects) and all(_up_to_date(job) for job in selects)
+
+
 def _up_to_date(job: _Job) -> bool:
-    """Whether the output on disk was made from exactly these settings."""
+    """Whether the output on disk was made from exactly these settings, for this clip.
+
+    The last test is not redundant. The digest covers what the bytes look like and not
+    what the file is called, and the name carries the clip's position in the edit, so a
+    re-ordered selection can hand a clip the file its neighbour wrote: same day, same
+    class, same tag, same length, same index, different footage. Requiring the recorded
+    output to be the one this plan writes makes a re-order re-encode the clips whose
+    position moved, which is the only way the folder can be trusted.
+    """
     return (
         job.plan.output.exists()
         and job.segment.export_fingerprint == job.digest
         and job.segment.exported_path is not None
+        and Path(job.segment.exported_path) == job.plan.output
     )
 
 

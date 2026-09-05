@@ -612,6 +612,19 @@
       </p>
     </div>
 
+    {% if summary.render_name %}
+    <div class="panel">
+      <h2>Rendered</h2>
+      <p class="totals"><b>{{ summary.render_label }}</b><span>{{ summary.render_clips }} clips</span></p>
+      <p class="note">
+        <a href="{{ summary.render_link }}">{{ summary.render_name }}</a>,
+        {{ "%.0f"|format(summary.render_size_mb) }} MB,
+        {% if summary.render_has_audio %}with the track{% else %}silent{% endif %}.
+        Hard cuts, no transitions.
+      </p>
+    </div>
+    {% endif %}
+
     {% if summary.places %}
     <div class="panel">
       <h2>Places</h2>

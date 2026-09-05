@@ -185,6 +185,12 @@ class Summary:
     export_mode: str | None
     export_fps: float | None
     export_failed: int
+    render_link: str | None
+    render_name: str | None
+    render_label: str | None
+    render_size_mb: float
+    render_clips: int
+    render_has_audio: bool
     fps_converted_count: int
     classes: list[str]
     outcomes: list[str]
@@ -434,6 +440,7 @@ def build_summary(manifest: Manifest, cards: list[Card], out_dir: Path | None = 
     thumbnails are addressed, so the whole output folder can be moved.
     """
     out_dir = out_dir if out_dir is not None else Path(manifest.output_dir)
+    render_file = _render_file(manifest)
     tags = build_tags(manifest)
     per_class = Counter(source.source_class for source in manifest.files.values())
     per_outcome = Counter(card.outcome for card in cards)
@@ -498,12 +505,32 @@ def build_summary(manifest: Manifest, cards: list[Card], out_dir: Path | None = 
         export_mode=manifest.export.mode,
         export_fps=manifest.export.target_fps,
         export_failed=manifest.export.failed,
+        render_link=relative_asset(render_file, out_dir),
+        render_name=render_file.name if render_file is not None else None,
+        render_label=duration_label(manifest.render.duration_s) if render_file else None,
+        render_size_mb=manifest.render.size_bytes / 1e6,
+        render_clips=manifest.render.clips,
+        render_has_audio=manifest.render.has_audio,
         fps_converted_count=sum(1 for card in cards if card.fps_converted),
         classes=[name for name in SOURCE_CLASSES if per_class[name]],
         outcomes=[name for name in ("candidate", "selected", "rejected") if per_outcome[name]],
         reasons=[name for name in ALL_REASONS if per_reason[name]],
         tag_names=[summary.label for summary in tags],
     )
+
+
+def _render_file(manifest: Manifest) -> Path | None:
+    """The rendered file, when one is still on disk.
+
+    Checked rather than trusted: a render is a file a person may well have moved or
+    deleted from the file manager, and a header offering a link to nothing is worse
+    than a header that says nothing.
+    """
+    path = manifest.render.path
+    if path is None:
+        return None
+    path = Path(path)
+    return path if path.exists() else None
 
 
 def relative_asset(path: Path | None, out_dir: Path) -> str | None:

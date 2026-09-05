@@ -230,6 +230,14 @@ phone = false
 reflex = false
 generic = false
 
+# The optional finished file: the exported clips joined by stream copy with the track
+# over them, written beside _selects/. Hard cuts only; everything else stays in CapCut.
+[render]
+enabled = false             # true makes every export finish with a render
+fade_out_seconds = 1.5      # the track fades over this at the end of the edit
+filename = "montage.mp4"
+audio_bitrate = "192k"
+
 [providers]
 cloud = true          # uses OPENROUTER_API_KEY from env or keychain when present
 vision_model = "google/gemini-2.5-flash"

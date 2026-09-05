@@ -5,14 +5,20 @@ are Qt proxies rather than lists this widget would have to keep in step. The del
 paints rather than building a widget per card, because a holiday folder is hundreds of
 segments and hundreds of widgets is a slow grid and a large amount of memory for
 pictures that are already JPEGs.
+
+The card is the one the user approved (`docs/design/review-dark.mockup.html`): a rounded
+panel, a picture area tinted by source class while the JPEG is not there, a pill badge
+top left saying what the clip is and one top right with its length and beat count, then
+the class and score on one line, the tags as chips, and last where and when it was shot
+or why it is not in the edit. What that badge says is decided in `card.py`, not here.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPen, QPixmap
+from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QListView,
     QStyle,
@@ -29,12 +35,42 @@ from autocut.gui.models import (
     SegmentRole,
 )
 from autocut.gui.state import ProjectState
+from autocut.gui.widgets.card import CardMarker, card_marker
 from autocut.gui.widgets.scrubber import StripCache, scaled_frame
 
-#: Room under the picture for two lines of labels.
-LABEL_HEIGHT = 42
-CARD_MARGIN = 6
+#: The gap between one card and the next. The grid's own spacing is zero so the whole
+#: rectangle Qt hands the delegate belongs to the card, which is what lets the accent
+#: border sit on the card edge rather than inside it.
+CARD_MARGIN = 7
+
+#: Room under the picture: title line, chips, and the where and when line.
+LABEL_HEIGHT = 74
+#: The inner padding of the text block, and the gap between its lines.
+TEXT_PADDING = 10
+LINE_GAP = 6
+
 BADGE_HEIGHT = 18
+BADGE_PADDING = 7
+BADGE_INSET = 8
+CHIP_HEIGHT = 16
+CHIP_PADDING = 7
+CHIP_GAP = 6
+MAX_CHIPS = 3
+
+#: How much of a card is left when it is not in the edit.
+DIMMED_OPACITY = 0.55
+
+#: Which placeholder colour stands in for a class of camera until its JPEG arrives.
+PLACEHOLDER_ROLES = {
+    "drone": "thumb_drone",
+    "actioncam": "thumb_actioncam",
+    "phone": "thumb_phone",
+}
+
+
+def placeholder_role(source_class: str) -> str:
+    """The palette role behind a thumbnail that has not loaded, by source class."""
+    return PLACEHOLDER_ROLES.get(source_class, "thumb_neutral")
 
 
 class ThumbnailCache:
@@ -56,7 +92,7 @@ class ThumbnailCache:
 
 
 class SegmentCardDelegate(QStyledItemDelegate):
-    """Paints one card: the picture, the duration, the score bar and the markers."""
+    """Paints one card: the picture, its badges, and the three lines under it."""
 
     def __init__(self, state: ProjectState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -72,82 +108,259 @@ class SegmentCardDelegate(QStyledItemDelegate):
 
     def card_size(self) -> QSize:
         width = self._state.config.gui.grid_thumbnail_px
-        return QSize(width, int(width * 9 / 16) + LABEL_HEIGHT)
+        picture = theme.current().metrics.card_picture_height
+        return QSize(width + CARD_MARGIN * 2, picture + LABEL_HEIGHT + CARD_MARGIN * 2)
 
     def sizeHint(  # noqa: N802 - Qt override
         self, option: QStyleOptionViewItem, index: AnyIndex
     ) -> QSize:
         return self.card_size()
 
-    def paint(  # noqa: C901 - one branch per marker, flatter than any indirection
-        self, painter: QPainter, option: QStyleOptionViewItem, index: AnyIndex
-    ) -> None:
+    def marker(self, index: AnyIndex) -> CardMarker:
+        """What this card says, read off the model and decided in `card.py`."""
+        similarity = float(index.data(SegmentRole.SIMILARITY) or 0.0)
+        lost_to = index.data(SegmentRole.LOST_TO_ORDER)
+        return card_marker(
+            outcome=str(index.data(SegmentRole.OUTCOME) or ""),
+            decision=str(index.data(SegmentRole.USER_DECISION) or ""),
+            order=int(index.data(SegmentRole.ORDER) or 0),
+            reason=str(index.data(SegmentRole.REASON) or ""),
+            place=str(index.data(SegmentRole.PLACE_NAME) or ""),
+            clock=str(index.data(SegmentRole.CLOCK) or ""),
+            hero=bool(index.data(SegmentRole.HERO)),
+            lost_to_order=int(lost_to) if lost_to is not None else None,
+            similarity=similarity or None,
+        )
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: AnyIndex) -> None:
         colors = theme.current().palette
-        # Amber for what the reviewer kept, red for what they threw out, the accent for
-        # the machine's own picks and the muted text colour for what the rules rejected:
-        # the human decisions are the warm ones on purpose.
-        kept = theme.qcolor(colors.amber)
-        user_rejected = theme.qcolor(colors.red)
-        selected_color = theme.qcolor(colors.accent)
-        rule_rejected = theme.qcolor(colors.text_muted)
+        metrics = theme.current().metrics
+        marker = self.marker(index)
         segment_id = str(index.data(SegmentRole.SEGMENT_ID) or "")
-        rect = option.rect.adjusted(CARD_MARGIN, CARD_MARGIN, -CARD_MARGIN, -CARD_MARGIN)
-        picture = QRect(rect.x(), rect.y(), rect.width(), rect.height() - LABEL_HEIGHT)
+
+        card = option.rect.adjusted(CARD_MARGIN, CARD_MARGIN, -CARD_MARGIN, -CARD_MARGIN)
+        picture = QRect(card.x(), card.y(), card.width(), metrics.card_picture_height)
+
         painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if marker.dimmed:
+            painter.setOpacity(DIMMED_OPACITY)
 
-        selected = bool(option.state & QStyle.StateFlag.State_Selected)
-        if selected:
-            painter.fillRect(option.rect, option.palette.highlight())
-
-        pixmap = self._picture(segment_id, index, picture.width(), picture.height())
-        if not pixmap.isNull():
-            painter.drawPixmap(picture, pixmap)
-        else:
-            painter.fillRect(picture, theme.qcolor(colors.thumb_neutral))
-            painter.setPen(QPen(theme.qcolor(colors.text_muted)))
-            painter.drawText(picture, Qt.AlignmentFlag.AlignCenter, "no thumbnail")
-
-        outcome = str(index.data(SegmentRole.OUTCOME) or "")
-        decision = str(index.data(SegmentRole.USER_DECISION) or "")
-        order = int(index.data(SegmentRole.ORDER) or 0)
-        # A human decision outranks the machine's: it is the one thing on the card that
-        # no automatic step is allowed to have changed. Each state gets a border and a
-        # badge rather than a line of text under the picture, because the question a
-        # reviewer scans the grid for is which clips are in the edit, and a number in a
-        # row of numbers does not answer it.
-        if decision == "keep":
-            self._frame(painter, picture, kept, 3)
-            self._badge(painter, picture, f"KEPT {order}" if order else "KEPT", kept, colors)
-        elif decision == "reject":
-            self._frame(painter, picture, user_rejected, 3)
-            self._badge(painter, picture, "OUT", user_rejected, colors)
-        elif outcome == "selected":
-            self._frame(painter, picture, selected_color, 3)
-            self._badge(painter, picture, f"IN {order}" if order else "IN", selected_color, colors)
-        elif outcome == "rejected":
-            self._frame(painter, picture, rule_rejected, 1)
-
-        painter.setPen(
-            QPen(
-                option.palette.highlightedText().color()
-                if selected
-                else option.palette.text().color()
-            )
-        )
-        labels = QRect(rect.x(), picture.bottom() + 2, rect.width(), LABEL_HEIGHT - 2)
-        painter.drawText(
-            labels,
-            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop),
-            self._first_line(index),
-        )
-        painter.drawText(
-            labels,
-            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom),
-            self._second_line(index, decision),
-        )
+        self._panel(painter, card, colors, metrics, option, marker)
+        painter.save()
+        self._clip_to_picture(painter, card, picture, metrics)
+        self._picture(painter, picture, segment_id, index, colors)
+        painter.restore()
+        self._badges(painter, picture, index, colors, metrics, marker)
+        self._text(painter, card, picture, index, colors, metrics, marker)
         painter.restore()
 
-    def _picture(self, segment_id: str, index: AnyIndex, width: int, height: int) -> QPixmap:
+    # --- the pieces of a card ----------------------------------------------
+
+    def _panel(
+        self,
+        painter: QPainter,
+        card: QRect,
+        colors: theme.Palette,
+        metrics: theme.Metrics,
+        option: QStyleOptionViewItem,
+        marker: CardMarker,
+    ) -> None:
+        """The rounded panel, and the border that says whether this card is current."""
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(theme.qcolor(colors.surface))
+        painter.drawRoundedRect(card, metrics.radius_card, metrics.radius_card)
+
+        current = bool(option.state & QStyle.StateFlag.State_Selected)
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        if current:
+            colour, width = colors.accent, 2
+        elif marker.tone in ("amber", "red"):
+            colour, width = getattr(colors, marker.tone), 1
+        elif hovered:
+            colour, width = colors.border_muted, 1
+        else:
+            colour, width = colors.border_strong, 1
+        pen = QPen(theme.qcolor(colour))
+        pen.setWidth(width)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        inset = width / 2.0
+        painter.drawRoundedRect(
+            QRectF(card).adjusted(inset, inset, -inset, -inset),
+            metrics.radius_card,
+            metrics.radius_card,
+        )
+
+    def _clip_to_picture(
+        self, painter: QPainter, card: QRect, picture: QRect, metrics: theme.Metrics
+    ) -> None:
+        """Round the picture's top corners with the card and leave the bottom square."""
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(card), metrics.radius_card, metrics.radius_card)
+        square = QPainterPath()
+        square.addRect(QRectF(picture).adjusted(0, metrics.radius_card, 0, 0))
+        painter.setClipPath(path.united(square).intersected(_rect_path(picture)))
+
+    def _picture(
+        self,
+        painter: QPainter,
+        picture: QRect,
+        segment_id: str,
+        index: AnyIndex,
+        colors: theme.Palette,
+    ) -> None:
+        """The frame, or the class tint that stands in for it."""
+        source_class = str(index.data(SegmentRole.SOURCE_CLASS) or "")
+        painter.fillRect(picture, theme.qcolor(getattr(colors, placeholder_role(source_class))))
+        pixmap = self._pixmap(segment_id, index, picture.width(), picture.height())
+        if not pixmap.isNull():
+            painter.drawPixmap(picture, pixmap)
+
+    def _badges(
+        self,
+        painter: QPainter,
+        picture: QRect,
+        index: AnyIndex,
+        colors: theme.Palette,
+        metrics: theme.Metrics,
+        marker: CardMarker,
+    ) -> None:
+        """The state badge on the left, the length on the right, hero under the state."""
+        painter.setFont(theme.font(metrics.label_size, mono=True, weight=theme.STRONG))
+        left = self._badge(
+            painter,
+            QPoint(picture.left() + BADGE_INSET, picture.top() + BADGE_INSET),
+            marker.badge,
+            theme.qcolor(getattr(colors, marker.tone)),
+            theme.qcolor(colors.on_accent if marker.tone != "border_muted" else colors.text),
+            metrics,
+        )
+        if marker.hero:
+            self._badge(
+                painter,
+                QPoint(picture.left() + BADGE_INSET, left.bottom() + 4),
+                "hero",
+                theme.qcolor(colors.amber),
+                theme.qcolor(colors.on_accent),
+                metrics,
+            )
+
+        painter.setFont(theme.font(metrics.label_size, mono=True))
+        length = self._length_text(index)
+        width = painter.fontMetrics().horizontalAdvance(length) + BADGE_PADDING * 2
+        self._badge(
+            painter,
+            QPoint(picture.right() - BADGE_INSET - width, picture.top() + BADGE_INSET),
+            length,
+            theme.qcolor(colors.badge_scrim),
+            theme.qcolor(colors.text),
+            metrics,
+        )
+
+    def _text(
+        self,
+        painter: QPainter,
+        card: QRect,
+        picture: QRect,
+        index: AnyIndex,
+        colors: theme.Palette,
+        metrics: theme.Metrics,
+        marker: CardMarker,
+    ) -> None:
+        """Class and score, the tag chips, and where and when or why it lost."""
+        left = card.left() + TEXT_PADDING
+        right = card.right() - TEXT_PADDING
+        width = right - left
+        y = picture.bottom() + TEXT_PADDING
+
+        title_height = metrics.title_size + 4
+        painter.setFont(theme.font(metrics.title_size, weight=theme.MEDIUM))
+        painter.setPen(QPen(theme.qcolor(colors.text)))
+        painter.drawText(
+            QRect(left, y, width, title_height),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            str(index.data(SegmentRole.SOURCE_CLASS) or ""),
+        )
+        score = index.data(SegmentRole.SCORE)
+        if score is not None and float(score) >= 0.0:
+            painter.setFont(theme.font(metrics.body_size, mono=True))
+            painter.setPen(QPen(theme.qcolor(colors.text_muted)))
+            painter.drawText(
+                QRect(left, y, width, title_height),
+                int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+                f"{float(score):.2f}",
+            )
+
+        y += title_height + LINE_GAP
+        self._chips(painter, QPoint(left, y), right, index, colors, metrics)
+
+        y += CHIP_HEIGHT + LINE_GAP
+        painter.setFont(theme.font(metrics.label_size))
+        painter.setPen(QPen(theme.qcolor(colors.text_muted)))
+        detail = painter.fontMetrics().elidedText(marker.detail, Qt.TextElideMode.ElideRight, width)
+        painter.drawText(
+            QRect(left, y, width, metrics.label_size + 4),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            detail,
+        )
+
+    def _chips(
+        self,
+        painter: QPainter,
+        start: QPoint,
+        right: int,
+        index: AnyIndex,
+        colors: theme.Palette,
+        metrics: theme.Metrics,
+    ) -> None:
+        """The clip's tags, as many as fit, in the order the analysis ranked them."""
+        tags = list(index.data(SegmentRole.TAGS) or [])[:MAX_CHIPS]
+        painter.setFont(theme.font(metrics.label_size))
+        x = start.x()
+        for tag in tags:
+            width = painter.fontMetrics().horizontalAdvance(str(tag)) + CHIP_PADDING * 2
+            if x + width > right:
+                return
+            box = QRect(x, start.y(), width, CHIP_HEIGHT)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(theme.qcolor(colors.surface_raised))
+            painter.drawRoundedRect(box, CHIP_HEIGHT // 2, CHIP_HEIGHT // 2)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(theme.qcolor(colors.text_secondary)))
+            painter.drawText(box, int(Qt.AlignmentFlag.AlignCenter), str(tag))
+            x += width + CHIP_GAP
+
+    @staticmethod
+    def _badge(
+        painter: QPainter,
+        at: QPoint,
+        text: str,
+        fill: QColor,
+        ink: QColor,
+        metrics: theme.Metrics,
+    ) -> QRect:
+        """A filled pill over the picture. Returns its rectangle, so one can sit below."""
+        width = painter.fontMetrics().horizontalAdvance(text) + BADGE_PADDING * 2
+        box = QRect(at.x(), at.y(), width, BADGE_HEIGHT)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(fill)
+        painter.drawRoundedRect(box, metrics.radius_badge, metrics.radius_badge)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(ink))
+        painter.drawText(box, int(Qt.AlignmentFlag.AlignCenter), text)
+        return box
+
+    @staticmethod
+    def _length_text(index: AnyIndex) -> str:
+        """`4.0 s` on its own, or `4.0 s · 8♪` once the edit has been synced."""
+        duration = float(index.data(SegmentRole.DURATION) or 0.0)
+        beats = int(index.data(SegmentRole.BEATS) or 0)
+        return f"{duration:.1f} s · {beats}♪" if beats else f"{duration:.1f} s"
+
+    # --- pictures ----------------------------------------------------------
+
+    def _pixmap(self, segment_id: str, index: AnyIndex, width: int, height: int) -> QPixmap:
         """The frame under the pointer while hovering, the thumbnail otherwise."""
         if segment_id and segment_id == self.hovered_id:
             frame = self._hover_frame(segment_id, width, height)
@@ -173,46 +386,11 @@ class SegmentCardDelegate(QStyledItemDelegate):
             return None
         return scaled_frame(strip, self.hovered_fraction, width, height)
 
-    def _first_line(self, index: AnyIndex) -> str:
-        duration = float(index.data(SegmentRole.DURATION) or 0.0)
-        source_class = str(index.data(SegmentRole.SOURCE_CLASS) or "")
-        return f"{duration:.1f} s  {source_class}"
 
-    def _second_line(self, index: AnyIndex, decision: str) -> str:
-        """Score, tag and the reason a clip is out. The badge carries the state itself."""
-        score = index.data(SegmentRole.SCORE)
-        tag = str(index.data(SegmentRole.DOMINANT_TAG) or "")
-        parts: list[str] = []
-        if score is not None and score >= 0.0:
-            parts.append(f"{float(score):.2f}")
-        if tag:
-            parts.append(tag)
-        reason = str(index.data(SegmentRole.REASON) or "")
-        if reason and not decision:
-            parts.append(reason)
-        return "  ".join(parts)
-
-    @staticmethod
-    def _frame(painter: QPainter, rect: QRect, color: QColor, width: int) -> None:
-        pen = QPen(color)
-        pen.setWidth(width)
-        painter.setPen(pen)
-        painter.drawRect(rect.adjusted(1, 1, -1, -1))
-
-    @staticmethod
-    def _badge(
-        painter: QPainter, rect: QRect, text: str, color: QColor, colors: theme.Palette
-    ) -> None:
-        """A filled corner label. On the picture, because that is where the eye is."""
-        metrics = painter.fontMetrics()
-        width = metrics.horizontalAdvance(text) + 12
-        box = QRect(rect.x() + 3, rect.y() + 3, width, BADGE_HEIGHT)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(color)
-        painter.drawRect(box)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(theme.qcolor(colors.on_accent)))
-        painter.drawText(box, int(Qt.AlignmentFlag.AlignCenter), text)
+def _rect_path(rect: QRect) -> QPainterPath:
+    path = QPainterPath()
+    path.addRect(QRectF(rect))
+    return path
 
 
 class ThumbGrid(QListView):
@@ -240,7 +418,9 @@ class ThumbGrid(QListView):
         self.setResizeMode(QListView.ResizeMode.Adjust)
         self.setMovement(QListView.Movement.Static)
         self.setUniformItemSizes(True)
-        self.setSpacing(2)
+        # The card carries its own margin, so the view adds none: the accent border has
+        # to sit on the card's edge, and a view spacing would push it inward instead.
+        self.setSpacing(0)
         self.setMouseTracking(True)
         self.setSelectionMode(QListView.SelectionMode.SingleSelection)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)

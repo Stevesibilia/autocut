@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -631,6 +632,139 @@ def test_a_second_play_with_track_renders_nothing(
 
     assert not state.is_running
     assert built.stat().st_mtime_ns == stamp
+
+
+# --- issue 43: a sync that is applied, and one that only looks applied ---------
+
+
+def synced_project(tmp_path: Path, synthetic_dir: Path) -> ProjectState:
+    from tests.unit.test_montage import CLIPS
+    from tests.unit.test_montage import project as montage_manifest
+
+    manifest = montage_manifest(tmp_path, CLIPS, synthetic_dir)
+    # Lengths that are not already whole beats at 120, or quantising would have nothing
+    # to move and the test would prove nothing about the sync.
+    for index, segment in enumerate(manifest.segments.values()):
+        segment.target_duration_s = 1.3 + index * 0.2
+    manifest.save(tmp_path / "edit" / "manifest.json")
+    state = ProjectState()
+    state.open_project(tmp_path / "edit")
+    state.config.cache.dir = tmp_path / "cache"
+    return state
+
+
+@pytest.mark.ffmpeg
+def test_apply_sync_moves_the_bounds_and_the_fingerprint(
+    qtbot: Any, tmp_path: Path, synthetic_dir: Path
+) -> None:
+    """The heart of issue 43: a sync has to change the clips, not only the numbers."""
+    from autocut.core.montage import montage_fingerprint
+
+    state = synced_project(tmp_path, synthetic_dir)
+    screen = SoundtrackScreen(state)
+    qtbot.addWidget(screen)
+    assert screen.generate()
+    track = synthetic_dir / CLICK
+    assert screen.load_track(track)
+    manifest = state.manifest
+    assert manifest is not None
+    before_fingerprint = montage_fingerprint(manifest, state.config, track)
+    before = {
+        segment.id: (segment.final_start_s, segment.final_end_s, segment.target_duration_s)
+        for segment in manifest.segments.values()
+        if segment.outcome == "selected"
+    }
+    assert all(bounds[0] is None for bounds in before.values())
+
+    with qtbot.waitSignal(state.stage_finished, timeout=60_000):
+        assert screen.apply_sync()
+    assert state.wait_for_stage(10_000)
+
+    after = {
+        segment.id: (segment.final_start_s, segment.final_end_s, segment.target_duration_s)
+        for segment in manifest.segments.values()
+        if segment.outcome == "selected"
+    }
+    assert all(bounds[0] is not None for bounds in after.values())
+    assert after != before
+    assert montage_fingerprint(manifest, state.config, track) != before_fingerprint
+    # And it is on disk, not only in memory.
+    saved = Manifest.load(tmp_path / "edit" / "manifest.json")
+    for segment_id, bounds in after.items():
+        assert saved.segments[segment_id].final_start_s == pytest.approx(bounds[0])
+    assert saved.soundtrack.synced_bpm == pytest.approx(screen.effective_bpm())
+    assert saved.soundtrack.synced_audio_path == track
+
+
+@pytest.mark.ffmpeg
+def test_a_newly_loaded_track_is_not_a_synced_one(
+    qtbot: Any, tmp_path: Path, synthetic_dir: Path
+) -> None:
+    """What the user actually hit: yesterday's beats made today's track look synced.
+
+    The project is synced to one track, another is loaded, and the clips are still cut
+    to the first. Every clip carries beats, so the old test for "synced" said yes and
+    the montage went out with the new music over the old cuts.
+    """
+    state = synced_project(tmp_path, synthetic_dir)
+    screen = SoundtrackScreen(state)
+    qtbot.addWidget(screen)
+    assert screen.generate()
+    assert screen.load_track(synthetic_dir / CLICK)
+    with qtbot.waitSignal(state.stage_finished, timeout=60_000):
+        assert screen.apply_sync()
+    assert state.wait_for_stage(10_000)
+    assert screen.play_with_track_button.isEnabled()
+    manifest = state.manifest
+    assert manifest is not None
+    assert all(
+        segment.beats is not None
+        for segment in manifest.segments.values()
+        if segment.outcome == "selected"
+    )
+
+    other = tmp_path / "other.wav"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=880:duration=6",
+            str(other),
+        ],
+        check=True,
+    )
+    assert screen.load_track(other)
+
+    # Still carrying beats, and no longer synced: the track under them is not this one.
+    assert not screen._synced_with_a_track()
+    assert not screen.play_with_track_button.isEnabled()
+    assert screen.play_with_track() is False
+    assert "Apply sync first" in screen.distribution_label.text()
+
+
+@pytest.mark.ffmpeg
+def test_a_changed_tempo_is_not_a_synced_one(
+    qtbot: Any, tmp_path: Path, synthetic_dir: Path
+) -> None:
+    """The same track at another tempo is another set of bounds."""
+    state = synced_project(tmp_path, synthetic_dir)
+    screen = SoundtrackScreen(state)
+    qtbot.addWidget(screen)
+    assert screen.generate()
+    assert screen.load_track(synthetic_dir / CLICK)
+    with qtbot.waitSignal(state.stage_finished, timeout=60_000):
+        assert screen.apply_sync()
+    assert state.wait_for_stage(10_000)
+
+    screen.override_field.setValue(96.0)
+
+    assert screen.effective_bpm() == pytest.approx(96.0)
+    assert not screen._synced_with_a_track()
 
 
 # --- the waveform widget ------------------------------------------------------

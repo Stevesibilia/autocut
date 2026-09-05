@@ -27,7 +27,7 @@ from autocut.core.manifest import (  # noqa: E402
     SourceFile,
     Tag,
 )
-from autocut.gui.screens.review import ReviewScreen  # noqa: E402
+from autocut.gui.screens.review import ReviewScreen, duration_label  # noqa: E402
 from autocut.gui.state import ProjectState  # noqa: E402
 from autocut.gui.widgets.groups import build_groups  # noqa: E402
 from autocut.gui.widgets.preview import snap  # noqa: E402
@@ -918,8 +918,95 @@ def test_play_all_again_after_a_decision_rebuilds(real_state: ProjectState, qtbo
         assert screen.play_all()
 
     assert len(screen.montage.parts) == 2
-    assert first.exists()  # same path, rebuilt in place
+    # A new edit is a new file, and the old one goes once the player has switched.
+    assert screen.montage.path != first
+    assert not first.exists()
     assert real_state.montage_is_current(None)
+
+
+@pytest.mark.ffmpeg
+def test_a_rebuild_writes_a_new_file_and_frees_the_old_one(
+    real_state: ProjectState, qtbot: Any
+) -> None:
+    """Issue 43: a rebuild used to overwrite the file the player still had open.
+
+    What came out was a stream of ``Invalid NAL unit size`` and a black picture. The
+    montage is named after its fingerprint now, so a new edit is a new file, and the
+    old one goes only once the player has been pointed at the new one.
+    """
+    screen = ReviewScreen(real_state)
+    qtbot.addWidget(screen)
+    with qtbot.waitSignal(real_state.stage_finished, timeout=180_000):
+        assert screen.play_all()
+    assert real_state.wait_for_stage(30_000)
+    first = screen.montage.path
+    assert first is not None
+    assert first.exists()
+    assert "montage-" in first.name
+
+    screen.grid.select_segment(screen.montage.parts[0].segment_id)
+    screen._decide("reject")
+    with qtbot.waitSignal(real_state.stage_finished, timeout=180_000):
+        assert screen.play_all()
+    assert real_state.wait_for_stage(30_000)
+
+    second = screen.montage.path
+    assert second is not None
+    assert second != first
+    assert second.exists()
+    # The old file is gone, and it went after the player had let go of it.
+    assert not first.exists()
+    assert real_state.manifest is not None
+    assert Path(real_state.manifest.preview.path) == second  # type: ignore[arg-type]
+
+
+@pytest.mark.ffmpeg
+def test_the_player_is_unloaded_before_the_rebuild_starts(
+    real_state: ProjectState, qtbot: Any
+) -> None:
+    """The player lets go before anything writes: that is what kept the old file safe."""
+    screen = ReviewScreen(real_state)
+    qtbot.addWidget(screen)
+    with qtbot.waitSignal(real_state.stage_finished, timeout=180_000):
+        assert screen.play_all()
+    assert real_state.wait_for_stage(30_000)
+    assert screen.montage.path is not None
+
+    screen.grid.select_segment(screen.montage.parts[0].segment_id)
+    screen._decide("reject")
+    assert screen.play_all()
+
+    # While the render runs the player holds nothing at all.
+    assert screen.montage.path is None
+    assert screen.montage.parts == []
+    assert real_state.wait_for_stage(180_000)
+
+
+@pytest.mark.ffmpeg
+def test_the_header_shows_the_edit_and_not_the_montage(
+    real_state: ProjectState, qtbot: Any
+) -> None:
+    """Two durations one line apart read as one number contradicting itself."""
+    from autocut.core.durations import total_duration
+
+    screen = ReviewScreen(real_state)
+    qtbot.addWidget(screen)
+    with qtbot.waitSignal(real_state.stage_finished, timeout=180_000):
+        assert screen.play_all()
+    assert real_state.wait_for_stage(30_000)
+    manifest = real_state.manifest
+    assert manifest is not None
+    selected = [s for s in manifest.segments.values() if s.outcome == "selected"]
+
+    header = screen.counts.text()
+    note = screen.montage_note.text()
+
+    assert "of edit" in header
+    assert duration_label(total_duration(selected)) in header
+    # The montage's own length lives in the transport row, not under the header.
+    assert f"{manifest.preview.duration_s:.1f}" not in note
+    assert "Montage of" in note
+    assert f"{manifest.preview.duration_s:.1f}" in screen.montage.status.text()
 
 
 def test_play_all_with_nothing_selected_says_why(screen: ReviewScreen, qtbot: Any) -> None:

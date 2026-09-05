@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 
 from autocut.core.durations import total_duration
 from autocut.core.manifest import Manifest
-from autocut.core.montage import MontageResult
+from autocut.core.montage import MontageResult, discard
 from autocut.core.report import render_report
 from autocut.core.rules import EXCLUSIONS
 from autocut.gui.state import ProjectState
@@ -446,6 +446,9 @@ class ReviewScreen(QWidget):
         if isinstance(result, MontageResult) and result.ok:
             if self._show_montage():
                 self.montage.play()
+            # Only now, with the player pointed at the new file: deleting the old one
+            # before that is deleting a file something is reading.
+            discard(result.previous)
             return
         reason = ""
         if isinstance(result, MontageResult):
@@ -470,6 +473,10 @@ class ReviewScreen(QWidget):
         if state.montage_is_current(track) and self._show_montage():
             self.montage.play()
             return True
+        # Let go of the file before anything writes near it: the player keeps the mp4
+        # open, and a rebuild used to leave it decoding a file that had changed under
+        # it, which is a black picture and a stream of NAL unit errors.
+        self.montage.clear()
         self.montage_note.setText("Building the montage from the selected clips…")
         return state.run_montage(track=track)
 
@@ -498,8 +505,11 @@ class ReviewScreen(QWidget):
             return False
         self.groups_toggle.setChecked(False)
         self.stack.setCurrentWidget(self.montage)
+        # The montage's own length belongs in the transport row, which says it. The
+        # header above says how long the edit is, and two different durations one line
+        # apart read as one number contradicting itself.
         self.montage_note.setText(
-            f"{manifest.preview.clips} clips, {manifest.preview.duration_s:.1f} s"
+            f"Montage of {manifest.preview.clips} clips"
             + (" with the track" if manifest.preview.has_audio else "")
             + ". K, R, space and U apply to the clip playing."
         )

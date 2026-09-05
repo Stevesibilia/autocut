@@ -33,13 +33,15 @@ from autocut.core.beatsync import (
     decode_audio,
     measure_track,
     quantize_durations,
+    record_sync,
     reset_final_bounds,
+    synced_against,
     write_beatmap,
 )
 from autocut.core.config import GenreRow
 from autocut.core.events import ProgressCallback, ProgressEvent
 from autocut.core.manifest import PromptVariant
-from autocut.core.montage import MontageResult
+from autocut.core.montage import MontageResult, discard
 from autocut.core.providers import TextProvider, cloud_enabled, find_key
 from autocut.core.soundtrack.build import build_soundtrack, store_user_variant, write_prompt_file
 from autocut.core.soundtrack.prompt import MoodDirection, RoomDirection, apply_mood
@@ -153,7 +155,7 @@ class SoundtrackScreen(QWidget):
         self.override_field.setRange(0.0, 400.0)
         self.override_field.setDecimals(1)
         self.override_field.setSpecialValueText("measured")
-        self.override_field.valueChanged.connect(self.refresh_preview)
+        self.override_field.valueChanged.connect(self._override_changed)
         self.apply_button = QPushButton("Apply sync")
         self.apply_button.clicked.connect(self.apply_sync)
         self.apply_button.setEnabled(False)
@@ -470,6 +472,7 @@ class SoundtrackScreen(QWidget):
             self.track_label.setText(str(error))
             self.waveform.clear()
             self.apply_button.setEnabled(False)
+            self.play_with_track_button.setEnabled(False)
             return False
         self._track = track
         self._audio = path
@@ -484,6 +487,9 @@ class SoundtrackScreen(QWidget):
         manifest.soundtrack.beats_s = list(track.beats_s)
         self._describe_comparison(track)
         self.apply_button.setEnabled(True)
+        # Loading a track can only take this button away: the clips are cut to whatever
+        # the last sync used, and that is not this track until Apply says so.
+        self.play_with_track_button.setEnabled(self._synced_with_a_track())
         state.schedule_save()
         self.refresh_preview()
         return True
@@ -506,11 +512,24 @@ class SoundtrackScreen(QWidget):
             self.override_field.blockSignals(False)
 
     def _synced_with_a_track(self) -> bool:
-        """Whether there is something to watch: a track loaded and a sync applied."""
+        """Whether the clips on disk were cut to the track that is loaded now.
+
+        Any clip carrying beats used to be enough, and it is not: a project synced to
+        yesterday's click still carries them, so loading a new track let the montage
+        render yesterday's bounds against today's music with every number on screen
+        agreeing. The manifest now says which track and tempo the bounds came from.
+        """
         manifest = self._state.manifest
         if manifest is None or self._audio is None:
             return False
-        return any(segment.beats is not None for segment in manifest.segments.values())
+        if not any(segment.beats is not None for segment in manifest.segments.values()):
+            return False
+        return synced_against(manifest, self.effective_bpm(), self._audio)
+
+    def _override_changed(self) -> None:
+        """A new tempo is a new set of bounds, so the synced edit is no longer this one."""
+        self.refresh_preview()
+        self.play_with_track_button.setEnabled(self._synced_with_a_track())
 
     def effective_bpm(self) -> float:
         """What Apply would use: the override when set, otherwise the measurement."""
@@ -557,11 +576,17 @@ class SoundtrackScreen(QWidget):
         override = self.override_field.value()
         output_dir = Path(manifest.output_dir)
 
+        audio = self._audio
+        assert audio is not None  # _track is only set with an audio path beside it
+
         def work(progress: ProgressCallback) -> QuantizeResult:
             reset_final_bounds(manifest)
             result = quantize_durations(manifest, bpm, config, progress)
             manifest.soundtrack.bpm_override = float(override) if override > 0 else None
             manifest.soundtrack.beatmap_path = write_beatmap(manifest, track, output_dir)
+            # Last, and only here: what the bounds on the clips were actually made
+            # from. Everything before this line is a measurement.
+            record_sync(manifest, bpm, audio)
             progress(ProgressEvent(stage="sync", current=result.clips, total=result.clips))
             return result
 
@@ -592,6 +617,8 @@ class SoundtrackScreen(QWidget):
         if state.montage_is_current(track) and self._show_montage():
             self.montage.play()
             return True
+        # The same reason as the Review screen: the player holds the file open.
+        self.montage.clear()
         self.distribution_label.setText("Building the montage with the track…")
         return state.run_montage(track=track)
 
@@ -617,6 +644,7 @@ class SoundtrackScreen(QWidget):
             result = self._state.last_result
             if isinstance(result, MontageResult) and result.ok and self._show_montage():
                 self.montage.play()
+                discard(result.previous)
             elif isinstance(result, MontageResult):
                 self.distribution_label.setText(
                     result.skipped_reason or "The montage could not be built."

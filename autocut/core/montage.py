@@ -35,6 +35,23 @@ PARTS_DIRNAME = "parts"
 MONTAGE_FILENAME = "montage.mp4"
 INDEX_FILENAME = "montage.json"
 
+
+def montage_path(manifest: Manifest, fingerprint: str) -> Path:
+    """Where the montage for this edit lives.
+
+    Named by its fingerprint rather than written to one path over and over: a rebuild
+    used to overwrite the file a ``QMediaPlayer`` still had open, and what came out was
+    a stream of ``Invalid NAL unit size`` and a black picture. A new edit is a new
+    file, and the old one is deleted only once nothing is playing it.
+    """
+    return preview_dir(manifest) / f"montage-{fingerprint}.mp4"
+
+
+def index_path_for(montage: Path) -> Path:
+    """The index beside one montage, named after it for the same reason."""
+    return montage.with_suffix(".json")
+
+
 #: A part is seconds of work at 360 px; a whole montage of a long holiday is minutes.
 PART_TIMEOUT_S = 300.0
 CONCAT_TIMEOUT_S = 600.0
@@ -73,6 +90,9 @@ class MontageResult:
     duration_s: float = 0.0
     has_audio: bool = False
     reused_montage: bool = False
+    previous: Path | None = None
+    """The montage this one replaces, for the caller to delete once nothing plays it."""
+
     skipped_reason: str | None = None
     errors: list[tuple[str, str]] = field(default_factory=list)
 
@@ -303,7 +323,7 @@ def probe_duration(path: Path) -> float:
 
 
 def write_index(manifest: Manifest, parts: list[Part], output: Path) -> Path:
-    """``montage.json``: which clip is playing at any second of the montage."""
+    """The index beside the montage: which clip is playing at any second of it."""
     payload = {
         "montage": str(output.name),
         "clips": [
@@ -318,7 +338,7 @@ def write_index(manifest: Manifest, parts: list[Part], output: Path) -> Path:
         ],
         "duration_s": round(parts[-1].end_s, 4) if parts else 0.0,
     }
-    path = output.parent / INDEX_FILENAME
+    path = index_path_for(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     del manifest  # the index describes the montage, not the project
@@ -482,7 +502,7 @@ def build_montage(
         return MontageResult(skipped_reason="nothing is selected")
 
     fingerprint = montage_fingerprint(manifest, config, track)
-    output = preview_dir(manifest) / MONTAGE_FILENAME
+    output = montage_path(manifest, fingerprint)
     if not force and is_current(manifest, config, track):
         existing = Path(manifest.preview.path or output)
         return MontageResult(
@@ -515,7 +535,11 @@ def build_montage(
     result.has_audio = track is not None
     result.index_path = write_index(manifest, parts, output)
     _forget_unused_parts(manifest, parts)
+    previous = manifest.preview.path
     record(manifest, result)
+    # The caller is handed the old file rather than losing it here: a player may still
+    # be holding it, and it is the caller that knows when it has let go.
+    result.previous = Path(previous) if previous and Path(previous) != output else None
     return result
 
 
@@ -528,6 +552,22 @@ def record(manifest: Manifest, result: MontageResult) -> None:
     manifest.preview.clips = len(result.parts)
     manifest.preview.has_audio = result.has_audio
     manifest.preview.built_at = datetime.now(UTC)
+
+
+def discard(montage: Path | None) -> int:
+    """Delete one montage and its index. Returns how many files went.
+
+    Called by the screen once its player has been pointed at the new file, never by
+    the render: deleting a file out from under an open player is what issue 43 was.
+    """
+    if montage is None:
+        return 0
+    removed = 0
+    for path in (Path(montage), index_path_for(Path(montage))):
+        if path.exists():
+            path.unlink(missing_ok=True)
+            removed += 1
+    return removed
 
 
 def _forget_unused_parts(manifest: Manifest, parts: list[Part]) -> None:

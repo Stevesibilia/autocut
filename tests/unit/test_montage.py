@@ -20,6 +20,7 @@ from autocut.core.montage import (
     clear_preview,
     clip_at,
     concat_command,
+    discard,
     is_current,
     montage_fingerprint,
     part_command,
@@ -664,6 +665,53 @@ def test_the_parts_are_named_by_what_they_are(tmp_path: Path, synthetic_dir: Pat
     assert all(name.endswith(".mp4") for name in names)
     assert not any(name.startswith(("001", "002", "003")) for name in names)
     assert len(set(names)) == 3
+
+
+@pytest.mark.ffmpeg
+def test_each_montage_gets_its_own_file(tmp_path: Path, synthetic_dir: Path) -> None:
+    """Issue 43: rebuilding over the open file gave NAL unit errors and a black picture.
+
+    The render never deletes the file it replaces either. It hands it back, because it
+    is the caller that knows when its player has let go.
+    """
+    config = settings(tmp_path)
+    manifest = project(tmp_path, CLIPS, synthetic_dir)
+    first = build_montage(manifest, config)
+    assert first.path is not None
+    assert first.previous is None
+    assert first.fingerprint in first.path.name
+
+    manifest.segments["f1:0"].outcome = "candidate"
+    second = build_montage(manifest, config)
+
+    assert second.path is not None
+    assert second.path != first.path
+    assert second.previous == first.path
+    # Still there: the render leaves it for whoever might be reading it.
+    assert first.path.exists()
+    assert first.index_path is not None and first.index_path.exists()
+
+    assert discard(second.previous) == 2
+    assert not first.path.exists()
+    assert not first.index_path.exists()
+    assert second.path.exists()
+
+
+def test_discarding_nothing_is_not_an_error(tmp_path: Path) -> None:
+    assert discard(None) == 0
+    assert discard(tmp_path / "never-existed.mp4") == 0
+
+
+@pytest.mark.ffmpeg
+def test_the_index_sits_beside_its_own_montage(tmp_path: Path, synthetic_dir: Path) -> None:
+    config = settings(tmp_path)
+    manifest = project(tmp_path, CLIPS[:2], synthetic_dir)
+
+    result = build_montage(manifest, config)
+
+    assert result.path is not None and result.index_path is not None
+    assert result.index_path == result.path.with_suffix(".json")
+    assert result.index_path.stem == result.path.stem
 
 
 def test_a_missing_file_probes_as_no_duration(tmp_path: Path) -> None:

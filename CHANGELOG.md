@@ -107,6 +107,11 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Fixed
 
+- A track loaded after an earlier sync counted as synced, because every clip still carried beats from that sync, so the montage went out with the new music over the old cuts and every number on screen agreed with it. The manifest now records the track and tempo the final bounds were computed from, and Play with track follows that.
+- Rebuilding the montage wrote over the file the player still had open, which produced `Invalid NAL unit size` errors and a black picture. Each montage is written to a file named after its fingerprint, the player is unloaded before a rebuild and pointed at the new file after it, and the old file is deleted only then.
+- Loading a track, and moving the BPM override, refresh Play with track: it stayed enabled from a previous sync.
+- The line under the Review header showed the montage's duration next to the header's edit total. The montage's length is in the player's transport row alone.
+
 - A failed stage left the Review, Soundtrack and Export screens disabled: it emits neither `stage_finished` nor `stage_cancelled`, and nothing else re-enabled them until the next stage ran.
 
 - The Review screen's Play showed nothing: the player had no video output, so Qt decoded every frame, discarded it and reported no error. The panel now holds a `QVideoWidget` the player draws into, with a muted `QAudioOutput` and a sound toggle, seeks to the in point only once the media reaches `LoadedMedia` because a position set before that is dropped, pauses at the out point, and falls back to the sprite strip only when the platform really has no video for the file. A test counts frames in a `QVideoSink` and asserts the pause, and it fails against the old code.

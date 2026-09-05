@@ -409,6 +409,28 @@ def reset_final_bounds(manifest: Manifest) -> None:
         segment.grid_unreachable = False
 
 
+def record_sync(manifest: Manifest, bpm: float, audio: Path) -> None:
+    """Say what the final bounds were computed from.
+
+    A measurement is not a sync. Loading a track writes what it measures, and without
+    this the clips still cut to whatever the last sync used while everything on screen
+    says the new tempo: the GUI rendered a montage of yesterday's bounds against
+    today's track, and every number in sight agreed with it.
+    """
+    manifest.soundtrack.synced_bpm = float(bpm)
+    manifest.soundtrack.synced_audio_path = Path(audio)
+
+
+def synced_against(manifest: Manifest, bpm: float, audio: Path | None) -> bool:
+    """Whether the bounds on the clips were computed from this track at this tempo."""
+    state = manifest.soundtrack
+    if audio is None or state.synced_audio_path is None or state.synced_bpm is None:
+        return False
+    if Path(state.synced_audio_path) != Path(audio):
+        return False
+    return abs(state.synced_bpm - bpm) < 0.05
+
+
 def write_beatmap(manifest: Manifest, track: Track, output_dir: Path) -> Path:
     """``beatmap.txt``: the beat times, then where each clip starts in the edit.
 

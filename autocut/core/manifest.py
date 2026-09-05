@@ -536,6 +536,17 @@ class Soundtrack(BaseModel):
     )
     comparison_note: str | None = None
     beatmap_path: Path | None = None
+    synced_bpm: float | None = Field(
+        default=None,
+        description="The tempo the final bounds were computed at. A measurement is not "
+        "a sync: loading a track records what it measures, and until this matches the "
+        "clips are still cut to whatever the last sync used.",
+    )
+    synced_audio_path: Path | None = Field(
+        default=None,
+        description="The track the final bounds were computed against, so a newly "
+        "loaded track cannot pass for one the edit has been synced to.",
+    )
 
 
 class PreviewInfo(BaseModel):

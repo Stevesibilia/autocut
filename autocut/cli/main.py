@@ -35,6 +35,7 @@ from autocut.core.beatsync import (
     decode_audio,
     measure_track,
     quantize_durations,
+    record_sync,
     reset_final_bounds,
     write_beatmap,
 )
@@ -760,6 +761,7 @@ def sync(
     manifest.soundtrack.comparison_note = comparison.note
     beatmap = write_beatmap(manifest, track, project)
     manifest.soundtrack.beatmap_path = beatmap
+    record_sync(manifest, effective, audio)
     manifest.updated_at = datetime.now(UTC)
     manifest.save(project / "manifest.json")
 

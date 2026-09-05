@@ -428,6 +428,14 @@ class ExportRun(BaseModel):
     slow_motion: int = 0
     fps_converted: int = 0
     stale_moved: int = 0
+    frame_width: int | None = Field(
+        default=None,
+        description="The common frame the last uniform export used. Recorded so a "
+        "later export of the same project reuses it: the frame may shrink when a "
+        "smaller clip joins the edit, and never grows, or dropping the smallest clip "
+        "would re-encode every other one at a new size.",
+    )
+    frame_height: int | None = None
     warnings: list[str] = Field(default_factory=list)
 
 

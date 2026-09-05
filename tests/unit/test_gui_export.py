@@ -565,3 +565,17 @@ def test_without_the_toggle_nothing_is_rendered(real_clips: ExportScreen, qtbot:
     assert outcome.render is None
     assert not (Path(manifest.output_dir) / "montage.mp4").exists()
     assert not screen.render_button.isEnabled()
+
+
+def test_the_frame_line_appears_with_the_render_toggle(screen: ExportScreen) -> None:
+    """The quality ceiling is a trade, so the screen names it before the export runs."""
+    assert screen.frame_label.text() == ""
+
+    screen.render_box.setChecked(True)
+
+    assert "Clips exported at one size" in screen.frame_label.text()
+    assert "the smallest clip in the edit" in screen.frame_label.text()
+
+    screen.render_box.setChecked(False)
+
+    assert screen.frame_label.text() == ""

@@ -824,6 +824,13 @@ def export(
     rejects: Annotated[
         bool, typer.Option("--rejects", help="Also export rejected segments into _rejects/.")
     ] = False,
+    uniform_frame: Annotated[
+        bool,
+        typer.Option(
+            "--uniform-frame",
+            help="Put every clip on one frame, the smallest of their sizes. Needed to render.",
+        ),
+    ] = False,
     config: ConfigOpt = None,
     no_cloud: NoCloudOpt = False,
 ) -> None:
@@ -833,7 +840,15 @@ def export(
     # The manifest holds the output folder it was analyzed into; this run may be
     # pointed at a moved copy of that folder, and the clips belong beside it.
     manifest.output_dir = project
-    overrides = ExportOverrides(no_audio=no_audio, fps=fps, fast=fast, rejects=rejects)
+    overrides = ExportOverrides(
+        no_audio=no_audio,
+        fps=fps,
+        fast=fast,
+        rejects=rejects,
+        # None rather than False, so the flag turns the frame on and its absence leaves
+        # the decision to autocut.toml.
+        uniform_frame=True if uniform_frame else None,
+    )
 
     selected = sum(1 for s in manifest.segments.values() if s.outcome == "selected")
     if selected == 0:
@@ -869,6 +884,8 @@ def export(
         console.print(f"  {result.slow_motion} in slow motion")
     if result.fps_converted:
         console.print(f"  {result.fps_converted} resampled from another frame rate")
+    if result.frame[0] and result.frame[1]:
+        console.print(f"  every clip on one {result.frame[0]}x{result.frame[1]} frame")
     if result.stale_moved:
         console.print(f"  {result.stale_moved} stale files moved to _selects/_stale/")
     for warning in result.warnings:
@@ -951,6 +968,8 @@ def _print_render(result: RenderResult) -> None:
     if result.reused:
         console.print(f"Nothing changed since the last render: {result.path}")
         return
+    if result.frame[0] and result.frame[1]:
+        console.print(f"Clips exported at one size, {result.frame[0]}x{result.frame[1]}")
     console.print(
         f"Rendered [bold]{result.clips}[/bold] clips, "
         f"[bold]{result.duration_s:.1f} s[/bold], {result.size_bytes / 1e6:.0f} MB "

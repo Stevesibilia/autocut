@@ -193,3 +193,28 @@ def test_export_alone_renders_nothing(tmp_path: Path, synthetic_dir: Path) -> No
 
     assert result.exit_code == 0, result.stdout
     assert not (project / "montage.mp4").exists()
+
+
+def test_the_export_flag_puts_every_clip_on_one_frame(tmp_path: Path, synthetic_dir: Path) -> None:
+    project = project_in(tmp_path, synthetic_dir)
+
+    result = runner.invoke(app, ["export", str(project), "--uniform-frame", *config_of(tmp_path)])
+
+    assert result.exit_code == 0, result.stdout
+    assert "every clip on one 640x360 frame" in result.stdout
+    manifest = Manifest.load(project / "manifest.json")
+    assert (manifest.export.frame_width, manifest.export.frame_height) == (640, 360)
+
+
+def test_a_fast_mode_project_cannot_render(tmp_path: Path, synthetic_dir: Path) -> None:
+    project = project_in(tmp_path, synthetic_dir)
+    (tmp_path / "autocut.toml").write_text(
+        f'[cache]\ndir = "{(tmp_path / "cache").as_posix()}"\n\n[export]\nmode = "fast"\n',
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["render", str(project), *config_of(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "precise" in result.stdout
+    assert not (project / "_selects").exists()

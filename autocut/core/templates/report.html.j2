@@ -597,6 +597,9 @@
         {% if summary.exported_count %}
         {{ summary.export_mode or "precise" }} cut at
         {{ "%g"|format(summary.export_fps) if summary.export_fps else "?" }} fps.
+        {% if summary.export_frame %}
+        Every clip on one {{ summary.export_frame }} frame.
+        {% endif %}
         {% if summary.fps_converted_count %}
         {{ summary.fps_converted_count }} resampled from another frame rate.
         {% endif %}

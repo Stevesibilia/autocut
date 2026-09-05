@@ -17,6 +17,7 @@ from autocut.core.ffmpeg_cmd import (
     ExportOverrides,
     ExportPlan,
     build_export_command,
+    common_frame,
     dominant_fps,
     filter_chain,
     fit_inside,
@@ -24,6 +25,7 @@ from autocut.core.ffmpeg_cmd import (
     plan_export,
     quality_flags,
     reaches,
+    resolve_frame,
     resolve_target_fps,
 )
 from autocut.core.manifest import Manifest, Segment, SourceFile
@@ -591,3 +593,219 @@ def test_the_output_directory_is_not_created_by_the_builder(tmp_path: Path) -> N
     plan = planned(tmp_path, source())
     build_export_command(plan)
     assert not (tmp_path / "001_20250714_drone_clip_3.0s.mp4").exists()
+
+
+# --- the common frame ---------------------------------------------------------
+
+
+def mixed(tmp_path: Path, *sources: SourceFile) -> Manifest:
+    """A project whose selected clips are the sources given, in order."""
+    manifest = project(tmp_path)
+    for index, src in enumerate(sources):
+        manifest.files[src.id] = src
+        manifest.segments[f"{src.id}:0"] = segment(f"{src.id}:0", src.id, order=index + 1)
+    return manifest
+
+
+def test_the_frame_is_the_smallest_fitted_size(tmp_path: Path) -> None:
+    """The Sardinia case: 4K drone clips beside 1080p action cam ones."""
+    manifest = mixed(
+        tmp_path,
+        source("a", width=3840, height=2160),
+        source("b", "actioncam", width=1920, height=1080),
+    )
+
+    assert common_frame(manifest, AutocutConfig()) == (1920, 1080)
+
+
+def test_one_small_clip_pulls_the_frame_down(tmp_path: Path) -> None:
+    """Accepted and named in the summary: the smallest clip is the quality ceiling."""
+    manifest = mixed(
+        tmp_path,
+        source("a", width=3840, height=2160),
+        source("b", "phone", width=1280, height=720),
+    )
+
+    assert common_frame(manifest, AutocutConfig()) == (1280, 720)
+
+
+def test_the_maximum_still_caps_the_frame(tmp_path: Path) -> None:
+    config = AutocutConfig()
+    config.export.max_width, config.export.max_height = 1920, 1080
+    manifest = mixed(tmp_path, source("a", width=3840, height=2160))
+
+    assert common_frame(manifest, config) == (1920, 1080)
+
+
+def test_an_excluded_vertical_clip_does_not_decide_the_frame(tmp_path: Path) -> None:
+    """Under exclude it never reaches the export, so its portrait size is irrelevant."""
+    manifest = mixed(
+        tmp_path,
+        source("a", width=3840, height=2160),
+        source("b", "phone", width=640, height=360, rotation=-90),
+    )
+    config = AutocutConfig()
+
+    assert config.export.vertical_strategy == "exclude"
+    assert common_frame(manifest, config) == (3840, 2160)
+
+
+def test_a_recorded_frame_never_grows(tmp_path: Path) -> None:
+    """Rejecting the smallest clip must not re-encode every other one at a new size."""
+    manifest = mixed(tmp_path, source("a", width=3840, height=2160))
+    manifest.export.frame_width, manifest.export.frame_height = 1920, 1080
+
+    assert common_frame(manifest, AutocutConfig()) == (1920, 1080)
+
+
+def test_a_smaller_clip_still_shrinks_a_recorded_frame(tmp_path: Path) -> None:
+    manifest = mixed(tmp_path, source("a", "phone", width=1280, height=720))
+    manifest.export.frame_width, manifest.export.frame_height = 1920, 1080
+
+    assert common_frame(manifest, AutocutConfig()) == (1280, 720)
+
+
+def test_nothing_selected_has_no_frame(tmp_path: Path) -> None:
+    assert common_frame(project(tmp_path), AutocutConfig()) == (0, 0)
+
+
+def test_the_frame_is_off_unless_asked_for(tmp_path: Path) -> None:
+    manifest = mixed(tmp_path, source("a", width=1920, height=1080))
+    config = AutocutConfig()
+
+    assert resolve_frame(manifest, config) == (0, 0)
+    assert resolve_frame(manifest, config, ExportOverrides(uniform_frame=True)) == (1920, 1080)
+    config.export.uniform_frame = True
+    assert resolve_frame(manifest, config) == (1920, 1080)
+    assert resolve_frame(manifest, config, ExportOverrides(uniform_frame=False)) == (0, 0)
+
+
+# --- scale and pad onto the frame ---------------------------------------------
+
+
+def uniform(tmp_path: Path, src: SourceFile, others: tuple[SourceFile, ...] = ()) -> ExportPlan:
+    """The plan for ``src`` in a project that also holds ``others``, frame on."""
+    manifest = project(tmp_path)
+    for one in (src, *others):
+        manifest.files[one.id] = one
+        manifest.segments[f"{one.id}:0"] = segment(f"{one.id}:0", one.id)
+    config = AutocutConfig()
+    config.export.uniform_frame = True
+    return plan_export(manifest.segments[f"{src.id}:0"], src, manifest, config)
+
+
+def test_a_4k_clip_is_scaled_to_the_frame_and_not_padded(tmp_path: Path) -> None:
+    small = source("b", "actioncam", width=1920, height=1080)
+    plan = uniform(tmp_path, source("a", width=3840, height=2160), (small,))
+
+    chain = filter_chain(plan)
+
+    assert (plan.scale_w, plan.scale_h) == (1920, 1080)
+    assert "scale=1920:1080" in chain
+    assert "pad=" not in chain
+
+
+def test_a_clip_that_already_is_the_frame_gets_neither_filter(tmp_path: Path) -> None:
+    big = source("b", width=3840, height=2160)
+    plan = uniform(tmp_path, source("a", "actioncam", width=1920, height=1080), (big,))
+
+    chain = filter_chain(plan)
+
+    assert plan.scale_w is None
+    assert "scale=" not in chain
+    assert "pad=" not in chain
+
+
+def test_a_narrower_clip_is_padded_onto_the_frame(tmp_path: Path) -> None:
+    """A 4:3 clip in a 16:9 edit keeps its picture and gets bars, never a stretch."""
+    wide = source("b", "actioncam", width=1920, height=1080)
+    plan = uniform(tmp_path, source("a", "reflex", width=1440, height=1080), (wide,))
+
+    chain = filter_chain(plan)
+
+    assert plan.scale_w is None
+    assert (plan.frame_w, plan.frame_h) == (1920, 1080)
+    assert "pad=1920:1080:(ow-iw)/2:(oh-ih)/2" in chain
+
+
+def test_a_vertical_clip_blur_padded_onto_the_frame_is_the_frame(tmp_path: Path) -> None:
+    manifest = project(tmp_path)
+    tall = source("a", "phone", width=1080, height=1920)
+    wide = source("b", "actioncam", width=1920, height=1080)
+    for one in (tall, wide):
+        manifest.files[one.id] = one
+        manifest.segments[f"{one.id}:0"] = segment(f"{one.id}:0", one.id)
+    config = AutocutConfig()
+    config.export.uniform_frame = True
+    config.export.vertical_strategy = "blur_pad"
+
+    plan = plan_export(manifest.segments["a:0"], tall, manifest, config)
+
+    assert (plan.pad_w, plan.pad_h) == (1920, 1080)
+    # The blur pad already fills the frame, so no second pad is asked for.
+    assert plan.frame_w is None
+    assert "overlay=(W-w)/2:(H-h)/2" in filter_chain(plan)
+
+
+def test_a_vertical_clip_cropped_onto_the_frame_keeps_its_width(tmp_path: Path) -> None:
+    """Fitting the portrait into the frame first would leave a strip to crop from."""
+    manifest = project(tmp_path)
+    tall = source("a", "phone", width=1080, height=1920)
+    wide = source("b", "actioncam", width=1920, height=1080)
+    for one in (tall, wide):
+        manifest.files[one.id] = one
+        manifest.segments[f"{one.id}:0"] = segment(f"{one.id}:0", one.id)
+    config = AutocutConfig()
+    config.export.uniform_frame = True
+    config.export.vertical_strategy = "center_crop"
+
+    plan = plan_export(manifest.segments["a:0"], tall, manifest, config)
+    chain = filter_chain(plan)
+
+    assert plan.scale_w is None
+    assert (plan.crop_w, plan.crop_h) == (1080, 608)
+    assert "crop=1080:608" in chain
+    assert "pad=1920:1080:(ow-iw)/2:(oh-ih)/2" in chain
+
+
+def test_a_tall_source_wider_than_the_frame_fills_it(tmp_path: Path) -> None:
+    manifest = project(tmp_path)
+    tall = source("a", "phone", width=2160, height=3840)
+    wide = source("b", "actioncam", width=1920, height=1080)
+    for one in (tall, wide):
+        manifest.files[one.id] = one
+        manifest.segments[f"{one.id}:0"] = segment(f"{one.id}:0", one.id)
+    config = AutocutConfig()
+    config.export.uniform_frame = True
+    config.export.vertical_strategy = "center_crop"
+
+    plan = plan_export(manifest.segments["a:0"], tall, manifest, config)
+
+    assert (plan.scale_w, plan.scale_h) == (1920, 3412)
+    assert (plan.crop_w, plan.crop_h) == (1920, 1080)
+    assert plan.frame_w is None
+
+
+def test_with_the_frame_off_the_geometry_is_what_it_always_was(tmp_path: Path) -> None:
+    small = source("b", "actioncam", width=1920, height=1080)
+    manifest = project(tmp_path)
+    big = source("a", width=3840, height=2160)
+    for one in (big, small):
+        manifest.files[one.id] = one
+        manifest.segments[f"{one.id}:0"] = segment(f"{one.id}:0", one.id)
+
+    plan = plan_export(manifest.segments["a:0"], big, manifest, AutocutConfig())
+
+    assert plan.scale_w is None
+    assert plan.frame_w is None
+
+
+def test_a_narrow_clip_does_not_narrow_the_frame(tmp_path: Path) -> None:
+    """One 4:3 clip must not put bars down the side of every 16:9 clip in the edit."""
+    manifest = mixed(
+        tmp_path,
+        source("a", "reflex", width=1440, height=1080),
+        source("b", "actioncam", width=1920, height=1080),
+    )
+
+    assert common_frame(manifest, AutocutConfig()) == (1920, 1080)

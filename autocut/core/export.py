@@ -33,6 +33,7 @@ from autocut.core.ffmpeg_cmd import (
     ExportPlan,
     build_export_command,
     plan_export,
+    resolve_frame,
     resolve_target_fps,
 )
 from autocut.core.ingest import physical_cores
@@ -71,6 +72,9 @@ class ExportResult:
     slow_motion: int = 0
     fps_converted: int = 0
     stale_moved: int = 0
+    frame: tuple[int, int] = (0, 0)
+    """The common frame this run put every clip on, or ``(0, 0)`` when it did not."""
+
     selects_dir: Path | None = None
     errors: list[tuple[str, str]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -107,6 +111,10 @@ def fingerprint(plan: ExportPlan, source_id: str) -> str:
         "lut": str(plan.lut) if plan.lut else None,
         "lens": plan.lens_correction,
     }
+    if plan.frame_w and plan.frame_h:
+        # Added only when the clip is padded onto a frame, so a project exported
+        # before the common frame existed keeps its digests and its files.
+        payload["frame"] = [plan.frame_w, plan.frame_h]
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8"))
     return digest.hexdigest()[:16]
 
@@ -265,7 +273,8 @@ def export_clips(
     # and so a later pass reuses it instead of re-deriving it from a changed selection.
     manifest.export.target_fps = target_fps
 
-    result = ExportResult(target_fps=target_fps, selects_dir=out_dir / SELECTS_DIR)
+    frame = resolve_frame(manifest, config, overrides)
+    result = ExportResult(target_fps=target_fps, selects_dir=out_dir / SELECTS_DIR, frame=frame)
     jobs, warnings = _build_jobs(manifest, config, overrides, out_dir)
     result.warnings.extend(warnings)
 
@@ -423,5 +432,9 @@ def _record_run(
         slow_motion=result.slow_motion,
         fps_converted=result.fps_converted,
         stale_moved=result.stale_moved,
+        # Kept from the previous run when this one did not use a frame, so turning the
+        # frame off for one export does not let it grow on the next.
+        frame_width=result.frame[0] or manifest.export.frame_width,
+        frame_height=result.frame[1] or manifest.export.frame_height,
         warnings=result.warnings,
     )

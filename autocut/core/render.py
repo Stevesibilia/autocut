@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -81,6 +81,9 @@ class RenderResult:
     has_audio: bool = False
     track: Path | None = None
     fade_out_s: float = 0.0
+    frame: tuple[int, int] = (0, 0)
+    """The common frame the clips were exported at, which is the render's own size."""
+
     reused: bool = False
     export: ExportResult | None = None
     skipped_reason: str | None = None
@@ -105,8 +108,10 @@ def render_path(manifest: Manifest, config: AutocutConfig, out: Path | None = No
     Inside would put a file CapCut imports as a clip into the folder the user drags in.
     """
     if out is not None:
-        return Path(out)
-    return Path(manifest.output_dir) / config.render.filename
+        # Resolved: a relative name that begins with a dash would reach ffmpeg as an
+        # option rather than as the file to write.
+        return Path(out).expanduser().resolve()
+    return (Path(manifest.output_dir) / config.render.filename).expanduser().resolve()
 
 
 def resolve_track(manifest: Manifest, track: Path | None = None) -> Path | None:
@@ -238,12 +243,11 @@ def check_parts_uniform(paths: list[Path]) -> PartsCheck:
         if clip.video != first.video:
             check.error = (
                 f"{clip.path.name} is {_describe(clip.video)} and {first.path.name} is "
-                f"{_describe(first.video)}. The render joins clips without re-encoding "
-                "them, so every clip has to match. The export downscales to "
-                "export.max_width and export.max_height and never upscales, so mixed "
-                "sources keep their own sizes: set that maximum to the smallest size in "
-                "the edit and export again. A fast mode export copies its sources "
-                "wholesale and can differ in every other parameter too."
+                f"{_describe(first.video)}, so they cannot be joined without "
+                "re-encoding. The export puts every clip on one common frame for a "
+                "render, so this should not happen: the folder probably holds clips "
+                "from an older export. Delete _selects/ and render again, and if it "
+                "happens on a fresh export it is a bug worth reporting."
             )
             return check
         if (clip.audio is None) != (first.audio is None):
@@ -307,6 +311,21 @@ def render_edit(
         result.skipped_reason = "nothing is selected"
         return result
 
+    # The clips are the render's input, and they have to be joinable. A stream copied
+    # clip carries whatever its source was, which no planner can make uniform, so this
+    # is refused before anything is encoded rather than after twenty-nine clips.
+    overrides = replace(overrides or ExportOverrides(), uniform_frame=True)
+    if overrides.fast or config.export.mode == "fast":
+        result.errors.append(
+            (
+                "render",
+                "a render needs precise mode: fast mode copies each source as it is, so "
+                'the clips cannot be given one frame. Set export.mode = "precise" and '
+                "export again.",
+            )
+        )
+        return result
+
     export_current = export_is_current(manifest, config, overrides)
     if not force and export_current and is_current(manifest, config, chosen, out):
         state = manifest.render
@@ -352,6 +371,7 @@ def render_edit(
     result.clips = len(paths)
     result.has_audio = chosen is not None or check.has_audio
     result.fingerprint = render_fingerprint(manifest, config, chosen, fade)
+    result.frame = (manifest.export.frame_width or 0, manifest.export.frame_height or 0)
     record(manifest, result)
     progress(ProgressEvent(stage="render", current=3, total=3, path=output))
     return result

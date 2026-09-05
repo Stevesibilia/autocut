@@ -24,6 +24,10 @@ from PySide6.QtWidgets import (
 
 from autocut.gui import theme
 
+#: The upright rule between the project name and the counters, tall enough to read as
+#: a divider between two blocks of text rather than as a stray mark.
+DIVIDER_HEIGHT = 28
+
 
 def duration_label(seconds: float) -> str:
     """`m:ss`, the way an edit length is written everywhere in the window."""
@@ -85,11 +89,12 @@ class TopBar(QWidget):
         identity.addWidget(self.subtitle)
         row.addLayout(identity)
 
+        # "vdivider", not "separator": the separator rule clamps the height to a pixel,
+        # which is right for a horizontal rule and made this one 1x1 and invisible.
         self._divider = QFrame()
+        self._divider.setProperty("role", "vdivider")
         self._divider.setFixedWidth(1)
-        self._divider.setFixedHeight(28)
-        self._divider.setProperty("role", "separator")
-        self._divider.setStyleSheet(f"background: {theme.current().palette.border};")
+        self._divider.setFixedHeight(DIVIDER_HEIGHT)
         row.addWidget(self._divider)
 
         self._counters = QWidget()

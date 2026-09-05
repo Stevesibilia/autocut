@@ -78,6 +78,15 @@ QFrame[role="separator"] {
     min-height: 1px;
 }
 
+/* The upright one. It needs its own role because the clamp above is on the height,
+   and a vertical divider that inherited it collapsed to a single pixel and vanished. */
+QFrame[role="vdivider"] {
+    background: $border;
+    border: none;
+    max-width: 1px;
+    min-width: 1px;
+}
+
 /* --- text ---------------------------------------------------------------- */
 
 QLabel {

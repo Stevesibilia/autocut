@@ -343,3 +343,56 @@ def test_the_summary_says_so_when_there_is_no_project() -> None:
     from autocut.gui.widgets.groups import groups_summary
 
     assert groups_summary(None) == "No project open."
+
+
+def test_the_divider_survives_the_stylesheet(qapp: Any, qtbot: Any) -> None:
+    """The upright rule between the project line and the counters is really drawn.
+
+    It once carried role="separator", whose rule clamps the height to a pixel because
+    that is what a horizontal rule needs. Under the application sheet the divider came
+    out 1x1 and vanished, and no test noticed: the widget was there, sized and visible,
+    and only the pixels were missing. So this polishes it under the real sheet and
+    counts them.
+    """
+    from autocut.gui import theme
+    from autocut.gui.app import apply_theme
+    from autocut.gui.widgets.topbar import DIVIDER_HEIGHT
+
+    previous = qapp.styleSheet()
+    try:
+        apply_theme(qapp, "dark")
+        bar = TopBar()
+        qtbot.addWidget(bar)
+        bar.set_project("Sardegna 2025", 72, 60)
+        bar.set_counters([Counter("29", "clips", accent=True)])
+        bar.resize(1200, theme.METRICS.top_bar_height)
+        bar.show()
+        qapp.processEvents()
+
+        assert bar._divider.width() == 1
+        assert bar._divider.height() == DIVIDER_HEIGHT
+
+        image = bar.grab().toImage()
+        border = theme.current().palette.border
+        painted = [
+            (x, y)
+            for x in range(image.width())
+            for y in range(image.height())
+            if image.pixelColor(x, y).name() == border
+        ]
+        assert len(painted) == DIVIDER_HEIGHT, "the divider is not drawn"
+        assert len({x for x, _ in painted}) == 1, "the divider is not one column wide"
+    finally:
+        qapp.setStyleSheet(previous)
+
+
+def test_a_bar_with_no_counters_hides_the_divider(qtbot: Any) -> None:
+    """Nothing to divide the project name from, so the rule would be a stray mark."""
+    bar = TopBar()
+    qtbot.addWidget(bar)
+
+    bar.set_counters([Counter("29", "clips")])
+    assert not bar._divider.isHidden()
+    bar.set_counters([])
+
+    assert bar._divider.isHidden()

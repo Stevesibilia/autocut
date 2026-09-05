@@ -14,14 +14,14 @@
 **Non-Goals:**
 
 - Re-encoding inside the render. The export is the one encoder.
-- Choosing the frame by majority or by area. The rule is the smallest fitted height.
+- Choosing the frame by majority or by area. The rule is the smallest fitted height with the widest clip at that height.
 - Mixed pixel formats or codecs. `passthrough` and fast mode stay outside the render.
 
 ## Decisions
 
 **The export, not the render, makes clips uniform.** The render already runs the export when it is stale and already refuses non-uniform clips. Adding a second encoder to the render would duplicate `ffmpeg_cmd` and produce a second set of files. Instead `render_edit` passes `ExportOverrides(uniform_frame=True)` to `export_is_current` and `export_clips`; the fingerprint carries the scale and pad, so exactly the clips whose size changes re-encode (9 of 29 on the Sardinia edit, 33 s measured by the implementer), and the render's uniformity check becomes a safety net.
 
-**Frame selection.** `common_frame(manifest, config) -> (w, h)` beside `dominant_fps`: for every selected clip that reaches export (vertical clips under `exclude` are skipped), take `fit_inside(display_w, display_h, max_w, max_h)`; the frame is the smallest by height, then width, made even. If `manifest.export.frame_width/height` is recorded, the frame is the smaller of the two, so a frame never grows for a project. Recorded after each uniform export. Alternative rejected: majority size, which would upscale the minority.
+**Frame selection.** `common_frame(manifest, config) -> (w, h)` beside `dominant_fps`: for every selected clip that reaches export (vertical clips under `exclude` are skipped), take `fit_inside(display_w, display_h, max_w, max_h)`; the frame's height is the smallest fitted height and its width the widest clip scaled to that height, made even and capped at the maximum. If `manifest.export.frame_width/height` is recorded, the frame is the smaller of the two, so a frame never grows for a project. Recorded after each uniform export. Alternative rejected: majority size, which would upscale the minority.
 
 **Scale and pad.** With the frame on, `plan_export` scales the clip to fit inside the frame (no scale filter when it already fits) and pads to the frame with `pad=W:H:(ow-iw)/2:(oh-ih)/2` when the fitted size differs from the frame. `ExportPlan` gains `frame_w`, `frame_h`; `filter_chain` emits the pad after the vertical filters. Vertical geometry uses the frame as its canvas instead of the configured maximum when the frame is on, so `blur_pad` and `center_crop` produce exactly the frame; the pad is then a no-op.
 

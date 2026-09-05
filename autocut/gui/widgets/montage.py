@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPaintEvent, QPen
+from PySide6.QtGui import QMouseEvent, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -27,14 +27,10 @@ from PySide6.QtWidgets import (
 
 from autocut.core.manifest import Manifest
 from autocut.core.montage import Part, clip_at, read_index
+from autocut.gui import theme
 
 if TYPE_CHECKING:  # pragma: no cover - for the annotations only
     from PySide6.QtMultimedia import QMediaPlayer
-
-BOUNDARY = QColor(230, 170, 60)
-PLAYED = QColor(70, 140, 230)
-TRACK_BED = QColor(45, 48, 54)
-CURRENT = QColor(240, 240, 240)
 
 TIMELINE_HEIGHT = 34
 
@@ -103,18 +99,19 @@ class MontageTimeline(QWidget):
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - Qt override
         del event
+        colors = theme.current().palette
         painter = QPainter(self)
-        painter.fillRect(self.rect(), TRACK_BED)
+        painter.fillRect(self.rect(), theme.qcolor(colors.track_bed))
         width, height = self.width(), self.height()
         if self._duration <= 0 or not self._parts:
-            painter.setPen(QPen(QColor(150, 150, 150)))
+            painter.setPen(QPen(theme.qcolor(colors.text_muted)))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "no montage yet")
             return
 
         played = min(max(self._position / self._duration, 0.0), 1.0) * width
-        painter.fillRect(0, 0, int(played), height, PLAYED)
+        painter.fillRect(0, 0, int(played), height, theme.qcolor(colors.accent_muted))
 
-        pen = QPen(BOUNDARY)
+        pen = QPen(theme.qcolor(colors.amber))
         pen.setWidth(1)
         painter.setPen(pen)
         for part in self._parts[1:]:
@@ -123,7 +120,7 @@ class MontageTimeline(QWidget):
 
         current = clip_at(self._parts, self._position)
         if current is not None:
-            pen = QPen(CURRENT)
+            pen = QPen(theme.qcolor(colors.accent))
             pen.setWidth(2)
             painter.setPen(pen)
             left = current.start_s / self._duration * width
@@ -159,7 +156,10 @@ class MontagePlayer(QWidget):
         self.placeholder = QLabel("Press Play all to build and watch the edit.")
         self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.placeholder.setMinimumHeight(200)
-        self.placeholder.setStyleSheet("background: #222; color: #999;")
+        placeholder_colors = theme.current().palette
+        self.placeholder.setStyleSheet(
+            f"background: {placeholder_colors.surface}; color: {placeholder_colors.text_muted};"
+        )
         self.stack = QStackedWidget()
         self.stack.addWidget(self.placeholder)
         self.video: QWidget | None = None

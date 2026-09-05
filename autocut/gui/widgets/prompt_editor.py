@@ -9,7 +9,7 @@ the point of the screen, so it is one button per block.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QGuiApplication, QTextCharFormat, QTextCursor
+from PySide6.QtGui import QGuiApplication, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
@@ -26,12 +26,11 @@ from PySide6.QtWidgets import (
 from autocut.core.config import AutocutConfig
 from autocut.core.manifest import PromptSource, PromptVariant
 from autocut.core.soundtrack.validate import Violation, validate_prompt
+from autocut.gui import theme
 
 #: Long enough that typing is not revalidated per keystroke, short enough that the
 #: marks feel like they belong to the edit.
 VALIDATE_DEBOUNCE_MS = 150
-
-UNDERLINE = QColor(210, 80, 80)
 
 
 class PromptEditor(QWidget):
@@ -161,7 +160,7 @@ class PromptEditor(QWidget):
             if not block.isValid():
                 continue
             fmt = QTextCharFormat()
-            fmt.setUnderlineColor(UNDERLINE)
+            fmt.setUnderlineColor(theme.qcolor(theme.current().palette.red))
             fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
             fmt.setToolTip(f"{violation.rule}: {violation.detail}")
             cursor = QTextCursor(block)

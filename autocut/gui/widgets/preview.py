@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from autocut.core.manifest import Segment
+from autocut.gui import theme
 from autocut.gui.state import ProjectState
 from autocut.gui.widgets.scrubber import StripCache
 
@@ -78,7 +79,8 @@ class PreviewPanel(QWidget):
         self.frame = QLabel()
         self.frame.setMinimumHeight(180)
         self.frame.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.frame.setStyleSheet("background: #222; color: #999;")
+        colors = theme.current().palette
+        self.frame.setStyleSheet(f"background: {colors.surface}; color: {colors.text_muted};")
         self.frame.setText("no preview")
 
         # The strip and the video take the same place rather than sitting one above

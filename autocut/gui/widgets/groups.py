@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from autocut.core.manifest import Manifest, Segment
+from autocut.gui import theme
 from autocut.gui.state import ProjectState
 
 THUMB_HEIGHT = 96
@@ -114,6 +115,7 @@ class GroupCard(QFrame):
         layout.addLayout(row)
 
     def _thumb(self, segment: Segment, chosen: bool) -> QWidget:
+        colors = theme.current().palette
         holder = QWidget()
         column = QVBoxLayout(holder)
         column.setContentsMargins(2, 2, 2, 2)
@@ -123,15 +125,15 @@ class GroupCard(QFrame):
         pixmap = QPixmap(str(segment.thumbnail)) if segment.thumbnail else QPixmap()
         if pixmap.isNull():
             picture.setText("no thumbnail")
-            picture.setStyleSheet("background: #222; color: #999;")
+            picture.setStyleSheet(f"background: {colors.surface}; color: {colors.text_muted};")
         else:
             picture.setPixmap(
                 pixmap.scaledToHeight(THUMB_HEIGHT, Qt.TransformationMode.SmoothTransformation)
             )
         if chosen:
-            picture.setStyleSheet("border: 2px solid #5aa0f0;")
+            picture.setStyleSheet(f"border: 2px solid {colors.accent};")
         elif segment.user_rejected:
-            picture.setStyleSheet("border: 2px solid #dc5a5a;")
+            picture.setStyleSheet(f"border: 2px solid {colors.red};")
         picture.clicked.connect(self._clicked)
         column.addWidget(picture)
 

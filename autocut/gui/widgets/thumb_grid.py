@@ -21,7 +21,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from autocut.gui.models import AnyIndex, SegmentFilterProxy, SegmentListModel, SegmentRole
+from autocut.gui import theme
+from autocut.gui.models import (
+    AnyIndex,
+    SegmentFilterProxy,
+    SegmentListModel,
+    SegmentRole,
+)
 from autocut.gui.state import ProjectState
 from autocut.gui.widgets.scrubber import StripCache, scaled_frame
 
@@ -29,14 +35,6 @@ from autocut.gui.widgets.scrubber import StripCache, scaled_frame
 LABEL_HEIGHT = 42
 CARD_MARGIN = 6
 BADGE_HEIGHT = 18
-
-#: One colour per state a card can be in. Green for what the reviewer kept, red for
-#: what they threw out, blue for the machine's own picks, grey for what the rules
-#: rejected: the human decisions are the saturated ones on purpose.
-KEPT = QColor(60, 180, 100)
-USER_REJECTED = QColor(210, 80, 80)
-SELECTED = QColor(70, 140, 230)
-RULE_REJECTED = QColor(130, 130, 130)
 
 
 class ThumbnailCache:
@@ -84,6 +82,14 @@ class SegmentCardDelegate(QStyledItemDelegate):
     def paint(  # noqa: C901 - one branch per marker, flatter than any indirection
         self, painter: QPainter, option: QStyleOptionViewItem, index: AnyIndex
     ) -> None:
+        colors = theme.current().palette
+        # Amber for what the reviewer kept, red for what they threw out, the accent for
+        # the machine's own picks and the muted text colour for what the rules rejected:
+        # the human decisions are the warm ones on purpose.
+        kept = theme.qcolor(colors.amber)
+        user_rejected = theme.qcolor(colors.red)
+        selected_color = theme.qcolor(colors.accent)
+        rule_rejected = theme.qcolor(colors.text_muted)
         segment_id = str(index.data(SegmentRole.SEGMENT_ID) or "")
         rect = option.rect.adjusted(CARD_MARGIN, CARD_MARGIN, -CARD_MARGIN, -CARD_MARGIN)
         picture = QRect(rect.x(), rect.y(), rect.width(), rect.height() - LABEL_HEIGHT)
@@ -97,8 +103,8 @@ class SegmentCardDelegate(QStyledItemDelegate):
         if not pixmap.isNull():
             painter.drawPixmap(picture, pixmap)
         else:
-            painter.fillRect(picture, QColor(60, 60, 60))
-            painter.setPen(QPen(QColor(160, 160, 160)))
+            painter.fillRect(picture, theme.qcolor(colors.thumb_neutral))
+            painter.setPen(QPen(theme.qcolor(colors.text_muted)))
             painter.drawText(picture, Qt.AlignmentFlag.AlignCenter, "no thumbnail")
 
         outcome = str(index.data(SegmentRole.OUTCOME) or "")
@@ -110,16 +116,16 @@ class SegmentCardDelegate(QStyledItemDelegate):
         # reviewer scans the grid for is which clips are in the edit, and a number in a
         # row of numbers does not answer it.
         if decision == "keep":
-            self._frame(painter, picture, KEPT, 3)
-            self._badge(painter, picture, f"KEPT {order}" if order else "KEPT", KEPT)
+            self._frame(painter, picture, kept, 3)
+            self._badge(painter, picture, f"KEPT {order}" if order else "KEPT", kept, colors)
         elif decision == "reject":
-            self._frame(painter, picture, USER_REJECTED, 3)
-            self._badge(painter, picture, "OUT", USER_REJECTED)
+            self._frame(painter, picture, user_rejected, 3)
+            self._badge(painter, picture, "OUT", user_rejected, colors)
         elif outcome == "selected":
-            self._frame(painter, picture, SELECTED, 3)
-            self._badge(painter, picture, f"IN {order}" if order else "IN", SELECTED)
+            self._frame(painter, picture, selected_color, 3)
+            self._badge(painter, picture, f"IN {order}" if order else "IN", selected_color, colors)
         elif outcome == "rejected":
-            self._frame(painter, picture, RULE_REJECTED, 1)
+            self._frame(painter, picture, rule_rejected, 1)
 
         painter.setPen(
             QPen(
@@ -194,7 +200,9 @@ class SegmentCardDelegate(QStyledItemDelegate):
         painter.drawRect(rect.adjusted(1, 1, -1, -1))
 
     @staticmethod
-    def _badge(painter: QPainter, rect: QRect, text: str, color: QColor) -> None:
+    def _badge(
+        painter: QPainter, rect: QRect, text: str, color: QColor, colors: theme.Palette
+    ) -> None:
         """A filled corner label. On the picture, because that is where the eye is."""
         metrics = painter.fontMetrics()
         width = metrics.horizontalAdvance(text) + 12
@@ -203,7 +211,7 @@ class SegmentCardDelegate(QStyledItemDelegate):
         painter.setBrush(color)
         painter.drawRect(box)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(QColor(255, 255, 255)))
+        painter.setPen(QPen(theme.qcolor(colors.on_accent)))
         painter.drawText(box, int(Qt.AlignmentFlag.AlignCenter), text)
 
 

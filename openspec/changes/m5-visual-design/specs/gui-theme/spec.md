@@ -2,7 +2,7 @@
 
 ### Requirement: Design tokens
 
-The GUI SHALL define its colours, type scale, spacing and radii once, in a token module under `autocut/gui/theme`, with one dark and one light token set. Widgets and painters SHALL read colours from the active token set and SHALL NOT hardcode colour literals or pixel sizes outside that module. The type scale SHALL be 12, 14, 16 and 20 px on an 8 px spacing grid.
+The GUI SHALL define its colours, type scale, spacing and radii once, in a token module under `autocut/gui/theme`, with one dark and one light token set. Widgets and painters SHALL read colours from the active token set and SHALL NOT hardcode colour literals or pixel sizes outside that module. The type scale SHALL be 11 px (badges and uppercase eyebrow labels), 12 (body), 13 (card titles), 16 (headings), 18 (counters) and 20 (display), and every spacing, control height and panel width SHALL sit on an 8 px grid.
 
 #### Scenario: One source of colour
 

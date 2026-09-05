@@ -1028,3 +1028,22 @@ def test_a_render_that_was_deleted_is_not_offered(project: Manifest) -> None:
     html = render_report(manifest, Path(project.output_dir)).read_text(encoding="utf-8")
 
     assert "<h2>Rendered</h2>" not in html
+
+
+def test_the_header_names_the_common_frame(project: Manifest) -> None:
+    project.export.frame_width, project.export.frame_height = 1920, 1080
+    project.export.mode = "precise"
+    project.segments["a:1"].exported_path = Path(project.output_dir) / "_selects" / "001.mp4"
+
+    html = render_report(project, Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert "Every clip on one 1920x1080 frame." in html
+
+
+def test_an_export_without_a_frame_says_nothing_about_one(project: Manifest) -> None:
+    project.export.mode = "precise"
+    project.segments["a:1"].exported_path = Path(project.output_dir) / "_selects" / "001.mp4"
+
+    html = render_report(project, Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert "frame." not in html

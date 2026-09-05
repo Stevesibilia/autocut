@@ -745,6 +745,14 @@ class ExportConfig(BaseModel):
         drone=False, actioncam=False, phone=False, reflex=False, generic=False
     )
     keep_rejects: bool = False
+    uniform_frame: bool = Field(
+        default=False,
+        description="Scale and pad every selected clip onto one common frame, the "
+        "smallest of their fitted sizes, so nothing is upscaled and every output has "
+        "the same geometry. Off by default because a folder bound for CapCut does not "
+        "need it; a render turns it on for the export it runs, because clips of "
+        "different sizes cannot be joined without re-encoding.",
+    )
 
 
 class RenderConfig(BaseModel):

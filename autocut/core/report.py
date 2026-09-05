@@ -185,6 +185,7 @@ class Summary:
     export_mode: str | None
     export_fps: float | None
     export_failed: int
+    export_frame: str | None
     render_link: str | None
     render_name: str | None
     render_label: str | None
@@ -505,6 +506,11 @@ def build_summary(manifest: Manifest, cards: list[Card], out_dir: Path | None = 
         export_mode=manifest.export.mode,
         export_fps=manifest.export.target_fps,
         export_failed=manifest.export.failed,
+        export_frame=(
+            f"{manifest.export.frame_width}x{manifest.export.frame_height}"
+            if manifest.export.frame_width and manifest.export.frame_height
+            else None
+        ),
         render_link=relative_asset(render_file, out_dir),
         render_name=render_file.name if render_file is not None else None,
         render_label=duration_label(manifest.render.duration_s) if render_file else None,

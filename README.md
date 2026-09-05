@@ -52,7 +52,7 @@ autocut export     ./edit
 autocut render     ./edit --track track.mp3
 ```
 
-`autocut render` joins the exported clips in edit order without re-encoding them and mixes the track over the result, writing `montage.mp4` beside `_selects/`. It exports first when a clip has changed, and writes nothing when the edit has not. Set `render.enabled = true` to have every export finish with it. Transitions, titles and everything else still belong in CapCut.
+`autocut render` joins the exported clips in edit order without re-encoding them and mixes the track over the result, writing `montage.mp4` beside `_selects/`. The export it runs puts every clip on one common frame, the smallest size in the edit, so mixed 4K and 1080p footage joins without anything being upscaled; `autocut export --uniform-frame` does the same on its own. The render exports first when a clip has changed, writes nothing when the edit has not, and needs `export.mode = "precise"`. Set `render.enabled = true` to have every export finish with it. Transitions, titles and everything else still belong in CapCut.
 
 Configuration lives in `autocut.toml`. Start from `autocut.example.toml`.
 

@@ -260,6 +260,65 @@ def test_a_clip_that_moved_up_the_edit_is_encoded_again(
     assert second.exported_path.name.startswith("001_")
 
 
+def test_the_frame_re_encodes_only_the_clips_whose_size_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Turning the frame on is one re-encode of the big clips, not of the whole edit."""
+    stub_encoder(monkeypatch)
+    manifest = project(tmp_path)
+    add_file(manifest, "big", path=Path("/f/big.MP4"))
+    manifest.files["big"].width, manifest.files["big"].height = 3840, 2160
+    add_file(manifest, "small", source_class="phone", minutes=10)
+    manifest.files["small"].width, manifest.files["small"].height = 1920, 1080
+    add_segment(manifest, "big:0", "big", order=1)
+    add_segment(manifest, "small:0", "small", order=2)
+    config = one_worker(AutocutConfig())
+    export_clips(manifest, config)
+
+    config.export.uniform_frame = True
+    again = export_clips(manifest, config)
+
+    assert again.exported == 1
+    assert again.skipped == 1
+    assert again.frame == (1920, 1080)
+    assert (manifest.export.frame_width, manifest.export.frame_height) == (1920, 1080)
+
+
+def test_the_recorded_frame_survives_an_export_without_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Otherwise one plain export would let the frame grow on the next render."""
+    stub_encoder(monkeypatch)
+    manifest = project(tmp_path)
+    add_file(manifest, "a")
+    add_segment(manifest, "a:0", "a")
+    config = one_worker(AutocutConfig())
+    config.export.uniform_frame = True
+    export_clips(manifest, config)
+    recorded = manifest.export.frame_width, manifest.export.frame_height
+    assert recorded[0]
+
+    config.export.uniform_frame = False
+    export_clips(manifest, config)
+
+    assert (manifest.export.frame_width, manifest.export.frame_height) == recorded
+
+
+def test_the_frame_is_part_of_the_fingerprint_only_when_it_pads(tmp_path: Path) -> None:
+    """A project exported before the frame existed must keep its files."""
+    manifest = project(tmp_path)
+    source = add_file(manifest, "a")
+    segment = add_segment(manifest, "a:0", "a")
+    plain = fingerprint(plan_export(segment, source, manifest, AutocutConfig()), source.id)
+
+    config = AutocutConfig()
+    config.export.uniform_frame = True
+    with_frame = fingerprint(plan_export(segment, source, manifest, config), source.id)
+
+    # The only clip in the edit already is the frame, so nothing about it changes.
+    assert with_frame == plain
+
+
 def test_a_dropped_clip_leaves_its_output_in_stale(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

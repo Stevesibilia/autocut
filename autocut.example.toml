@@ -199,6 +199,10 @@ max_height = 2160
 pix_fmt = "yuv420p"
 vertical_strategy = "exclude"   # exclude | blur_pad | center_crop
 keep_rejects = false  # also export rejected segments into _rejects/
+# Put every clip on one frame, the smallest of their fitted sizes, so nothing is
+# upscaled and the outputs can be joined without re-encoding. A render turns this on
+# for the export it runs, whatever is set here.
+uniform_frame = false
 
 # A default export is silent and the soundtrack carries the sound. Set a class to false
 # to keep its ambience.

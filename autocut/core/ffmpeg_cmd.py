@@ -73,6 +73,15 @@ class ExportPlan:
     blur_radius: int = 0
     crop_w: int | None = None
     crop_h: int | None = None
+    frame_w: int | None = None
+    frame_h: int | None = None
+    """The common frame to pad onto, set only when this clip does not already fill it.
+
+    A clip whose fitted size is the frame needs no pad, and an export that emitted one
+    anyway would put a no-op filter in every command and a second geometry in every
+    fingerprint. The frame itself is recorded on the manifest, not here.
+    """
+
     lut: Path | None = None
     lens_correction: bool = False
     lens_k1: float = -0.2
@@ -133,6 +142,11 @@ def filter_chain(plan: ExportPlan) -> str:
         parts.append(f"scale={plan.scale_w}:{plan.scale_h}:force_original_aspect_ratio=decrease")
 
     parts.extend(_vertical_filters(plan))
+
+    if plan.frame_w and plan.frame_h:
+        # After the vertical filters, so a padded or cropped vertical clip is centred
+        # on the frame as it stands rather than as it was before the strategy ran.
+        parts.append(f"pad={plan.frame_w}:{plan.frame_h}:(ow-iw)/2:(oh-ih)/2")
 
     if plan.lut is not None:
         # A Windows drive letter or a comma in the path would end the filter argument.
@@ -235,6 +249,8 @@ class ExportOverrides:
     fps: float | None = None
     fast: bool = False
     rejects: bool = False
+    uniform_frame: bool | None = None
+    """Force the common frame on or off for this run. ``None`` follows configuration."""
 
 
 def even(value: int) -> int:
@@ -304,6 +320,75 @@ def dominant_fps(manifest: Manifest) -> float:
     return min(target for target, count in reach.items() if count == best)
 
 
+def common_frame(
+    manifest: Manifest, config: AutocutConfig, overrides: ExportOverrides | None = None
+) -> tuple[int, int]:
+    """The one frame every selected clip is scaled and padded onto.
+
+    The height is the smallest of the clips' fitted heights, because the only way to
+    give every clip the same geometry without it is upscaling the small ones, and an
+    upscaled 1080p clip next to native 4K is worse than both at 1080p. The smallest
+    clip is therefore the quality ceiling, which the summary names rather than hides.
+
+    The width is the widest clip at that height rather than the narrowest, so one 4:3
+    clip in a 16:9 edit is padded onto the frame instead of narrowing it and putting
+    bars down the side of everything else.
+
+    A recorded frame wins when it is smaller, so the frame never grows for a project:
+    otherwise rejecting the one 1080p clip in an edit would re-encode every 4K clip
+    again at a larger size, which is the trap ``resolve_target_fps`` avoids too.
+
+    Vertical clips count only when a strategy brings them into the export; under
+    ``exclude`` they never reach it and their portrait size must not decide the frame.
+    """
+    export = config.export
+    sizes: list[tuple[int, int]] = []
+    for segment in manifest.segments.values():
+        if segment.outcome != "selected":
+            continue
+        source = manifest.files.get(segment.file_id)
+        if source is None:
+            continue
+        if source.is_vertical and export.vertical_strategy == "exclude":
+            continue
+        width, height = fit_inside(
+            source.display_width, source.display_height, export.max_width, export.max_height
+        )
+        if width > 0 and height > 0:
+            sizes.append((width, height))
+
+    del overrides  # the frame is the footage's, not the run's
+    frame = (0, 0)
+    if sizes:
+        height = min(size[1] for size in sizes)
+        width = max(round(size[0] * height / size[1]) for size in sizes)
+        frame = even(min(width, export.max_width)), even(height)
+
+    recorded = manifest.export.frame_width, manifest.export.frame_height
+    if recorded[0] and recorded[1]:
+        kept = even(recorded[0]), even(recorded[1])
+        if not frame[1] or (kept[1], kept[0]) < (frame[1], frame[0]):
+            return kept
+    return frame
+
+
+def uniform_frame_on(config: AutocutConfig, overrides: ExportOverrides | None = None) -> bool:
+    """Whether this run puts every clip on one frame. The override wins over config."""
+    overrides = overrides or ExportOverrides()
+    if overrides.uniform_frame is not None:
+        return overrides.uniform_frame
+    return config.export.uniform_frame
+
+
+def resolve_frame(
+    manifest: Manifest, config: AutocutConfig, overrides: ExportOverrides | None = None
+) -> tuple[int, int]:
+    """The frame for this run, or ``(0, 0)`` when clips keep their own sizes."""
+    if not uniform_frame_on(config, overrides):
+        return 0, 0
+    return common_frame(manifest, config, overrides)
+
+
 def resolve_target_fps(
     manifest: Manifest, config: AutocutConfig, overrides: ExportOverrides | None = None
 ) -> float:
@@ -353,14 +438,15 @@ def plan_export(
         source_duration = out_duration / ratio
         start = _window_start(segment, source, source_duration)
 
-    scale_w, scale_h = fit_inside(
-        source.display_width, source.display_height, export.max_width, export.max_height
-    )
+    frame = resolve_frame(manifest, config, overrides)
+    box = frame if frame[0] and frame[1] else (export.max_width, export.max_height)
+    scale_w, scale_h = fit_inside(source.display_width, source.display_height, box[0], box[1])
     # A clip already inside the box needs no scale filter at all.
     if (scale_w, scale_h) == (source.display_width, source.display_height):
         scale_w, scale_h = 0, 0
 
-    geometry = _vertical_geometry(source, scale_w, scale_h, export)
+    geometry = _vertical_geometry(source, scale_w, scale_h, export, frame)
+    pad_frame = _frame_pad(source, geometry, frame)
 
     return ExportPlan(
         source=source.path,
@@ -384,6 +470,8 @@ def plan_export(
         blur_radius=geometry.blur_radius,
         crop_w=geometry.crop_w or None,
         crop_h=geometry.crop_h or None,
+        frame_w=pad_frame[0] or None,
+        frame_h=pad_frame[1] or None,
         lut=_lut(export.lut.get(source_class)),
         lens_correction=export.lens_correction.get(source_class),
         fps_converted=is_fps_converted(source.fps, target_fps),
@@ -445,6 +533,25 @@ def _window_start(segment: Segment, source: SourceFile, source_duration: float) 
     return max(0.0, min(start, limit))
 
 
+def _frame_pad(source: SourceFile, geometry: _Geometry, frame: tuple[int, int]) -> tuple[int, int]:
+    """The frame to pad this clip onto, or ``(0, 0)`` when it already fills it.
+
+    What comes out of the filters is the crop when there is one, then the vertical
+    pad, then the scale, and the source size when none of them fired.
+    """
+    if not (frame[0] and frame[1]):
+        return 0, 0
+    if geometry.crop_w and geometry.crop_h:
+        size = geometry.crop_w, geometry.crop_h
+    elif geometry.pad_w and geometry.pad_h:
+        size = geometry.pad_w, geometry.pad_h
+    elif geometry.scale_w and geometry.scale_h:
+        size = geometry.scale_w, geometry.scale_h
+    else:
+        size = source.display_width, source.display_height
+    return (0, 0) if size == frame else frame
+
+
 @dataclass(frozen=True, slots=True)
 class _Geometry:
     """Sizes for the scale, crop and pad filters, zero meaning "no such filter"."""
@@ -459,16 +566,42 @@ class _Geometry:
 
 
 def _vertical_geometry(
-    source: SourceFile, scale_w: int, scale_h: int, export: ExportConfig
+    source: SourceFile,
+    scale_w: int,
+    scale_h: int,
+    export: ExportConfig,
+    frame: tuple[int, int] = (0, 0),
 ) -> _Geometry:
     """What a vertical clip has to become under the configured strategy.
 
     The canvas aspect is the aspect of the configured maximum, which is what the
-    target format means in practice: a 3840x2160 maximum is a 16:9 project.
+    target format means in practice: a 3840x2160 maximum is a 16:9 project. With a
+    common frame the canvas is the frame instead, so a padded vertical clip comes out
+    at exactly the size every other clip has.
     """
     plain = _Geometry(scale_w=scale_w, scale_h=scale_h)
     if not source.is_vertical or export.vertical_strategy == "exclude":
         return plain
+
+    canvas_w = frame[0] or export.max_width
+    canvas_h = frame[1] or export.max_height
+    aspect = canvas_w / canvas_h
+
+    if export.vertical_strategy == "center_crop" and frame[0] and frame[1]:
+        # Fitting a portrait clip inside a landscape frame first shrinks it by height
+        # and leaves a narrow strip to crop from, so under a frame the scale follows
+        # the width instead: the crop then fills the frame whenever the source is wide
+        # enough, and is padded onto it when it is not. Never upscaled either way.
+        width = min(source.display_width, canvas_w)
+        height = even(round(source.display_height * width / source.display_width))
+        width = even(width)
+        fitted = (
+            (0, 0)
+            if (width, height) == (source.display_width, source.display_height)
+            else (width, height)
+        )
+        crop_h = min(height, even(round(width / aspect)))
+        return _Geometry(scale_w=fitted[0], scale_h=fitted[1], crop_w=width, crop_h=crop_h)
 
     # The filters run after the scale, so they work on the scaled size when there is
     # one and on the source size when the clip already fits.
@@ -476,15 +609,14 @@ def _vertical_geometry(
     height = scale_h or source.display_height
     if width <= 0 or height <= 0:
         return plain
-    aspect = export.max_width / export.max_height
 
     if export.vertical_strategy == "center_crop":
         crop_h = even(round(width / aspect))
         return _Geometry(scale_w=scale_w, scale_h=scale_h, crop_w=width, crop_h=min(crop_h, height))
 
     pad_h, pad_w = height, even(round(height * aspect))
-    if pad_w > export.max_width:
-        pad_w = even(export.max_width)
+    if pad_w > canvas_w:
+        pad_w = even(canvas_w)
         pad_h = even(round(pad_w / aspect))
         width, height = fit_inside(width, height, pad_w, pad_h)
         scale_w, scale_h = width, height

@@ -113,6 +113,11 @@ def main() -> int:
         "128k",
         str(OUT / "with_audio.mp4"),
     )
+    # A holiday folder mixes a 4K drone with a 1080p phone, and the export scales down
+    # to the maximum without ever scaling up, so the clips come out at different sizes.
+    # This is the small one: with it in the edit, the common frame is 320x180 and the
+    # 640x360 clips are scaled onto it.
+    ff(*src(size="320x180"), *x264, str(OUT / "small_320.mp4"))
     # The Action 4 shoots 50 fps, which is the case slow motion export exists for: at a
     # 25 fps target the ratio is an exact 2 and no frame has to be invented.
     ff(*src(fps=50), *x264, str(OUT / "fifty_fps.mp4"))

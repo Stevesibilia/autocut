@@ -36,7 +36,12 @@ from PySide6.QtWidgets import (
 from autocut.core.config import SOURCE_CLASSES, AutocutConfig
 from autocut.core.events import ProgressCallback, ProgressEvent
 from autocut.core.export import ExportResult, export_clips
-from autocut.core.ffmpeg_cmd import ExportOverrides, resolve_target_fps, slow_motion_ratio
+from autocut.core.ffmpeg_cmd import (
+    ExportOverrides,
+    common_frame,
+    resolve_target_fps,
+    slow_motion_ratio,
+)
 from autocut.core.manifest import Manifest
 from autocut.core.montage import clear_preview, is_current
 from autocut.core.naming import SELECTS_DIR, STALE_DIR
@@ -138,6 +143,9 @@ class ExportScreen(QWidget):
         form.addRow("", self.rejects_box)
         form.addRow("", self.render_box)
         form.addRow("Fade out", self.fade_field)
+        self.frame_label = QLabel()
+        self.frame_label.setTextFormat(Qt.TextFormat.PlainText)
+        form.addRow("", self.frame_label)
 
         options_box = QGroupBox("Output")
         options_layout = QVBoxLayout(options_box)
@@ -409,6 +417,26 @@ class ExportScreen(QWidget):
                 f"{self.fade_field.value():g} s fade out"
             )
         self.plan_label.setText("\n".join(lines))
+        self.refresh_frame()
+
+    def refresh_frame(self) -> None:
+        """Say what one size the clips will come out at, and what it costs.
+
+        Only when a render is asked for: the frame is the smallest clip in the edit, so
+        one 720p clip pulls the whole render down to 720p, and a reviewer who can see
+        that can drop the clip instead.
+        """
+        manifest = self._state.manifest
+        if manifest is None or not self.render_box.isChecked():
+            self.frame_label.clear()
+            return
+        width, height = common_frame(manifest, self._state.config)
+        if not (width and height):
+            self.frame_label.clear()
+            return
+        self.frame_label.setText(
+            f"Clips exported at one size, {width}x{height}, the smallest clip in the edit"
+        )
 
     def _overrides(self) -> ExportOverrides:
         return ExportOverrides(

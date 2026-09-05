@@ -35,6 +35,9 @@ All notable changes to this project are documented in this file. The format foll
 - The report header shows the rendered file with its duration, size and clip count when one exists.
 - `render.enabled` (false), `render.fade_out_seconds` (1.5), `render.filename` (`montage.mp4`) and `render.audio_bitrate` (192k); a `render` block on the manifest.
 
+- The common export frame: `export.uniform_frame` and `autocut export --uniform-frame` scale and pad every selected clip onto one frame, the smallest fitted height in the edit and the widest clip at that height, so nothing is upscaled and one 4:3 clip does not narrow the frame for everything else. A render turns it on for the export it runs, so mixed 4K and 1080p footage renders with the default settings. The frame is recorded on the manifest and never grows for a project, vertical strategies take it as their canvas, and the report header and the Export screen name it.
+- `autocut render` refuses `export.mode = "fast"` before exporting anything, since stream copied clips carry their sources' parameters and cannot be made uniform.
+
 ### Added
 
 - Project specification in English with the decisions from the 2026-09-03 review.

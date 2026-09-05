@@ -439,3 +439,93 @@ def test_a_track_that_is_gone_is_not_used(exported: tuple[Manifest, AutocutConfi
     manifest.soundtrack.synced_audio_path = Path("/nowhere/gone.mp3")
 
     assert resolve_track(manifest) is None
+
+
+# --- the common frame ---------------------------------------------------------
+
+
+def mixed_project(tmp_path: Path, synthetic: Path) -> Manifest:
+    """640x360 clips beside a 320x180 one, which is the mixed-size case in miniature."""
+    manifest = project(tmp_path, synthetic, clips=("sharp_pan.mp4", "static.mp4"))
+    manifest.files["f2"] = SourceFile(
+        id="f2",
+        path=synthetic / "small_320.mp4",
+        source_class="phone",
+        duration_s=6.0,
+        width=320,
+        height=180,
+        fps=25.0,
+        codec="h264",
+        pix_fmt="yuv420p",
+    )
+    manifest.segments["f2:0"] = Segment(
+        id="f2:0",
+        file_id="f2",
+        start_s=0.0,
+        end_s=6.0,
+        trimmed_start_s=0.0,
+        trimmed_end_s=6.0,
+        best_center_s=3.0,
+        target_duration_s=1.0,
+        duration_reason="base",
+        outcome="selected",
+        order=3,
+        score=0.5,
+        metrics=Metrics(
+            sharpness=100.0, exposure_clipped=0.0, motion=0.3, stability=0.9, colorfulness=0.2
+        ),
+    )
+    return manifest
+
+
+def test_mixed_sizes_render_with_the_default_maximum(tmp_path: Path, synthetic_dir: Path) -> None:
+    """The Sardinia failure in miniature: it used to refuse, and now it renders."""
+    config = settings(tmp_path)
+    manifest = mixed_project(tmp_path, synthetic_dir)
+
+    result = render_edit(manifest, config)
+
+    assert result.ok, result.errors
+    assert result.path is not None
+    assert result.clips == 3
+    video = streams(result.path, "v")
+    assert (video[0]["width"], video[0]["height"]) == (320, 180)
+    assert (manifest.export.frame_width, manifest.export.frame_height) == (320, 180)
+    for path in exported_clips(manifest)[0]:
+        clip = streams(path, "v")[0]
+        assert (clip["width"], clip["height"]) == (320, 180)
+
+
+def test_the_render_leaves_the_export_settings_alone(tmp_path: Path, synthetic_dir: Path) -> None:
+    """The frame is this run's override; the project's own configuration is untouched."""
+    config = settings(tmp_path)
+    manifest = mixed_project(tmp_path, synthetic_dir)
+
+    render_edit(manifest, config)
+
+    assert config.export.uniform_frame is False
+
+
+def test_fast_mode_is_refused_before_anything_is_exported(
+    tmp_path: Path, synthetic_dir: Path
+) -> None:
+    config = settings(tmp_path)
+    config.export.mode = "fast"
+    manifest = mixed_project(tmp_path, synthetic_dir)
+
+    result = render_edit(manifest, config)
+
+    assert not result.ok
+    assert result.export is None
+    assert result.errors and 'export.mode = "precise"' in result.errors[0][1]
+    assert not (Path(manifest.output_dir) / "_selects").exists()
+    assert not render_path(manifest, config).exists()
+
+
+def test_an_out_path_is_resolved(tmp_path: Path, synthetic_dir: Path) -> None:
+    """A relative name beginning with a dash would reach ffmpeg as an option."""
+    config = settings(tmp_path)
+    manifest = project(tmp_path, synthetic_dir)
+
+    assert render_path(manifest, config, Path("out.mp4")).is_absolute()
+    assert render_path(manifest, config).is_absolute()

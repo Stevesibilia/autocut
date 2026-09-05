@@ -30,6 +30,7 @@ from autocut.core.montage import MontageResult, discard
 from autocut.core.report import render_report
 from autocut.core.rules import EXCLUSIONS
 from autocut.gui.state import ProjectState
+from autocut.gui.widgets.chips import FilterChips
 from autocut.gui.widgets.empty import EmptyState
 from autocut.gui.widgets.groups import GroupsView
 from autocut.gui.widgets.montage import MontagePlayer, clip_labels
@@ -130,24 +131,22 @@ class ReviewScreen(QWidget):
         self.undo_button.clicked.connect(self.undo)
         self.report_button.clicked.connect(self.export_report)
 
-        filters = QHBoxLayout()
-        filters.addWidget(QLabel("Sort"))
-        filters.addWidget(self.sort_box)
-        for label, box in (
-            ("Class", self.class_box),
-            ("Tag", self.tag_box),
-            ("Place", self.place_box),
-            ("Outcome", self.outcome_box),
-            ("Reason", self.reason_box),
+        # The boxes above are the filter model and stay exactly as they were; the chips
+        # are a face over them, so the proxy and everything that drives a box directly
+        # are untouched. The boxes themselves are never shown.
+        self.filters = FilterChips()
+        self.filters.add_box("sort", "Sort", self.sort_box)
+        for key, label, box in (
+            ("class", "Class", self.class_box),
+            ("tag", "Tag", self.tag_box),
+            ("place", "Place", self.place_box),
+            ("outcome", "Outcome", self.outcome_box),
+            ("reason", "Reason", self.reason_box),
         ):
-            filters.addWidget(QLabel(label))
-            filters.addWidget(box)
-        filters.addWidget(QLabel("Score"))
-        filters.addWidget(self.min_score)
-        filters.addWidget(self.max_score)
-        filters.addStretch(1)
-        filters.addWidget(self.show_rejected)
-        filters.addWidget(self.groups_toggle)
+            self.filters.add_box(key, label, box)
+        self.filters.add_range("score", "Score", self.min_score, self.max_score)
+        self.filters.add_toggle(self.show_rejected)
+        self.filters.add_toggle(self.groups_toggle)
 
         # Play all and Export report are handed to the top bar by bar_actions; what
         # stays here is the decision row, which belongs beside the grid it acts on.
@@ -174,7 +173,7 @@ class ReviewScreen(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.addWidget(self.warning)
         layout.addWidget(self.montage_note)
-        layout.addLayout(filters)
+        layout.addWidget(self.filters)
         layout.addWidget(splitter, 1)
         layout.addLayout(actions)
 
@@ -242,6 +241,9 @@ class ReviewScreen(QWidget):
                 box.blockSignals(True)
                 box.setCurrentIndex(index)
                 box.blockSignals(False)
+        # The blocked signals above are how the boxes keep the proxy from re-filtering
+        # six times per project open, so the chips have to be told by hand instead.
+        self.filters.refresh()
 
     def _rebuild_filters(self, manifest: Manifest | None) -> None:
         classes = sorted(

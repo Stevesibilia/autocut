@@ -1124,3 +1124,74 @@ def test_a_screen_without_a_project_offers_to_open_one(qtbot: Any) -> None:
 def test_opening_a_project_replaces_the_empty_state_with_the_grid(screen: ReviewScreen) -> None:
     assert screen.stack.currentWidget() is screen.grid
     assert screen.grid.count
+
+
+# --- the filter chips -------------------------------------------------------
+
+
+def test_a_chip_says_what_its_box_says(screen: ReviewScreen) -> None:
+    chip = screen.filters.chips["place"]
+    assert chip.text().startswith("Place")
+    assert "any" in chip.text()
+
+
+def test_choosing_a_place_through_the_chip_filters_the_grid(screen: ReviewScreen) -> None:
+    """The scenario from the spec, driven through the chip rather than the box."""
+    manifest = screen._state.manifest
+    assert manifest is not None
+    place = sorted({s.place_id for s in manifest.segments.values() if s.place_id is not None})[0]
+    chip = screen.filters.chips["place"]
+    row = chip.box.findData(place)
+    assert row >= 0
+
+    chip._fill()
+    next(a for a in chip._menu.actions() if a.text() == chip.box.itemText(row)).trigger()
+
+    shown = screen.grid.visible_ids()
+    assert shown
+    assert all(manifest.segments[sid].place_id == place for sid in shown)
+    assert chip.text() == f"Place  {chip.box.itemText(row)}"
+    assert chip.active
+    assert screen.bar_counters()[0].value == "3"
+
+
+def test_a_chip_on_its_neutral_entry_does_not_look_active(screen: ReviewScreen) -> None:
+    assert screen.filters.active_keys == []
+    screen.class_box.setCurrentIndex(1)
+    assert "class" in screen.filters.active_keys
+    screen.class_box.setCurrentIndex(0)
+    assert screen.filters.active_keys == []
+
+
+def test_the_score_chip_shows_its_range_and_wakes_when_narrowed(screen: ReviewScreen) -> None:
+    chip = screen.filters.chips["score"]
+    assert chip.text() == "Score  0.00 – 1.00"
+    assert not chip.active
+
+    screen.min_score.setValue(0.5)
+
+    assert chip.text() == "Score  0.50 – 1.00"
+    assert chip.active
+
+
+def test_the_chip_menu_is_rebuilt_from_its_box(screen: ReviewScreen) -> None:
+    """Places and clusters appear only after a selection, so the menu cannot be cached."""
+    chip = screen.filters.chips["place"]
+    chip._fill()
+    before = [action.text() for action in chip._menu.actions()]
+
+    chip.box.addItem("Somewhere new", 99)
+    chip._fill()
+
+    after = [action.text() for action in chip._menu.actions()]
+    assert after == [*before, "Somewhere new"]
+
+
+def test_the_boxes_are_kept_out_of_sight_and_out_of_their_own_window(
+    screen: ReviewScreen,
+) -> None:
+    for chip in screen.filters.chips.values():
+        box = getattr(chip, "box", None)
+        if box is not None:
+            assert box.isHidden()
+            assert box.parent() is chip

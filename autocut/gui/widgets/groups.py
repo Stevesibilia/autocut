@@ -68,10 +68,14 @@ def groups_summary(manifest: Manifest | None) -> str:
     )
     if not groups and not held:
         return "No near duplicates yet. Run the selection first."
-    parts = [f"{stacks} stacks", f"{places} places"]
+    parts = [_plural(stacks, "stack"), _plural(places, "place")]
     if held:
         parts.append(f"{held} held back by the place cap")
     return " · ".join(parts)
+
+
+def _plural(count: int, word: str) -> str:
+    return f"{count} {word}" if count == 1 else f"{count} {word}s"
 
 
 def build_groups(manifest: Manifest) -> list[Group]:

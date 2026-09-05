@@ -253,13 +253,22 @@ class MontagePlayer(QWidget):
         transport.addWidget(self.elapsed)
         transport.addWidget(self.sound_box)
 
+        # The strip and its key hints live in one widget so a screen can take the whole
+        # thing and put it somewhere else. The Review screen does: the strip belongs
+        # under the grid, where it says what the edit looks like before anything plays.
+        self.strip = QWidget()
+        strip_layout = QVBoxLayout(self.strip)
+        strip_layout.setContentsMargins(0, 0, 0, 0)
+        strip_layout.setSpacing(metrics.space)
+        strip_layout.addWidget(self.timeline)
+        strip_layout.addWidget(_key_hints(metrics))
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(metrics.space)
         layout.addWidget(self.stack, 1)
         layout.addLayout(transport)
-        layout.addWidget(self.timeline)
-        layout.addWidget(_key_hints(metrics))
+        layout.addWidget(self.strip)
         layout.addWidget(self.status)
         self._set_enabled(False)
 
@@ -327,6 +336,15 @@ class MontagePlayer(QWidget):
         self.clip_line.clear()
         self.elapsed.clear()
         self._set_enabled(False)
+
+    def take_strip(self) -> QWidget:
+        """Hand the strip and its key hints to a screen that wants them elsewhere.
+
+        The player keeps driving it: it is the same widget, only reparented, so seeking
+        and following the playhead work exactly as they did.
+        """
+        self.strip.setParent(None)
+        return self.strip
 
     def _set_enabled(self, on: bool) -> None:
         for widget in (self.play_button, self.restart_button, self.timeline):

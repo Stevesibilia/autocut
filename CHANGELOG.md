@@ -131,3 +131,11 @@ All notable changes to this project are documented in this file. The format foll
 - GUI tests waited for a signal a worker emits from inside its own run and then ended, so a `QThread` could be collected while its thread was still running, which makes Qt abort the process. About one run in fifteen locally, with the suite still reporting every test passed.
 
 - `scripts/make_fixtures.py` returns immediately when the synthetic set is already complete, and otherwise builds it in a temporary directory and moves each file into place, so several test runs starting at once no longer regenerate the same files on top of each other. Pass `--force` to rebuild a complete set.
+
+- The window brings its own design instead of the desktop's, so it renders the same on Linux and macOS (ADR 10): the Fusion style everywhere, a palette and a stylesheet generated from one token module, and Space Grotesk, IBM Plex Mono and twenty Lucide icons shipped as package data. Every colour, size and radius is a token, and a test fails on a colour literal anywhere else in `autocut/gui`.
+- `gui.theme` (`dark`, `light` or `system`, default `dark`), editable in the settings dialog and applied at the next start. **BREAKING** for the look on macOS, which no longer uses the native style.
+- The navigation becomes a rail of icons ending in a block naming this machine's ffmpeg version, embedding backend and cloud state, and a top bar carries the project name, its counts, the counters of the edit and the current screen's primary actions.
+- The Review screen matches the approved mockup: rounded cards with pill badges, per class placeholder tints, tag chips, and, for a clip that is out, the clip it lost to and how close it came; filters as chips; the montage as a strip of blocks under the grid with a mono counter and the key hints; a right panel with the preview, the bounds, diversity, the weights and a similar groups line.
+- Analysis shows a card per stage with a mono counter, Export puts cut, codec and vertical clips on chips and the final render on its own card, and the screens that can be empty say so in one sentence with one action.
+- The screenshot test writes every screen in both token sets into `$AUTOCUT_GUI_SHOTS`.
+- `THIRD_PARTY_LICENSES.md`, listing the bundled fonts and icons with their licences.

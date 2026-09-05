@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -184,6 +184,7 @@ class ReviewScreen(QWidget):
         self.panel.setWidgetResizable(True)
         self.panel.setFrameShape(QScrollArea.Shape.NoFrame)
         self.panel.setFixedWidth(metrics.panel_width)
+        self.panel.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.panel.setWidget(panel_body)
 
         centre = QWidget()
@@ -194,6 +195,7 @@ class ReviewScreen(QWidget):
         centre_layout.addWidget(self.warning)
         centre_layout.addWidget(self.montage_note)
         centre_layout.addWidget(self.stack, 1)
+        centre_layout.addWidget(self.montage.take_strip())
         centre_layout.addLayout(actions)
 
         layout = QHBoxLayout(self)

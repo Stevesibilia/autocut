@@ -101,6 +101,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_TITLE)
         self.resize(1180, 760)
         self.state = state or ProjectState(self)
+        # Before anything is built. The rail renders its icons and the few inline colours
+        # it needs from the active theme at construction, so a window built first and
+        # dressed afterwards keeps the previous theme's rail on a repainted background.
+        apply_theme(QApplication.instance(), self.state.config.gui.theme)
 
         self.rail = NavRail(tuple((spec.key, spec.title) for spec in SCREENS))
         self.rail.screen_chosen.connect(self.go_to)
@@ -161,7 +165,6 @@ class MainWindow(QMainWindow):
 
         self.go_to("project")
         self.refresh_navigation()
-        apply_theme(QApplication.instance(), self.state.config.gui.theme)
 
     # --- navigation ---------------------------------------------------------
 

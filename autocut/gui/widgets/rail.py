@@ -203,6 +203,7 @@ class NavRail(QWidget):
         self._machine_layout.addWidget(heading)
         for line in machine_lines(report, cloud_enabled):
             row = QWidget()
+            row.setStyleSheet("background: transparent;")
             layout = QHBoxLayout(row)
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(8)

@@ -156,3 +156,5 @@ All notable changes to this project are documented in this file. The format foll
 - Playing on macOS: the video page is shown before the source is set, because the widget is a native layer that never paints a frame decoded before it existed, and Stop pauses, stops, detaches the video output and hides the widget, since reordering Qt's stack leaves a native layer where it is.
 - `gui.panel_min_width` (280) and `gui.rail_collapsed_width` (56).
 - `autocut gui --verbose` logs the playback and layout steps to the terminal. Nothing in the project configured logging before, so every `info` and `debug` line written for a bug report went nowhere.
+
+- Play all had no way back: it replaced the Review grid with the montage player and nothing brought the tiles back. The player carries a Back to clips button, Escape does the same while the montage has focus, and the top bar action reads Back to clips while the montage is showing. All three return to the grid with the clip that was playing selected and shown in the preview.

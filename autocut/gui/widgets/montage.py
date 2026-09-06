@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QRectF, Qt, QUrl, Signal
-from PySide6.QtGui import QMouseEvent, QPainter, QPaintEvent, QPen
+from PySide6.QtGui import QKeySequence, QMouseEvent, QPainter, QPaintEvent, QPen, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -202,6 +202,9 @@ class MontagePlayer(QWidget):
     boundary_clicked = Signal(str)
     """Segment id of a clip whose boundary was clicked on the timeline."""
 
+    back_requested = Signal()
+    """The user wants the grid back: the button, or Escape while this has focus."""
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._parts: list[Part] = []
@@ -225,12 +228,21 @@ class MontagePlayer(QWidget):
         self.timeline = MontageTimeline()
         self.timeline.clip_clicked.connect(self.seek_to_clip)
 
+        # Scoped to this widget, so it competes with nothing elsewhere in the window.
+        self._escape = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        self._escape.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._escape.activated.connect(self.back_requested.emit)
+
         metrics = theme.current().metrics
         self.play_button = QPushButton("Play")
         self.play_button.setProperty("variant", "primary")
         self.play_button.clicked.connect(self.toggle)
         self.restart_button = QPushButton("From the start")
         self.restart_button.clicked.connect(self.restart)
+        # The way out. Without it Play all replaced the grid and nothing brought it
+        # back, which is what the Mac found: the tiles were simply gone.
+        self.back_button = QPushButton("Back to clips")
+        self.back_button.clicked.connect(self.back_requested.emit)
         self.sound_box = QCheckBox("Sound")
         self.sound_box.toggled.connect(self._sound_toggled)
 
@@ -250,6 +262,7 @@ class MontagePlayer(QWidget):
         transport.setSpacing(metrics.space + 4)
         transport.addWidget(self.play_button)
         transport.addWidget(self.restart_button)
+        transport.addWidget(self.back_button)
         transport.addWidget(self.clip_line, 1)
         transport.addWidget(self.elapsed)
         transport.addWidget(self.sound_box)
@@ -288,7 +301,16 @@ class MontagePlayer(QWidget):
         return self._current_order
 
     def current_segment_id(self) -> str:
-        part = clip_at(self._parts, self.position_s())
+        """Which clip the player is on, by the last clip it was told to show.
+
+        `_current_order` rather than the position alone: a seek sets the position
+        asynchronously, so asking straight after clicking a boundary or jumping to a
+        clip returned whatever was playing before. The position is the fallback for a
+        player that has moved on its own.
+        """
+        part = next((item for item in self._parts if item.order == self._current_order), None)
+        if part is None:
+            part = clip_at(self._parts, self.position_s())
         return part.segment_id if part is not None else ""
 
     def load(

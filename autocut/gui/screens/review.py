@@ -133,7 +133,7 @@ class ReviewScreen(QWidget):
         self.groups_toggle.toggled.connect(self._mode_changed)
 
         self.play_all_button = QPushButton("Play all")
-        self.play_all_button.clicked.connect(self.play_all)
+        self.play_all_button.clicked.connect(self._play_all_pressed)
         self.montage_note = QLabel()
         self.montage_note.setWordWrap(True)
         self.montage_note.setProperty("role", "muted")
@@ -260,6 +260,7 @@ class ReviewScreen(QWidget):
         self.groups.swap_requested.connect(self._swap)
         self.montage.clip_changed.connect(self._montage_clip_changed)
         self.montage.boundary_clicked.connect(self._montage_clip_changed)
+        self.montage.back_requested.connect(self.show_grid)
 
         state.selection_changed.connect(self._selection_changed)
         state.segments_changed.connect(lambda _ids: self.refresh_header())
@@ -599,6 +600,7 @@ class ReviewScreen(QWidget):
         self.stack.setCurrentWidget(self.groups if groups else self.grid)
         if groups:
             self.groups.refresh()
+        self._refresh_play_all_label()
 
     def _show_grid_or_empty(self) -> None:
         """The grid when there is a project, the empty state when there is not."""
@@ -688,6 +690,8 @@ class ReviewScreen(QWidget):
             return False
         self.groups_toggle.setChecked(False)
         self.stack.setCurrentWidget(self.montage)
+        self.montage.setFocus(Qt.FocusReason.OtherFocusReason)
+        self._refresh_play_all_label()
         # The montage's own length belongs in the transport row, which says it. The
         # header above says how long the edit is, and two different durations one line
         # apart read as one number contradicting itself.
@@ -699,9 +703,31 @@ class ReviewScreen(QWidget):
         return True
 
     def show_grid(self) -> None:
+        """Back to the tiles, on the clip that was playing.
+
+        Landing on what they were watching rather than on wherever the grid cursor was
+        left is the difference between coming back and starting again.
+        """
+        playing = self.montage.current_segment_id()
         self.montage.pause()
         self.groups_toggle.setChecked(False)
         self.stack.setCurrentWidget(self.grid)
+        if playing:
+            self.grid.select_segment(playing)
+            self.preview.show_segment(playing)
+        self._refresh_play_all_label()
+
+    def _refresh_play_all_label(self) -> None:
+        """One control in the bar: it enters the montage and it leaves it again."""
+        showing = self.stack.currentWidget() is self.montage
+        self.play_all_button.setText("Back to clips" if showing else "Play all")
+
+    def _play_all_pressed(self) -> None:
+        """What the top bar's action means depends on what is on screen."""
+        if self.stack.currentWidget() is self.montage:
+            self.show_grid()
+        else:
+            self.play_all()
 
     def _montage_clip_changed(self, segment_id: str) -> None:
         """Follow the montage in the grid, so a decision lands on what is on screen."""

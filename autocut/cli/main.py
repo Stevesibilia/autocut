@@ -990,6 +990,14 @@ def gui(
         Path | None,
         typer.Argument(help="Project folder to open on start. Optional."),
     ] = None,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            "-v",
+            help="Log every playback and layout step to the terminal, for a bug report.",
+        ),
+    ] = False,
     diagnose: Annotated[
         bool,
         typer.Option(
@@ -1018,7 +1026,7 @@ def gui(
         from autocut.gui.app import diagnose as diagnose_gui
 
         raise typer.Exit(code=diagnose_gui())
-    raise typer.Exit(code=run_gui(project))
+    raise typer.Exit(code=run_gui(project, verbose=verbose))
 
 
 @app.command()

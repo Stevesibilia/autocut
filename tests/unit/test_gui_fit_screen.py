@@ -16,7 +16,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QSize  # noqa: E402
-from PySide6.QtWidgets import QPushButton  # noqa: E402
+from PySide6.QtWidgets import QPushButton, QSizePolicy, QWidget  # noqa: E402
 
 from autocut.core.config import GuiConfig  # noqa: E402
 from autocut.gui import app as gui_app  # noqa: E402
@@ -328,6 +328,14 @@ def test_a_long_file_name_is_elided_with_the_whole_of_it_on_the_tooltip(
 
     window.go_to("review")
     review.set_panel_visible(True)
+    # Shown, so the splitter really lays out: the panel's width is what the elision is
+    # measured from, and an unshown window leaves the columns at whatever they were.
+    window.show()
+    qtbot.waitExposed(window)
+    # At the panel's floor, which is where eliding has to work. The splitter opens it
+    # wider than that by default now, and a wide panel fits the name without cutting it.
+    set_panel_width(review, theme.METRICS.panel_min_width)
+    qtbot.wait(20)
     review.preview.show_segment(review.grid.visible_ids()[0])
     qtbot.wait(20)
 
@@ -387,3 +395,373 @@ def test_diagnose_names_the_bundled_families_and_the_theme(capsys: Any) -> None:
     assert "Space Grotesk" in printed
     assert "Plex Mono" in printed
     assert "dark" in printed
+
+
+# --- the preview stage, which the third Mac run turned into a black column ---
+
+
+class HugeVideo(QWidget):
+    """Stands in for `QVideoWidget` showing 4K footage.
+
+    Offscreen a real `QVideoWidget` reports (-1, -1) for both hints because there is no
+    video and no native size, which is exactly why the Linux suite never saw this. On
+    the Mac a 4K clip gives it the footage's size.
+
+    Both hints are overridden, and the minimum is the one that matters: a
+    `QStackedWidget` propagates the largest `minimumSizeHint` of its pages, and a
+    widget resizable `QScrollArea` sizes its content to at least that. A stand-in that
+    only overrode `sizeHint` passed against the bug.
+    """
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        return QSize(3840, 2160)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        return QSize(3840, 2160)
+
+
+def panel_content_height(review: ReviewScreen) -> int:
+    """What the scroll area will actually make the content, which is its minimum."""
+    content = review.panel.widget()
+    assert content is not None
+    return max(content.minimumSizeHint().height(), content.sizeHint().height())
+
+
+def test_nothing_in_the_stage_can_impose_a_size(window: MainWindow, qtbot: Any) -> None:
+    """The assertion that actually closes the macOS defect on every platform.
+
+    On the Mac the first Play of a 4K clip turned the panel into a black column: the
+    video widget reports the footage's native size, a `QStackedWidget` passes on the
+    largest hint of its pages, and the widget resizable scroll area grew to it.
+
+    This cannot be reproduced on Linux. Offscreen a `QVideoWidget` reports (-1, -1) for
+    both hints because there is no video and no native size, and a stand-in with a huge
+    minimum does not propagate through this layout here the way it does there. So the
+    check is not "the panel did not grow", which passes for the wrong reason: it is
+    that nothing inside the stage has a hint left to impose, whichever one Qt consults.
+    """
+    del qtbot
+    review = review_of(window)
+    preview = review.preview
+    # The player is built directly: the fixture's manifest points at files that do not
+    # exist, so `play()` would stop before creating the video widget. What is under test
+    # is how the widget is created, not whether a file opens.
+    assert preview._build_player(None) is not None
+
+    for name, widget in (
+        ("strip frame", preview.frame),
+        ("stack", preview.picture_stack),
+        ("video widget", preview.video),
+    ):
+        assert widget is not None, f"{name} was never built"
+        policy = widget.sizePolicy()
+        assert policy.horizontalPolicy() == QSizePolicy.Policy.Ignored, name
+        assert policy.verticalPolicy() == QSizePolicy.Policy.Ignored, name
+        assert widget.minimumSize().width() <= 1, name
+        assert widget.minimumSize().height() <= 1, name
+
+
+def test_the_stage_minimum_is_its_own_floor_not_its_content(window: MainWindow) -> None:
+    """Its height comes from its width and from a floor of its own, never from a page.
+
+    The floor exists because a stage shorter than about 120 px is not a preview. What
+    matters is that a 4K page cannot raise it, which is what the policy checks above
+    prove and what the panel's height depends on.
+    """
+    from autocut.gui.widgets.preview import MIN_STAGE_HEIGHT
+
+    review = review_of(window)
+    stage = review.preview.stage
+
+    before = stage.minimumSizeHint().height()
+    stage.set_content(HugeVideo())
+
+    assert before == MIN_STAGE_HEIGHT
+    assert stage.minimumSizeHint().height() == MIN_STAGE_HEIGHT
+
+
+def test_a_playing_video_does_not_stretch_the_panel(window: MainWindow, qtbot: Any) -> None:
+    """The regression test, kept even though it does not fail on Linux today.
+
+    See the test above for why it cannot: it is here so the defect is caught on the
+    platform where the propagation does happen.
+    """
+    review = review_of(window)
+    window.go_to("review")
+    review.set_panel_visible(True)
+    review.preview.show_segment(review.grid.visible_ids()[0])
+    qtbot.wait(20)
+    before = panel_content_height(review)
+
+    video = HugeVideo()
+    review.preview.picture_stack.addWidget(video)
+    review.preview.picture_stack.setCurrentWidget(video)
+    qtbot.wait(20)
+
+    after = panel_content_height(review)
+    assert after - before < 40, (
+        f"the panel grew from {before} to {after} px when a 4K page was shown"
+    )
+
+
+def test_the_stage_keeps_sixteen_by_nine(window: MainWindow, qtbot: Any) -> None:
+    """A wider panel is a larger preview, which is the point of the splitter."""
+    del qtbot
+    review = review_of(window)
+    stage = review.preview.stage
+
+    assert stage.hasHeightForWidth()
+    assert stage.heightForWidth(600) == 338
+    assert stage.heightForWidth(336) == 189
+
+
+def test_every_control_stays_under_the_stage_while_a_video_plays(
+    window: MainWindow, qtbot: Any
+) -> None:
+    """The failure the user actually saw: Stop off the bottom of the screen."""
+    review = review_of(window)
+    window.go_to("review")
+    review.set_panel_visible(True)
+    review.preview.show_segment(review.grid.visible_ids()[0])
+    video = HugeVideo()
+    review.preview.picture_stack.addWidget(video)
+    review.preview.picture_stack.setCurrentWidget(video)
+    qtbot.wait(20)
+
+    content = review.panel.widget()
+    assert content is not None
+    assert review.preview.stop_button.y() < content.sizeHint().height()
+    assert review.preview.clear_button.y() < content.sizeHint().height()
+
+
+# --- the splitter, the rail and what survives a restart ---------------------
+
+
+def set_panel_width(review: ReviewScreen, width: int) -> None:
+    """Ask the splitter for a panel of `width`.
+
+    Computed from the splitter's own width, not the window's: `setSizes` normalises
+    what it is given to the space the splitter actually has, so sizes that add up to
+    the window come out scaled by the rail's width.
+    """
+    review.set_split([max(review.splitter.width() - width, 0), width])
+
+
+def shown(window: MainWindow, qtbot: Any) -> ReviewScreen:
+    """The Review screen on a shown window, so the splitter really lays out."""
+    window.go_to("review")
+    window.show()
+    qtbot.waitExposed(window)
+    review = review_of(window)
+    review.set_panel_visible(True)
+    qtbot.wait(20)
+    return review
+
+
+def test_dragging_the_splitter_makes_the_preview_bigger(window: MainWindow, qtbot: Any) -> None:
+    """The scenario from the spec: a 600 px panel is a 600 by 338 stage."""
+    review = shown(window, qtbot)
+
+    set_panel_width(review, 600)
+    qtbot.wait(20)
+
+    assert review.panel.width() == 600
+    stage = review.preview.stage
+    assert stage.heightForWidth(stage.width()) == round(stage.width() * 9 / 16)
+    assert stage.heightForWidth(600) == 338
+
+
+def test_the_panel_cannot_be_dragged_under_its_floor(window: MainWindow, qtbot: Any) -> None:
+    review = shown(window, qtbot)
+
+    set_panel_width(review, 40)
+    qtbot.wait(20)
+
+    assert review.panel.width() >= theme.METRICS.panel_min_width
+
+
+def test_the_grid_opens_at_four_cards(window: MainWindow, qtbot: Any) -> None:
+    """Four cards is the default, not the floor.
+
+    A four card floor is 888 px, which on a 1440 px window would cap the panel at
+    348 px and make the spec's own 600 px panel unreachable. So the default split gives
+    the grid four cards and the floor is the narrowest grid that is still a grid.
+    """
+    review = shown(window, qtbot)
+
+    review.apply_default_split()
+    qtbot.wait(20)
+
+    centre = review.splitter.widget(0)
+    assert centre.width() >= 4 * review.card_width()
+
+
+def test_the_grid_has_a_floor_the_panel_cannot_cross(window: MainWindow, qtbot: Any) -> None:
+    review = shown(window, qtbot)
+    centre = review.splitter.widget(0)
+
+    set_panel_width(review, review.splitter.width() - 10)
+    qtbot.wait(20)
+
+    assert centre.width() >= review.minimum_centre_width()
+    assert review.minimum_centre_width() >= 2 * review.card_width()
+
+
+def test_neither_column_can_be_collapsed_by_dragging(window: MainWindow, qtbot: Any) -> None:
+    """A column dragged to nothing is a column with no way to say where it went."""
+    review = shown(window, qtbot)
+    assert not review.splitter.childrenCollapsible()
+
+
+def test_hiding_the_panel_keeps_the_width_it_had(window: MainWindow, qtbot: Any) -> None:
+    review = shown(window, qtbot)
+    set_panel_width(review, 600)
+    qtbot.wait(20)
+
+    review.set_panel_visible(False)
+    qtbot.wait(20)
+    review.set_panel_visible(True)
+    qtbot.wait(20)
+
+    assert abs(review.panel.width() - 600) < 40, review.split()
+
+
+def test_the_rail_collapses_to_icons_with_the_labels_on_tooltips(
+    window: MainWindow, qtbot: Any
+) -> None:
+    del qtbot
+    rail = window.rail
+
+    rail.set_collapsed(True)
+
+    assert rail.width() == theme.METRICS.rail_collapsed_width
+    for key, button in rail.buttons.items():
+        assert button.text() == ""
+        assert button.toolTip() == rail.titles[key]
+    assert not rail.machine.isVisibleTo(rail)
+    assert rail.toolTip(), "the collapsed rail says nothing about the machine"
+
+
+def test_expanding_the_rail_puts_the_labels_back(window: MainWindow, qtbot: Any) -> None:
+    del qtbot
+    rail = window.rail
+    rail.set_collapsed(True)
+
+    rail.set_collapsed(False)
+
+    assert rail.width() == theme.METRICS.rail_width
+    assert rail.buttons["review"].text() == "Review"
+    assert rail.buttons["review"].toolTip() == ""
+    assert rail.machine.isVisibleTo(rail)
+
+
+def test_the_top_bar_is_untouched_by_the_rail(window: MainWindow, qtbot: Any) -> None:
+    """Collapsing a column must not disturb the row above it."""
+    del qtbot
+    before = window.top_bar.height()
+
+    window.rail.set_collapsed(True)
+
+    assert window.top_bar.height() == before
+    assert window.top_bar.title.text() == window.top_bar.title.text()
+
+
+def test_the_arrangement_is_written_and_read_back(window: MainWindow, qtbot: Any) -> None:
+    """What the user arranged survives a restart, per machine."""
+    from autocut.gui.layout import load_layout
+
+    review = shown(window, qtbot)
+    window.rail.set_collapsed(True)
+    set_panel_width(review, 500)
+    window._save_layout()
+
+    saved = load_layout()
+
+    assert saved.rail_collapsed is True
+    assert len(saved.review_split) == 2
+    assert saved.review_panel_visible is True
+
+
+def test_a_saved_arrangement_is_restored_on_the_next_window(window: MainWindow, qtbot: Any) -> None:
+    from autocut.gui.layout import LayoutState, save_layout
+
+    del window
+    save_layout(LayoutState(rail_collapsed=True, review_panel_visible=False))
+    restored = build_window(ProjectState())
+    qtbot.addWidget(restored)
+
+    assert restored.rail.collapsed is True
+    assert not review_of(restored).panel.isVisibleTo(review_of(restored))
+
+
+def test_the_window_configures_logging_so_its_own_lines_are_seen(caplog: Any, capsys: Any) -> None:
+    """Every logger.info in this package went nowhere until the window configured one.
+
+    Warnings reached the terminal through Python's last resort handler, which is why
+    playback failures showed up on the Mac and the diagnostics added for them did not.
+    """
+    del caplog, capsys
+    import logging
+
+    gui_app.configure_logging(verbose=False)
+    assert logging.getLogger("autocut").level == logging.INFO
+    assert logging.getLogger().handlers, "nothing would print at all"
+
+    gui_app.configure_logging(verbose=True)
+    assert logging.getLogger("autocut").level == logging.DEBUG
+
+
+def test_a_wider_panel_is_a_taller_stage(window: MainWindow, qtbot: Any) -> None:
+    """The point of the splitter: 600 px of panel is a 338 px preview, not a floor."""
+    review = shown(window, qtbot)
+
+    set_panel_width(review, 600)
+    qtbot.wait(60)
+
+    stage = review.preview.stage
+    assert stage.width() > 500
+    assert stage.height() == stage.heightForWidth(stage.width())
+    assert stage.height() > 250, f"the stage stayed at {stage.height()} px"
+
+
+def test_a_hidden_panel_keeps_its_width_across_a_restart(window: MainWindow, qtbot: Any) -> None:
+    """The promise `set_panel_visible` makes has to survive the window closing.
+
+    `splitter.sizes()` of a hidden panel is `[everything, 0]`, so a session that ended
+    with the panel hidden saved no width at all and the next start handed it the
+    default. A panel dragged to 600 px came back at 336.
+    """
+    from autocut.gui.layout import load_layout
+
+    review = shown(window, qtbot)
+    set_panel_width(review, 600)
+    qtbot.wait(40)
+
+    review.set_panel_visible(False)
+    window._save_layout()
+
+    assert load_layout().review_panel_width == 600
+
+    restored = build_window(ProjectState())
+    qtbot.addWidget(restored)
+    restored.resize(1440, 900)
+    restored.show()
+    qtbot.waitExposed(restored)
+    restored.go_to("review")
+    later = review_of(restored)
+    later.set_panel_visible(True)
+    qtbot.wait(40)
+
+    assert abs(later.panel.width() - 600) < 40, later.split()
+
+
+def test_a_visible_panel_saves_the_width_it_is_showing(window: MainWindow, qtbot: Any) -> None:
+    from autocut.gui.layout import load_layout
+
+    review = shown(window, qtbot)
+    set_panel_width(review, 520)
+    qtbot.wait(40)
+
+    window._save_layout()
+
+    assert abs(load_layout().review_panel_width - 520) < 40

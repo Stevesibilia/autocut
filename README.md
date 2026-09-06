@@ -65,7 +65,7 @@ autocut gui               # or: autocut gui ./edit to open a project
 
 The window reads and writes the same `manifest.json` and `autocut.toml` as the commands above, so the two can be used on one project in any order.
 
-`autocut gui --diagnose` prints what the window sees on this machine, the screens and their device pixel ratios, the fonts in use, the theme and the window sizes, and exits without opening anything. It is the fastest way to send a useful bug report about how the window looks somewhere.
+`autocut gui --verbose` logs every playback and layout step to the terminal, which is what to attach to a bug report about the window. `autocut gui --diagnose` prints what the window sees on this machine, the screens and their device pixel ratios, the fonts in use, the theme and the window sizes, and exits without opening anything. It is the fastest way to send a useful bug report about how the window looks somewhere.
 
 It brings its own look rather than borrowing the desktop's, so it renders the same on Linux and on macOS: dark by default, with `gui.theme = "light"` or `"system"` in `autocut.toml` for the other two, applied at the next start. Space Grotesk, IBM Plex Mono and a subset of the Lucide icons ship inside the package for that reason. Their licences are listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) and shipped beside the files.
 

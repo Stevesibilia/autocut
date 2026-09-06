@@ -1204,8 +1204,10 @@ def test_the_boxes_are_kept_out_of_sight_and_out_of_their_own_window(
 # --- the right panel --------------------------------------------------------
 
 
-def test_the_right_panel_is_the_fixed_width_the_tokens_set(screen: ReviewScreen) -> None:
-    assert screen.panel.width() == theme.METRICS.panel_width
+def test_the_right_panel_has_a_floor_rather_than_a_fixed_width(screen: ReviewScreen) -> None:
+    """It is one side of a splitter now, so the user decides how wide it is."""
+    assert screen.panel.minimumWidth() == theme.METRICS.panel_min_width
+    assert screen.panel.maximumWidth() > theme.METRICS.panel_min_width
     assert screen.panel.widgetResizable()
 
 

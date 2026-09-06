@@ -194,6 +194,9 @@ class Metrics:
     min_window_width: int = 1100
     min_window_height: int = 680
     panel_collapse_width: int = 1280
+    #: The Review panel's floor, and the rail once it is collapsed to icons.
+    panel_min_width: int = 280
+    rail_collapsed_width: int = 56
 
     #: The montage strip, its gap between blocks and its inner padding.
     strip_height: int = 26

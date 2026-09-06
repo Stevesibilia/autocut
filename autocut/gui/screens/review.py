@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSplitter,
     QStackedWidget,
     QToolButton,
     QVBoxLayout,
@@ -39,10 +40,21 @@ from autocut.gui.widgets.groups import GroupsView, groups_summary
 from autocut.gui.widgets.montage import MontagePlayer, clip_labels
 from autocut.gui.widgets.preview import PreviewPanel
 from autocut.gui.widgets.sliders import SliderPanel
-from autocut.gui.widgets.thumb_grid import ThumbGrid
+from autocut.gui.widgets.thumb_grid import CARD_MARGIN, ThumbGrid
 from autocut.gui.widgets.topbar import Counter, edit_counters
 
 ANY = "any"
+
+
+#: The grid's floor, in cards. Two rather than four, and the spec's two requirements
+#: are why: a four card floor is 888 px, which on a 1440 px window leaves the panel a
+#: maximum of 348 px and makes the spec's own "drag the panel to 600 px" impossible.
+#: The user asked for a bigger preview, so the floor is the narrowest grid that is
+#: still a grid and the four card default is expressed as the opening split instead.
+MIN_GRID_COLUMNS = 2
+
+#: What the grid gets when nobody has dragged anything yet.
+DEFAULT_GRID_COLUMNS = 4
 
 
 class ReviewScreen(QWidget):
@@ -50,6 +62,8 @@ class ReviewScreen(QWidget):
 
     report_written = Signal(str)
     open_project_requested = Signal()
+    split_changed = Signal()
+    """The user dragged the splitter, so the window can remember where they left it."""
     """The empty state's one action: the window sends the user to the Project screen."""
 
     def __init__(self, state: ProjectState, parent: QWidget | None = None) -> None:
@@ -180,6 +194,8 @@ class ReviewScreen(QWidget):
         panel_layout.addWidget(summary_heading)
         panel_layout.addWidget(self.groups_summary)
 
+        #: The width to give the panel back when it is shown again.
+        self._panel_width = metrics.panel_width
         self.panel_button = QToolButton()
         self.panel_button.setCheckable(True)
         self.panel_button.setChecked(True)
@@ -197,7 +213,9 @@ class ReviewScreen(QWidget):
         self.panel.setObjectName("rightPanel")
         self.panel.setWidgetResizable(True)
         self.panel.setFrameShape(QScrollArea.Shape.NoFrame)
-        self.panel.setFixedWidth(metrics.panel_width)
+        # A floor, not a fixed width: the splitter decides how wide it is, and a wider
+        # panel is a larger preview, which is what the whole column is for.
+        self.panel.setMinimumWidth(metrics.panel_min_width)
         self.panel.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.panel.setWidget(panel_body)
 
@@ -213,10 +231,23 @@ class ReviewScreen(QWidget):
         centre_layout.addWidget(self.decisions)
 
         layout = QHBoxLayout(self)
+        # The centre keeps room for four cards, which is the narrowest grid still worth
+        # scanning. Neither child collapses: a splitter that can be dragged to nothing
+        # loses a column with no way to say where it went, and the panel has a toggle
+        # in the top bar for exactly that.
+        centre.setMinimumWidth(self.minimum_centre_width())
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.setObjectName("reviewSplitter")
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.addWidget(centre)
+        self.splitter.addWidget(self.panel)
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 0)
+        self.splitter.splitterMoved.connect(lambda _pos, _index: self.split_changed.emit())
+
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(centre, 1)
-        layout.addWidget(self.panel)
+        layout.addWidget(self.splitter)
 
         # --- wiring ---------------------------------------------------------
         self.grid.keep_requested.connect(lambda sid: self._decide("keep", sid))
@@ -367,11 +398,66 @@ class ReviewScreen(QWidget):
 
     # --- the right panel ---------------------------------------------------
 
+    def card_width(self) -> int:
+        return int(self._state.config.gui.grid_thumbnail_px) + CARD_MARGIN * 2
+
+    def minimum_centre_width(self) -> int:
+        """The narrowest grid that is still a grid, so the panel can be made large."""
+        return self.card_width() * MIN_GRID_COLUMNS + theme.current().metrics.space * 6
+
+    def default_centre_width(self) -> int:
+        """What the grid opens at: four cards, before the user drags anything."""
+        return self.card_width() * DEFAULT_GRID_COLUMNS + theme.current().metrics.space * 6
+
+    def apply_default_split(self) -> None:
+        """Four cards for the grid and the rest for the panel, when nothing is saved."""
+        width = self.splitter.width()
+        if width <= 0:
+            return
+        centre = min(self.default_centre_width(), max(width - self.panel.minimumWidth(), 0))
+        self.set_split([centre, max(width - centre, 0)])
+
+    @property
+    def panel_width(self) -> int:
+        """The panel's width, or the last one it had while it was visible.
+
+        The splitter reports a hidden panel as zero, so this is what to save: without
+        it a session that ended with the panel hidden restored the default rather than
+        the width the user had chosen.
+        """
+        if self.panel.isVisible() and self.panel.width() > 0:
+            return self.panel.width()
+        return self._panel_width
+
+    def set_panel_width(self, width: int) -> None:
+        """Restore the width to give the panel when it is next shown."""
+        if width > 0:
+            self._panel_width = width
+
     def set_panel_visible(self, visible: bool) -> None:
-        """Show or hide the right panel and remember it for the session."""
+        """Show or hide the right panel and remember it for the session.
+
+        Hidden rather than narrowed, and its width is kept: a panel dragged to 600 px
+        and then hidden comes back at 600 px, not at its minimum, and that holds across
+        a restart because the width is saved in its own field.
+        """
+        if not visible and self.panel.isVisible():
+            self._panel_width = self.panel.width() or self._panel_width
         self.panel.setVisible(visible)
         self.panel_button.setChecked(visible)
         self._state.review_panel_visible = visible
+        if visible and self._panel_width:
+            self.set_split([max(self.splitter.width() - self._panel_width, 0), self._panel_width])
+        self.split_changed.emit()
+
+    def split(self) -> list[int]:
+        """The splitter's sizes, centre first."""
+        return list(self.splitter.sizes())
+
+    def set_split(self, sizes: list[int]) -> None:
+        """Restore a split the user left behind, ignoring one that makes no sense."""
+        if len(sizes) == 2 and all(size >= 0 for size in sizes) and sum(sizes) > 0:
+            self.splitter.setSizes(sizes)
 
     def toggle_panel(self) -> None:
         self.set_panel_visible(not self.panel.isVisible())

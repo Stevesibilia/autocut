@@ -8,6 +8,7 @@ broken. The only test that catches that is one that counts frames, which is what
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -193,8 +194,10 @@ def test_the_video_widget_takes_the_place_of_the_strip(panel: PreviewPanel, qtbo
     assert panel.play()
 
     assert panel.video is not None
-    assert wait_for(qtbot, lambda: panel.picture_stack.currentWidget() is panel.video)
-    assert "Playing from the in point" in panel.note.text()
+    # Waited on the note, not on the page: the page is shown before the source is set
+    # now, so the video being current no longer means playback has started.
+    assert wait_for(qtbot, lambda: "Playing from the in point" in panel.note.text())
+    assert panel.picture_stack.currentWidget() is panel.video
 
 
 def test_stopping_puts_the_strip_back(panel: PreviewPanel, qtbot: Any) -> None:
@@ -361,3 +364,185 @@ def test_stopping_puts_the_scrub_back_at_the_in_point(panel: PreviewPanel, qtbot
     panel.stop()
 
     assert panel.scrub.value() == panel._to_slider(start)
+
+
+# --- the native video layer on macOS ----------------------------------------
+
+
+def test_showing_the_strip_hides_the_video_widget(panel: PreviewPanel, qtbot: Any) -> None:
+    """On macOS `QVideoWidget` is a native NSView layered over the Qt scene.
+
+    `setCurrentWidget` reorders Qt's own stack, which is enough on Linux and does
+    nothing to a native layer: the user pressed Stop, the button worked, and the black
+    rectangle stayed where it was. So the widget is hidden explicitly as well.
+
+    This assertion cannot fail on Linux, because a `QStackedWidget` already sets the
+    hidden flag on the page it is not showing and nothing here can see the native
+    layer underneath. It is here for the platform where the two differ; the checks
+    that bind everywhere are the detached output below.
+    """
+    assert panel.play()
+    assert wait_for(qtbot, lambda: panel.video is not None)
+    panel.show_video()
+    assert panel.video is not None
+
+    panel.show_strip()
+
+    assert panel.picture_stack.currentWidget() is panel.frame
+    assert panel.video.isHidden(), "the video widget is still on top of the strip"
+
+
+def test_showing_the_video_puts_it_back(panel: PreviewPanel, qtbot: Any) -> None:
+    assert panel.play()
+    assert wait_for(qtbot, lambda: panel.video is not None)
+    panel.show_strip()
+
+    panel.show_video()
+
+    assert panel.video is not None
+    assert not panel.video.isHidden()
+    assert panel.picture_stack.currentWidget() is panel.video
+
+
+def test_stopping_detaches_the_video_output(panel: PreviewPanel, qtbot: Any) -> None:
+    """A player still rendering into a native layer is a layer that stays black."""
+    assert panel.play()
+    assert wait_for(qtbot, lambda: panel._player is not None)
+
+    panel.stop()
+
+    assert panel._player is not None
+    assert panel._player.videoOutput() is None
+    assert panel.video is None or panel.video.isHidden()
+
+
+def test_playing_again_after_a_stop_reattaches_the_video(panel: PreviewPanel, qtbot: Any) -> None:
+    """Detaching on stop must not make the second Play a black rectangle."""
+    assert panel.play()
+    assert wait_for(qtbot, lambda: panel._player is not None)
+    panel.stop()
+
+    assert panel.play()
+
+    assert panel._player is not None
+    assert panel._player.videoOutput() is not None
+    assert panel.video is not None
+
+
+def test_a_playback_error_shows_the_strip_and_leaves_the_buttons_usable(
+    panel: PreviewPanel, qtbot: Any
+) -> None:
+    """An error must not leave a black page with a Stop that does nothing."""
+    del qtbot
+    assert panel.play()
+
+    panel._playback_failed(QMediaPlayer.Error.ResourceError, "no decoder for this file")
+
+    assert panel.picture_stack.currentWidget() is panel.frame
+    assert panel.video is None or panel.video.isHidden()
+    assert "no decoder for this file" in panel.note.text()
+    assert panel.play_button.isEnabled()
+    assert not panel.stop_button.isEnabled()
+
+
+def test_a_playback_error_is_logged_for_the_terminal(
+    panel: PreviewPanel, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A Mac reports what its terminal said, so the error has to reach the terminal."""
+    assert panel.play()
+
+    with caplog.at_level(logging.WARNING):
+        panel._playback_failed(QMediaPlayer.Error.FormatError, "unsupported format")
+
+    assert any("unsupported format" in record.message for record in caplog.records)
+
+
+def test_invalid_media_shows_the_strip_and_frees_the_buttons(
+    panel: PreviewPanel, qtbot: Any
+) -> None:
+    del qtbot
+    assert panel.play()
+
+    panel._media_status_changed(QMediaPlayer.MediaStatus.InvalidMedia)
+
+    assert panel.picture_stack.currentWidget() is panel.frame
+    assert panel.video is None or panel.video.isHidden()
+    assert not panel.stop_button.isEnabled()
+    assert panel.play_button.isEnabled()
+
+
+def test_the_video_page_is_realised_before_the_source_is_set(
+    panel: PreviewPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first Play was black and the second was fine, which is an ordering bug.
+
+    On macOS the video widget is a native NSView created when it is first shown, so a
+    layer that comes into existence after the first frame was decoded never paints it.
+    Linux cannot see the difference, so what is asserted is the order itself, which is
+    the thing that was wrong.
+    """
+    order: list[str] = []
+    real_show_video = PreviewPanel.show_video
+    real_set_source = QMediaPlayer.setSource
+
+    def traced_show(self: PreviewPanel) -> None:
+        order.append("show video")
+        real_show_video(self)
+
+    def traced_source(self: QMediaPlayer, url: Any) -> None:
+        order.append("set source")
+        real_set_source(self, url)
+
+    monkeypatch.setattr(PreviewPanel, "show_video", traced_show)
+    monkeypatch.setattr(QMediaPlayer, "setSource", traced_source)
+
+    assert panel.play()
+
+    assert order[:2] == ["show video", "set source"], order
+
+
+def test_stop_pauses_before_it_stops(panel: PreviewPanel, qtbot: Any) -> None:
+    """`stop()` alone left the last frame on the native layer on macOS."""
+    del qtbot
+    assert panel.play()
+    assert panel._player is not None
+    calls: list[str] = []
+    panel._player.pause = lambda: calls.append("pause")  # type: ignore[method-assign]
+    panel._player.stop = lambda: calls.append("stop")  # type: ignore[method-assign]
+
+    panel.stop()
+
+    assert calls == ["pause", "stop"]
+
+
+def test_the_playback_sequence_is_logged_for_a_mac_terminal(
+    panel: PreviewPanel, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A report from another machine is whatever its terminal said."""
+    from PySide6.QtMultimedia import QMediaPlayer
+
+    with caplog.at_level(logging.DEBUG, logger="autocut.gui.widgets.preview"):
+        assert panel.play()
+        panel._playback_state_changed(QMediaPlayer.PlaybackState.PlayingState)
+        panel._media_status_changed(QMediaPlayer.MediaStatus.BufferedMedia)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("playing" in message for message in messages)
+    assert any("playback state" in message for message in messages)
+    assert any("media status" in message for message in messages)
+
+
+def test_stop_says_it_ran_before_it_does_anything(
+    panel: PreviewPanel, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The Mac reported that Stop printed nothing at all.
+
+    With no line at the top of the slot, an empty log cannot tell a slot that never
+    ran from a native layer that would not go away, and those need different fixes.
+    """
+    assert panel.play()
+
+    with caplog.at_level(logging.INFO, logger="autocut.gui.widgets.preview"):
+        panel.stop()
+
+    assert any("stop pressed" in record.getMessage() for record in caplog.records)

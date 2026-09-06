@@ -94,6 +94,9 @@ class NavRail(QWidget):
     screen_chosen = Signal(str)
     """The key of the screen the user clicked."""
 
+    collapsed_changed = Signal(bool)
+    """The rail was collapsed or expanded, so the window can remember it."""
+
     def __init__(self, screens: tuple[tuple[str, str], ...], parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("navRail")
@@ -108,6 +111,9 @@ class NavRail(QWidget):
         column.addSpacing(metrics.space * 2)
 
         self.buttons: dict[str, QToolButton] = {}
+        self.titles: dict[str, str] = dict(screens)
+        self._report: DoctorReport | None = None
+        self._cloud = True
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         for key, title in screens:
@@ -117,6 +123,7 @@ class NavRail(QWidget):
             column.addWidget(button)
 
         column.addStretch(1)
+        self.collapsed = False
         self.machine = QWidget()
         self.machine.setObjectName("machineBlock")
         self.machine.setStyleSheet(
@@ -127,7 +134,19 @@ class NavRail(QWidget):
         self._machine_layout.setContentsMargins(10, 10, 10, 10)
         self._machine_layout.setSpacing(6)
         column.addWidget(self.machine)
+
+        # At the foot, under the machine block: a control about the rail itself belongs
+        # at the end of the rail, not among the screens.
+        self.collapse_button = QToolButton()
+        self.collapse_button.setProperty("rail", True)
+        self.collapse_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.collapse_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.collapse_button.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
+        self.collapse_button.clicked.connect(lambda: self.set_collapsed(not self.collapsed))
+        column.addWidget(self.collapse_button)
+
         self.set_machine(None)
+        self._apply_collapsed()
 
     # --- building ----------------------------------------------------------
 
@@ -147,6 +166,7 @@ class NavRail(QWidget):
 
         name = QLabel("AutoCut")
         name.setProperty("role", "title")
+        self.brand_name = name
         row.addWidget(mark)
         row.addWidget(name)
         row.addStretch(1)
@@ -186,8 +206,56 @@ class NavRail(QWidget):
         if button is not None:
             button.setEnabled(available)
 
+    def set_collapsed(self, collapsed: bool) -> None:
+        """Icons only, or icons and labels. Reports the change so it can be saved."""
+        if collapsed == self.collapsed:
+            return
+        self.collapsed = collapsed
+        self._apply_collapsed()
+        self.collapsed_changed.emit(collapsed)
+
+    def _apply_collapsed(self) -> None:
+        """Set the width, the labels and the tooltips for the state the rail is in.
+
+        The labels go to tooltips rather than away: an icon strip nobody can read is a
+        strip of guesses, and the tooltip is what makes the collapsed rail usable.
+        """
+        metrics = theme.current().metrics
+        colors = theme.current().palette
+        self.setFixedWidth(metrics.rail_collapsed_width if self.collapsed else metrics.rail_width)
+        for key, button in self.buttons.items():
+            title = self.titles[key]
+            button.setText("" if self.collapsed else title)
+            button.setToolTip(title if self.collapsed else "")
+            button.setToolButtonStyle(
+                Qt.ToolButtonStyle.ToolButtonIconOnly
+                if self.collapsed
+                else Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+            )
+        self.brand_name.setVisible(not self.collapsed)
+        self.machine.setVisible(not self.collapsed)
+        self.collapse_button.setText("" if self.collapsed else "Collapse")
+        self.collapse_button.setToolTip("Expand the rail" if self.collapsed else "")
+        self.collapse_button.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonIconOnly
+            if self.collapsed
+            else Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        self.collapse_button.setIcon(
+            icons.icon("chevron-down", colors.text_muted, ICON_SIZE, self._ratio())
+        )
+        self.setToolTip(self.machine_summary() if self.collapsed else "")
+
+    def machine_summary(self) -> str:
+        """The machine block as one line, for the collapsed rail's tooltip."""
+        return "\n".join(line.text for line in machine_lines(self._report, self._cloud))
+
     def set_machine(self, report: DoctorReport | None, cloud_enabled: bool = True) -> None:
         """Redraw the machine block from a doctor report, or say it is being checked."""
+        self._report = report
+        self._cloud = cloud_enabled
+        if self.collapsed:
+            self.setToolTip(self.machine_summary())
         while self._machine_layout.count():
             item = self._machine_layout.takeAt(0)
             widget = item.widget() if item is not None else None

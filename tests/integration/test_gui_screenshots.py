@@ -348,3 +348,57 @@ def test_the_review_screen_is_grabbed_at_both_window_sizes(
             path = directory / f"review-{width}x{height}.png"
             assert image.save(str(path)), path
             assert path.stat().st_size > 0
+
+
+def test_the_workspace_arrangements_are_grabbed(
+    tmp_path: Path, synthetic_dir: Path, qtbot: Any
+) -> None:
+    """The three arrangements the splitter and the rail make possible."""
+    out = tmp_path / "edit"
+    state = ProjectState()
+    state.new_project([synthetic_dir], out)
+    state.config.cache.dir = tmp_path / "cache"
+    state.config.analysis.sprites = True
+
+    window = build_window(state)
+    qtbot.addWidget(window)
+    window.resize(1440, 900)
+    with qtbot.waitSignal(state.stage_finished, timeout=180_000):
+        assert window.screens["analysis"].run()  # type: ignore[attr-defined]
+    assert state.run_selection()
+    window.refresh_navigation()
+    window.go_to("review")
+    window.show()
+    qtbot.waitExposed(window)
+    review = window.screens["review"]
+    assert isinstance(review, ReviewScreen)
+    review.set_panel_visible(True)
+    review.apply_default_split()
+    qtbot.wait(60)
+
+    directory = shots_dir()
+    if directory is not None:
+        directory.mkdir(parents=True, exist_ok=True)
+
+    def grab(name: str) -> None:
+        qtbot.wait(80)
+        image = window.grab().toImage()
+        assert not image.isNull(), name
+        if directory is not None:
+            path = directory / f"{name}.png"
+            assert image.save(str(path)), path
+            assert path.stat().st_size > 0
+
+    grab("workspace-default")
+
+    window.rail.set_collapsed(True)
+    grab("workspace-rail-collapsed")
+    window.rail.set_collapsed(False)
+
+    review.set_split([max(review.splitter.width() - 600, 0), 600])
+    qtbot.wait(60)
+    review.preview.show_segment(review.grid.visible_ids()[0])
+    review.preview.play()
+    qtbot.wait(400)
+    grab("workspace-wide-panel-playing")
+    review.preview.stop()

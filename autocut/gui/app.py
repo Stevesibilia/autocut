@@ -15,7 +15,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Protocol, cast, runtime_checkable
 
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, QTimer
 from PySide6.QtGui import QCloseEvent, QPalette
 from PySide6.QtWidgets import (
     QApplication,
@@ -33,6 +33,7 @@ from autocut.core.config import AutocutConfig, GuiConfig
 from autocut.core.doctor import DoctorReport
 from autocut.core.manifest import Manifest
 from autocut.gui import theme
+from autocut.gui.layout import load_layout, save_layout
 from autocut.gui.screens.analysis import AnalysisScreen
 from autocut.gui.screens.export import ExportScreen
 from autocut.gui.screens.project import ProjectScreen
@@ -45,6 +46,9 @@ from autocut.gui.widgets.rail import NavRail
 from autocut.gui.widgets.topbar import Counter, TopBar
 
 APP_TITLE = "AutoCut"
+
+#: Dragging a splitter emits on every pixel; the layout file is not worth that.
+LAYOUT_SAVE_DEBOUNCE_MS = 400
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,6 +183,8 @@ class MainWindow(QMainWindow):
         project_screen.settings_requested.connect(self.open_settings)
         project_screen.machine_checked.connect(self._machine_checked)
 
+        review_screen = self.screens["review"]
+        assert isinstance(review_screen, ReviewScreen)
         for key in ("review", "analysis"):
             screen = self.screens[key]
             assert isinstance(screen, ReviewScreen | AnalysisScreen)
@@ -195,6 +201,16 @@ class MainWindow(QMainWindow):
         self.state.segments_changed.connect(lambda _ids: self.refresh_top_bar())
         self.state.selection_changed.connect(self.refresh_top_bar)
 
+        # How the user arranged the window, per machine. Saved through a short debounce
+        # because dragging a splitter emits on every pixel and this is a file on disk.
+        self.layout_state = load_layout()
+        self._layout_timer = QTimer(self)
+        self._layout_timer.setSingleShot(True)
+        self._layout_timer.setInterval(LAYOUT_SAVE_DEBOUNCE_MS)
+        self._layout_timer.timeout.connect(self._save_layout)
+        self.rail.collapsed_changed.connect(lambda _on: self._layout_changed())
+        review_screen.split_changed.connect(self._layout_changed)
+
         # After the widgets exist, so the layouts have reported what they need before
         # the floor is imposed on them. The floor is a promise the layout has to be able
         # to keep; a test asserts the minimum size hint of every screen fits inside it.
@@ -203,9 +219,14 @@ class MainWindow(QMainWindow):
         opening = opening_size(gui)
         self.resize(opening)
 
-        review_screen = self.screens["review"]
-        assert isinstance(review_screen, ReviewScreen)
+        self.rail.set_collapsed(self.layout_state.rail_collapsed)
+        if self.layout_state.review_panel_visible is not None:
+            self.state.review_panel_visible = self.layout_state.review_panel_visible
         review_screen.adopt_panel_state(opening.width())
+        if self.layout_state.review_split:
+            review_screen.set_split(self.layout_state.review_split)
+        else:
+            review_screen.apply_default_split()
 
         self.go_to("project")
         self.refresh_navigation()
@@ -235,6 +256,18 @@ class MainWindow(QMainWindow):
             return
         self.stack.setCurrentWidget(self.screens[key])
         self.rail.set_current(key)
+
+    def _layout_changed(self) -> None:
+        """Something moved. Write it soon, not now."""
+        self._layout_timer.start()
+
+    def _save_layout(self) -> None:
+        review = self.screens["review"]
+        assert isinstance(review, ReviewScreen)
+        self.layout_state.rail_collapsed = self.rail.collapsed
+        self.layout_state.review_split = review.split()
+        self.layout_state.review_panel_visible = self.state.review_panel_visible
+        save_layout(self.layout_state)
 
     @property
     def doctor_report(self) -> DoctorReport | None:
@@ -291,6 +324,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
         """Never lose review work, and never leave a thread running behind the window."""
+        # Written now rather than on the debounce: the timer will not fire once the
+        # window is gone, and the arrangement the user left is the one to restore.
+        self._save_layout()
         if self.state.is_running:
             self.state.cancel()
             self.state.wait_for_stage(10_000)

@@ -17,6 +17,7 @@ player with no audio output is silent whatever the file holds, and the seek wait
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -115,6 +116,8 @@ def neutralise(widget: QWidget) -> None:
 
 #: Below this an elided label says nothing at all, so it stops shrinking and the panel
 #: gets a scrollbar instead. Well under the 336 px panel either way.
+logger = logging.getLogger(__name__)
+
 ELIDE_MIN_WIDTH = 120
 
 
@@ -254,6 +257,8 @@ class PreviewPanel(QWidget):
         layout.addWidget(self.note)
 
         self._player: QMediaPlayer | None = None
+        #: What the player renders into, kept so `play` can reattach after a `stop`.
+        self._output: Any | None = None
         self._audio: Any | None = None
         self._pending_seek_ms: int | None = None
         self._out_ms: int | None = None
@@ -359,8 +364,12 @@ class PreviewPanel(QWidget):
         without reporting anything wrong, which is what issue 38 was.
         """
         if self._player is not None:
+            # Reattached on every build, not only when a new output is given: `stop`
+            # detaches, so the second Play would otherwise render into nothing. Qt
+            # accepts None here; the stubs say QObject.
+            self._player.setVideoOutput(video_output or self._output)  # type: ignore[arg-type]
             if video_output is not None:
-                self._player.setVideoOutput(video_output)
+                self._output = video_output
             return self._player
         try:
             from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
@@ -387,6 +396,7 @@ class PreviewPanel(QWidget):
             neutralise(video)
             video_output = video
         player.setVideoOutput(video_output)
+        self._output = video_output
 
         player.mediaStatusChanged.connect(self._media_status_changed)
         player.positionChanged.connect(self._position_changed)
@@ -416,6 +426,16 @@ class PreviewPanel(QWidget):
         if player is None:
             return False
 
+        # The video page is shown and realised before the source is set. On macOS the
+        # widget is a native NSView created when it is first shown, and a layer that
+        # comes into existence after the first frame was decoded never paints it: the
+        # first Play was black and the second was fine. Creating the widget in the
+        # constructor would also fix it and would make every start pay for importing
+        # the platform's media stack, which this panel defers on purpose.
+        if self.video is not None:
+            self.show_video()
+            self.video.repaint()
+
         start, end = segment.effective_bounds
         # Kept rather than applied: a position set before the media reaches
         # LoadedMedia is dropped, and the clip then plays from the top of the file.
@@ -423,6 +443,9 @@ class PreviewPanel(QWidget):
         self._out_ms = int(end * 1000)
         self.playing_segment_id = self._segment_id
         self.stop_button.setEnabled(True)
+        # Logged so a report from another machine can say what happened rather than what
+        # it looked like. The Mac's black stage was invisible to every assertion here.
+        logger.info("playing %s from %.2f s to %.2f s", path.name, start, end)
         self.note.setText(f"Loading {path.name}…")
         player.setSource(QUrl.fromLocalFile(str(path)))
         if player.mediaStatus() in self._ready_states():
@@ -432,9 +455,16 @@ class PreviewPanel(QWidget):
         return True
 
     def stop(self) -> None:
-        """Back to the strip at the in point, ready to play the clip again."""
+        """Back to the strip at the in point, ready to play the clip again.
+
+        Paused before it is stopped, and the output detached after. On macOS with the
+        ffmpeg backend `stop()` alone left the last frame on the native layer, so the
+        user pressed Stop, the button worked, and nothing on screen changed.
+        """
         if self._player is not None:
+            self._player.pause()
             self._player.stop()
+            self._player.setVideoOutput(None)  # type: ignore[arg-type]
         self.playing_segment_id = ""
         self.show_strip()
         self.note.clear()
@@ -449,12 +479,21 @@ class PreviewPanel(QWidget):
             self._show_frame(self.scrub.value() / MS)
 
     def show_strip(self) -> None:
-        """Put the sprite strip back in front of the video."""
+        """Put the sprite strip back in front of the video.
+
+        The explicit `hide` is for macOS, where `QVideoWidget` is a native NSView
+        layered over the Qt scene: reordering Qt's own stack leaves the layer exactly
+        where it was, which is why Stop appeared to do nothing and the black rectangle
+        stayed. Harmless on Linux, where the stack had already hidden it.
+        """
+        if self.video is not None:
+            self.video.hide()
         self.picture_stack.setCurrentWidget(self.frame)
 
     def show_video(self) -> None:
         if self.video is not None:
             self.picture_stack.setCurrentWidget(self.video)
+            self.video.show()
 
     @staticmethod
     def _ready_states() -> tuple[Any, ...]:
@@ -470,6 +509,8 @@ class PreviewPanel(QWidget):
         """Seek and start once the media is loaded, and only then judge the video."""
         from PySide6.QtMultimedia import QMediaPlayer
 
+        logger.debug("media status %s for %s", status, self._segment_id)
+
         if status in self._ready_states():
             self._start_playing()
         elif status == QMediaPlayer.MediaStatus.EndOfMedia:
@@ -478,7 +519,8 @@ class PreviewPanel(QWidget):
             # beats leaving "playing from the in point" under a still picture.
             self.note.setText("The file ended before the out point.")
         elif status == QMediaPlayer.MediaStatus.InvalidMedia:
-            self.show_strip()
+            logger.warning("the platform reported invalid media for %s", self._segment_id)
+            self._abandon_playback()
             self.note.setText(
                 "The platform could not open this file. The strip above is the clip, "
                 "frame by frame."
@@ -491,6 +533,11 @@ class PreviewPanel(QWidget):
         if self._pending_seek_ms is not None:
             player.setPosition(self._pending_seek_ms)
             self._pending_seek_ms = None
+        logger.info(
+            "media ready for %s, video track %s",
+            self._segment_id,
+            "present" if player.hasVideo() else "absent",
+        )
         if player.hasVideo():
             self.show_video()
             self.note.setText("Playing from the in point. It pauses at the out point.")
@@ -515,6 +562,7 @@ class PreviewPanel(QWidget):
     def _playback_state_changed(self, state: Any) -> None:
         from PySide6.QtMultimedia import QMediaPlayer
 
+        logger.debug("playback state %s for %s", state, self._segment_id)
         playing = state == QMediaPlayer.PlaybackState.PlayingState
         # Stop follows the existence of a player, not PlayingState. Playback pauses at
         # the out point by design, and following PlayingState left the user with a
@@ -523,12 +571,28 @@ class PreviewPanel(QWidget):
         self.play_button.setText("Play" if not playing else "Playing…")
 
     def _playback_failed(self, error: Any, message: str = "") -> None:
-        del error
-        self.show_strip()
+        """Show the strip, say why, and leave the buttons in a state that makes sense.
+
+        Logged as well as shown: a report from another machine is whatever its terminal
+        said, and "it went black" is not something anyone can act on.
+        """
+        detail = message or "the platform would not open this file"
+        logger.warning("playback failed (%s): %s", error, detail)
+        self._abandon_playback()
         self.note.setText(
-            f"Playback failed: {message or 'the platform would not open this file'}. "
-            "The strip above is the clip, frame by frame."
+            f"Playback failed: {detail}. The strip above is the clip, frame by frame."
         )
+
+    def _abandon_playback(self) -> None:
+        """Give up on the video: strip in front, output detached, buttons consistent."""
+        if self._player is not None:
+            self._player.stop()
+            self._player.setVideoOutput(None)  # type: ignore[arg-type]
+        self.show_strip()
+        self.playing_segment_id = ""
+        self.stop_button.setEnabled(False)
+        self.play_button.setText("Play")
+        self.play_button.setEnabled(self._state.segment(self._segment_id) is not None)
 
     def _sound_toggled(self, on: bool) -> None:
         if self._audio is not None:

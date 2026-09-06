@@ -72,27 +72,30 @@ def no_model_downloads(request: pytest.FixtureRequest, monkeypatch: pytest.Monke
 
 
 @pytest.fixture(autouse=True)
-def recent_projects_in_tmp(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
-    """Never let a test read or write the developer's own recent projects list.
+def config_files_in_tmp(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Never let a test read or write the developer's own configuration files.
 
-    The list lives in the platform config directory, so a GUI test that opens a
-    project would otherwise add it to the real one, and a screenshot of the Project
-    screen would show whatever folders this machine happens to have opened. Patched
-    for every test rather than in the GUI ones, because the file is outside the
-    repository and nothing in a test run has any business touching it.
+    The recent projects list and the window layout live in the platform config
+    directory, so a GUI test that opens a project would otherwise add it to the real
+    list, a screenshot of the Project screen would show whatever folders this machine
+    happens to have opened, and a test that drags a splitter would rearrange the
+    developer's own window. Patched for every test rather than in the GUI ones, because
+    these files are outside the repository and nothing in a test run has any business
+    touching them.
     """
     if importlib.util.find_spec("PySide6") is None:
         yield
         return
-    from autocut.gui import recent
+    from autocut.gui import layout, recent
 
-    store = tmp_path_factory.mktemp("recent") / "recent.json"
-    original = recent.recent_path
-    recent.recent_path = lambda: store  # type: ignore[assignment]
+    directory = tmp_path_factory.mktemp("config")
+    originals = (recent.recent_path, layout.layout_path)
+    recent.recent_path = lambda: directory / "recent.json"  # type: ignore[assignment]
+    layout.layout_path = lambda path=None: path or directory / "layout.json"  # type: ignore[assignment]
     try:
         yield
     finally:
-        recent.recent_path = original  # type: ignore[assignment]
+        recent.recent_path, layout.layout_path = originals  # type: ignore[assignment]
 
 
 @pytest.fixture(autouse=True)

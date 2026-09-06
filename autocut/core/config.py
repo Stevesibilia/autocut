@@ -908,6 +908,20 @@ class GuiConfig(BaseModel):
         description="Shortest the window may be dragged. 680 leaves a 720p laptop its "
         "menu bar and dock.",
     )
+    panel_min_width: int = Field(
+        default=280,
+        ge=200,
+        le=1200,
+        description="Narrowest the Review right panel may be dragged. Under this the "
+        "preview is too small to judge a frame and the weight rows stop lining up.",
+    )
+    rail_collapsed_width: int = Field(
+        default=56,
+        ge=40,
+        le=120,
+        description="Width of the navigation rail once collapsed to icons. Wide enough "
+        "for a 16 px icon with room around it to be a target.",
+    )
     panel_collapse_width: int = Field(
         default=1280,
         ge=800,

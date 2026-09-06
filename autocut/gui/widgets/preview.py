@@ -62,6 +62,10 @@ def snap(value: float, sample_fps: float) -> float:
     return round(value * sample_fps) / sample_fps
 
 
+#: A stage shorter than this is not a preview. Well under 16:9 of the panel floor.
+MIN_STAGE_HEIGHT = 120
+
+
 class AspectStage(QWidget):
     """Holds the preview at 16:9 of whatever width it is given.
 
@@ -78,8 +82,12 @@ class AspectStage(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self.setMinimumSize(1, 1)
+        policy = QSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        # Without this a layout never calls heightForWidth and the stage, having no
+        # size hint of its own worth anything, collapsed to nothing at all.
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+        self.setMinimumSize(1, MIN_STAGE_HEIGHT)
         self._column = QVBoxLayout(self)
         self._column.setContentsMargins(0, 0, 0, 0)
 
@@ -94,13 +102,26 @@ class AspectStage(QWidget):
         """Rounded, not floored: 600 px of panel is a 338 px stage, as the spec states."""
         return round(width * 9 / 16)
 
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt override
+        """Take the height the new width implies, rather than waiting to be asked.
+
+        `heightForWidth` is the correct answer and a `QScrollArea` with a resizable
+        widget does not reliably ask for it: the stage came out at its floor whatever
+        the panel width, so a 600 px panel had a 120 px preview. Setting the height
+        here is deterministic and needs nothing from the layout above.
+        """
+        super().resizeEvent(event)
+        wanted = max(self.heightForWidth(self.width()), MIN_STAGE_HEIGHT)
+        if self.height() != wanted:
+            self.setFixedHeight(wanted)
+
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
         width = self.width() or theme.current().metrics.panel_width
         return QSize(width, self.heightForWidth(width))
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt override
-        """Nothing. The stage takes its height from its width, never from its content."""
-        return QSize(1, 1)
+        """Its own floor, never its content's: the height comes from the width."""
+        return QSize(1, MIN_STAGE_HEIGHT)
 
 
 def neutralise(widget: QWidget) -> None:
@@ -461,6 +482,9 @@ class PreviewPanel(QWidget):
         ffmpeg backend `stop()` alone left the last frame on the native layer, so the
         user pressed Stop, the button worked, and nothing on screen changed.
         """
+        # First line in the slot: a report that says "nothing happened on Stop" has to
+        # be able to distinguish a slot that never ran from a layer that would not go.
+        logger.info("stop pressed for %s, player %s", self._segment_id, self._player is not None)
         if self._player is not None:
             self._player.pause()
             self._player.stop()

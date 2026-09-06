@@ -35,7 +35,9 @@ def test_the_command_hands_the_project_folder_to_the_window(
 ) -> None:
     seen: list[Path | None] = []
     fake = types.ModuleType("autocut.gui.app")
-    fake.run = lambda project=None: seen.append(project) or 0  # type: ignore[attr-defined]
+    # `**_` so a parameter added to `run` later changes the command's tests, not these
+    # stand-ins: what this asserts is that the project folder arrives.
+    fake.run = lambda project=None, **_: seen.append(project) or 0  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "autocut.gui.app", fake)
 
     result = runner.invoke(app, ["gui", str(tmp_path)])
@@ -47,7 +49,7 @@ def test_the_command_hands_the_project_folder_to_the_window(
 def test_the_window_exit_code_is_the_command_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
     """A window that fails has to fail the command, or a script cannot tell."""
     fake = types.ModuleType("autocut.gui.app")
-    fake.run = lambda project=None: 3  # type: ignore[attr-defined]
+    fake.run = lambda project=None, **_: 3  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "autocut.gui.app", fake)
 
     result = runner.invoke(app, ["gui"])
@@ -77,7 +79,7 @@ def test_diagnose_calls_the_report_and_never_the_event_loop(
     """It exists so a Mac report can carry numbers, so it must not open a window."""
     called: list[str] = []
     fake = types.ModuleType("autocut.gui.app")
-    fake.run = lambda project=None: called.append("run") or 0  # type: ignore[attr-defined]
+    fake.run = lambda project=None, **_: called.append("run") or 0  # type: ignore[attr-defined]
     fake.diagnose = lambda: called.append("diagnose") or 0  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "autocut.gui.app", fake)
 
@@ -85,3 +87,15 @@ def test_diagnose_calls_the_report_and_never_the_event_loop(
 
     assert result.exit_code == 0
     assert called == ["diagnose"]
+
+
+def test_the_window_is_asked_to_log_when_verbose(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[bool] = []
+    fake = types.ModuleType("autocut.gui.app")
+    fake.run = lambda project=None, verbose=False: seen.append(verbose) or 0  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "autocut.gui.app", fake)
+
+    assert runner.invoke(app, ["gui", "--verbose"]).exit_code == 0
+    assert runner.invoke(app, ["gui"]).exit_code == 0
+
+    assert seen == [True, False]

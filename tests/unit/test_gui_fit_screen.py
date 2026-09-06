@@ -679,3 +679,33 @@ def test_a_saved_arrangement_is_restored_on_the_next_window(window: MainWindow, 
 
     assert restored.rail.collapsed is True
     assert not review_of(restored).panel.isVisibleTo(review_of(restored))
+
+
+def test_the_window_configures_logging_so_its_own_lines_are_seen(caplog: Any, capsys: Any) -> None:
+    """Every logger.info in this package went nowhere until the window configured one.
+
+    Warnings reached the terminal through Python's last resort handler, which is why
+    playback failures showed up on the Mac and the diagnostics added for them did not.
+    """
+    del caplog, capsys
+    import logging
+
+    gui_app.configure_logging(verbose=False)
+    assert logging.getLogger("autocut").level == logging.INFO
+    assert logging.getLogger().handlers, "nothing would print at all"
+
+    gui_app.configure_logging(verbose=True)
+    assert logging.getLogger("autocut").level == logging.DEBUG
+
+
+def test_a_wider_panel_is_a_taller_stage(window: MainWindow, qtbot: Any) -> None:
+    """The point of the splitter: 600 px of panel is a 338 px preview, not a floor."""
+    review = shown(window, qtbot)
+
+    set_panel_width(review, 600)
+    qtbot.wait(60)
+
+    stage = review.preview.stage
+    assert stage.width() > 500
+    assert stage.height() == stage.heightForWidth(stage.width())
+    assert stage.height() > 250, f"the stage stayed at {stage.height()} px"

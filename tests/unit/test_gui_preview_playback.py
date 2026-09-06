@@ -530,3 +530,19 @@ def test_the_playback_sequence_is_logged_for_a_mac_terminal(
     assert any("playing" in message for message in messages)
     assert any("playback state" in message for message in messages)
     assert any("media status" in message for message in messages)
+
+
+def test_stop_says_it_ran_before_it_does_anything(
+    panel: PreviewPanel, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The Mac reported that Stop printed nothing at all.
+
+    With no line at the top of the slot, an empty log cannot tell a slot that never
+    ran from a native layer that would not go away, and those need different fixes.
+    """
+    assert panel.play()
+
+    with caplog.at_level(logging.INFO, logger="autocut.gui.widgets.preview"):
+        panel.stop()
+
+    assert any("stop pressed" in record.getMessage() for record in caplog.records)

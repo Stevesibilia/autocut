@@ -148,3 +148,11 @@ All notable changes to this project are documented in this file. The format foll
 - The Review right panel keeps its content inside its 336 px: the file name and the range label elide with the whole text on a tooltip, the preview placeholder wraps instead of demanding 480 px of its own, and the weight value columns take their width from the font. Panel content went from 520 px to 278 px.
 - Stop is enabled whenever a player exists rather than only while it is playing, so the pause at the out point no longer leaves a paused clip and a dead button, and stopping returns the preview to the strip at the in point.
 - `autocut gui --diagnose` prints the screens with their device pixel ratios, the fonts registered and in use, the resolved theme and the window's minimum size hint and opening size, then exits.
+
+- The Review screen's centre column and right panel sit in a splitter the user drags, so the preview is as large as they make the panel. The panel keeps a 280 px floor, neither column collapses by dragging, and hiding the panel keeps the width it had.
+- The navigation rail collapses to a 56 px strip of icons with the labels on tooltips.
+- The rail state, the split position and the panel visibility are remembered per machine in `layout.json` in the configuration directory, never in the manifest.
+- The preview sits in a 16:9 stage that takes its height from the panel's width, so playing a 4K clip no longer stretches the panel into a black column and pushes every control under it off the screen.
+- Playing on macOS: the video page is shown before the source is set, because the widget is a native layer that never paints a frame decoded before it existed, and Stop pauses, stops, detaches the video output and hides the widget, since reordering Qt's stack leaves a native layer where it is.
+- `gui.panel_min_width` (280) and `gui.rail_collapsed_width` (56).
+- `autocut gui --verbose` logs the playback and layout steps to the terminal. Nothing in the project configured logging before, so every `info` and `debug` line written for a bug report went nowhere.

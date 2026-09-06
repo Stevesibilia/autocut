@@ -9,6 +9,7 @@ should be showing an empty state or a real one.
 
 from __future__ import annotations
 
+import logging
 import sys
 from dataclasses import dataclass
 from importlib.metadata import version
@@ -436,6 +437,27 @@ def theme_setting(project: Path | None) -> str:
     return AutocutConfig.load(directory / CONFIG_NAME).gui.theme
 
 
+def configure_logging(verbose: bool = False) -> None:
+    """Send the window's own log lines to the terminal it was started from.
+
+    Nothing in this project configured logging, so every `logger.info` and
+    `logger.debug` went to a root logger with no handler and printed nothing. The
+    macOS reports that said "nothing appeared on Stop" were reading an empty stream,
+    not a slot that never ran, and the diagnostics added for those reports were
+    invisible on the machine that needed them.
+
+    Warnings still reach the terminal without this, through Python's last resort
+    handler, which is why the playback failures did show up.
+    """
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    logging.getLogger("autocut").setLevel(level)
+
+
 def diagnose(project: Path | None = None) -> int:
     """Print what the window sees, and exit without entering the event loop.
 
@@ -443,6 +465,7 @@ def diagnose(project: Path | None = None) -> int:
     that "looks like a corner", a panel "cut off at the edge". This exists so the next
     one arrives as numbers, from the machine that has the problem.
     """
+    configure_logging()
     app = QApplication.instance() or QApplication(sys.argv)
     assert isinstance(app, QApplication)
     setting = theme_setting(project)
@@ -506,8 +529,9 @@ def diagnose(project: Path | None = None) -> int:
     return 0
 
 
-def run(project: Path | None = None) -> int:
+def run(project: Path | None = None, verbose: bool = False) -> int:
     """Start the application. Returns the exit code, so ``autocut gui`` can pass it on."""
+    configure_logging(verbose)
     app = QApplication.instance() or QApplication(sys.argv)
     assert isinstance(app, QApplication)
     apply_theme(app, theme_setting(project))

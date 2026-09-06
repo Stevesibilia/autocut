@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QSizePolicy,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -126,9 +125,10 @@ class SliderPanel(QWidget):
             label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             label.setFixedWidth(value_column_width(label))
             name_label = QLabel(weight_name)
-            name_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            # Preferred, not Ignored: Ignored let the column shrink to its minimum even
+            # on a wide panel, and "colorfulness" came out as "cc".
             name_label.setMinimumWidth(WEIGHT_NAME_MIN_WIDTH)
-            name_label.setMaximumWidth(WEIGHT_NAME_WIDTH)
+            name_label.setFixedWidth(WEIGHT_NAME_WIDTH)
 
             # Name, bar and value on one line: six of them read as a column of numbers
             # rather than as six stacked controls, which is what the mockup asked for.

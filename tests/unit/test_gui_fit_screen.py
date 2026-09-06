@@ -461,10 +461,23 @@ def test_nothing_in_the_stage_can_impose_a_size(window: MainWindow, qtbot: Any) 
         assert widget.minimumSize().height() <= 1, name
 
 
-def test_the_stage_reports_nothing_of_its_own_to_the_panel(window: MainWindow) -> None:
-    """Its height is a function of its width, so its minimum cannot come from content."""
+def test_the_stage_minimum_is_its_own_floor_not_its_content(window: MainWindow) -> None:
+    """Its height comes from its width and from a floor of its own, never from a page.
+
+    The floor exists because a stage shorter than about 120 px is not a preview. What
+    matters is that a 4K page cannot raise it, which is what the policy checks above
+    prove and what the panel's height depends on.
+    """
+    from autocut.gui.widgets.preview import MIN_STAGE_HEIGHT
+
     review = review_of(window)
-    assert review.preview.stage.minimumSizeHint().height() <= 1
+    stage = review.preview.stage
+
+    before = stage.minimumSizeHint().height()
+    stage.set_content(HugeVideo())
+
+    assert before == MIN_STAGE_HEIGHT
+    assert stage.minimumSizeHint().height() == MIN_STAGE_HEIGHT
 
 
 def test_a_playing_video_does_not_stretch_the_panel(window: MainWindow, qtbot: Any) -> None:

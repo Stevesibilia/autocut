@@ -1256,3 +1256,91 @@ def test_the_summary_counts_the_stacks_and_the_places(screen: ReviewScreen) -> N
 
     assert screen.groups_summary.text() == groups_summary(screen._state.manifest)
     assert screen.groups_summary.text()
+
+
+# --- getting back to the grid from the montage ------------------------------
+
+
+@pytest.mark.ffmpeg
+def test_the_back_button_returns_to_the_grid(real_state: ProjectState, qtbot: Any) -> None:
+    """Found on the Mac: Play all had no way out, so the tiles were simply gone.
+
+    `show_grid` existed and nothing called it. The only way back was toggling Similar
+    groups on and off, or reopening the project.
+    """
+    screen = ReviewScreen(real_state)
+    qtbot.addWidget(screen)
+    screen.resize(1200, 780)
+    with qtbot.waitSignal(real_state.stage_finished, timeout=180_000):
+        assert screen.play_all()
+    assert screen.stack.currentWidget() is screen.montage
+
+    qtbot.mouseClick(screen.montage.back_button, Qt.MouseButton.LeftButton)
+
+    assert screen.stack.currentWidget() is screen.grid
+    assert screen.play_all_button.text() == "Play all"
+
+
+@pytest.mark.ffmpeg
+def test_escape_on_the_montage_returns_to_the_grid(real_state: ProjectState, qtbot: Any) -> None:
+    screen = ReviewScreen(real_state)
+    qtbot.addWidget(screen)
+    screen.resize(1200, 780)
+    screen.show()
+    qtbot.waitExposed(screen)
+    with qtbot.waitSignal(real_state.stage_finished, timeout=180_000):
+        assert screen.play_all()
+    assert screen.stack.currentWidget() is screen.montage
+
+    qtbot.keyClick(screen.montage, Qt.Key.Key_Escape)
+
+    assert screen.stack.currentWidget() is screen.grid
+
+
+@pytest.mark.ffmpeg
+def test_the_top_bar_action_toggles_and_comes_back(real_state: ProjectState, qtbot: Any) -> None:
+    """One button in the bar: it enters the montage and leaves it again."""
+    screen = ReviewScreen(real_state)
+    qtbot.addWidget(screen)
+    screen.resize(1200, 780)
+    with qtbot.waitSignal(real_state.stage_finished, timeout=180_000):
+        assert screen.play_all()
+
+    assert screen.play_all_button.text() == "Back to clips"
+
+    screen.play_all_button.click()
+
+    assert screen.stack.currentWidget() is screen.grid
+    assert screen.play_all_button.text() == "Play all"
+
+
+@pytest.mark.ffmpeg
+def test_coming_back_selects_the_clip_that_was_playing(
+    real_state: ProjectState, qtbot: Any
+) -> None:
+    """The reviewer lands on what they were watching, not on wherever they left."""
+    screen = ReviewScreen(real_state)
+    qtbot.addWidget(screen)
+    screen.resize(1200, 780)
+    with qtbot.waitSignal(real_state.stage_finished, timeout=180_000):
+        assert screen.play_all()
+    last = screen.montage.parts[-1]
+    # Announced rather than seeked: offscreen the player's position never actually
+    # moves, so a seek proves nothing. This is the path playback itself takes, which
+    # is what `show_grid` reads.
+    screen.montage._announce(last)
+    qtbot.wait(50)
+
+    screen.show_grid()
+
+    assert screen.grid.current_id() == last.segment_id
+    assert screen.preview.title.text().endswith(".mp4")
+
+
+def test_the_action_label_follows_the_view_without_a_montage(screen: ReviewScreen) -> None:
+    """No montage rendered yet, so the bar still offers to build one."""
+    assert screen.play_all_button.text() == "Play all"
+
+    screen.show_grid()
+
+    assert screen.play_all_button.text() == "Play all"

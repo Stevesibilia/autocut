@@ -417,11 +417,29 @@ class ReviewScreen(QWidget):
         centre = min(self.default_centre_width(), max(width - self.panel.minimumWidth(), 0))
         self.set_split([centre, max(width - centre, 0)])
 
+    @property
+    def panel_width(self) -> int:
+        """The panel's width, or the last one it had while it was visible.
+
+        The splitter reports a hidden panel as zero, so this is what to save: without
+        it a session that ended with the panel hidden restored the default rather than
+        the width the user had chosen.
+        """
+        if self.panel.isVisible() and self.panel.width() > 0:
+            return self.panel.width()
+        return self._panel_width
+
+    def set_panel_width(self, width: int) -> None:
+        """Restore the width to give the panel when it is next shown."""
+        if width > 0:
+            self._panel_width = width
+
     def set_panel_visible(self, visible: bool) -> None:
         """Show or hide the right panel and remember it for the session.
 
         Hidden rather than narrowed, and its width is kept: a panel dragged to 600 px
-        and then hidden comes back at 600 px, not at its minimum.
+        and then hidden comes back at 600 px, not at its minimum, and that holds across
+        a restart because the width is saved in its own field.
         """
         if not visible and self.panel.isVisible():
             self._panel_width = self.panel.width() or self._panel_width

@@ -26,7 +26,12 @@ def test_the_defaults_are_what_an_unarranged_window_wants() -> None:
 
 def test_a_layout_round_trips(tmp_path: Path) -> None:
     store = tmp_path / "layout.json"
-    saved = LayoutState(rail_collapsed=True, review_split=[900, 540], review_panel_visible=False)
+    saved = LayoutState(
+        rail_collapsed=True,
+        review_split=[900, 540],
+        review_panel_visible=False,
+        review_panel_width=600,
+    )
 
     assert save_layout(saved, store)
 
@@ -77,6 +82,10 @@ def test_a_key_from_a_newer_version_is_ignored_rather_than_fatal(tmp_path: Path)
         {"review_panel_visible": 3},
         {"review_split": "900,540"},
         {"review_split": [900, "540"]},
+        {"review_panel_width": "600"},
+        {"review_panel_width": -1},
+        # `bool` is an `int` in Python, and `true` is not a width.
+        {"review_panel_width": True},
     ],
 )
 def test_a_value_of_the_wrong_shape_is_dropped(tmp_path: Path, raw: dict[str, object]) -> None:

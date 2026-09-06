@@ -38,6 +38,10 @@ class LayoutState:
     review_split: list[int] = field(default_factory=list)
     #: Whether the Review right panel is showing. None means "decide from the width".
     review_panel_visible: bool | None = None
+    #: How wide the panel was when it was last visible. Its own field because the
+    #: splitter reports a hidden panel as zero, so a session that ended with the panel
+    #: hidden saved no width at all and the next start handed it the default.
+    review_panel_width: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -61,6 +65,14 @@ class LayoutState:
                 state.rail_collapsed = value
             elif key == "review_panel_visible" and (value is None or isinstance(value, bool)):
                 state.review_panel_visible = value
+            elif (
+                key == "review_panel_width"
+                # `bool` is an `int` in Python, and `true` is not a width.
+                and isinstance(value, int)
+                and not isinstance(value, bool)
+                and value >= 0
+            ):
+                state.review_panel_width = value
             elif key == "review_split" and isinstance(value, list):
                 sizes = [int(item) for item in value if isinstance(item, int | float)]
                 state.review_split = sizes if len(sizes) == len(value) else []

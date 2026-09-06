@@ -221,6 +221,9 @@ class MainWindow(QMainWindow):
         self.resize(opening)
 
         self.rail.set_collapsed(self.layout_state.rail_collapsed)
+        # Before the panel is first shown, so a restored hidden panel opens at the width
+        # it was dragged to rather than at the default.
+        review_screen.set_panel_width(self.layout_state.review_panel_width)
         if self.layout_state.review_panel_visible is not None:
             self.state.review_panel_visible = self.layout_state.review_panel_visible
         review_screen.adopt_panel_state(opening.width())
@@ -268,6 +271,7 @@ class MainWindow(QMainWindow):
         self.layout_state.rail_collapsed = self.rail.collapsed
         self.layout_state.review_split = review.split()
         self.layout_state.review_panel_visible = self.state.review_panel_visible
+        self.layout_state.review_panel_width = review.panel_width
         save_layout(self.layout_state)
 
     @property

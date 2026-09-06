@@ -722,3 +722,46 @@ def test_a_wider_panel_is_a_taller_stage(window: MainWindow, qtbot: Any) -> None
     assert stage.width() > 500
     assert stage.height() == stage.heightForWidth(stage.width())
     assert stage.height() > 250, f"the stage stayed at {stage.height()} px"
+
+
+def test_a_hidden_panel_keeps_its_width_across_a_restart(window: MainWindow, qtbot: Any) -> None:
+    """The promise `set_panel_visible` makes has to survive the window closing.
+
+    `splitter.sizes()` of a hidden panel is `[everything, 0]`, so a session that ended
+    with the panel hidden saved no width at all and the next start handed it the
+    default. A panel dragged to 600 px came back at 336.
+    """
+    from autocut.gui.layout import load_layout
+
+    review = shown(window, qtbot)
+    set_panel_width(review, 600)
+    qtbot.wait(40)
+
+    review.set_panel_visible(False)
+    window._save_layout()
+
+    assert load_layout().review_panel_width == 600
+
+    restored = build_window(ProjectState())
+    qtbot.addWidget(restored)
+    restored.resize(1440, 900)
+    restored.show()
+    qtbot.waitExposed(restored)
+    restored.go_to("review")
+    later = review_of(restored)
+    later.set_panel_visible(True)
+    qtbot.wait(40)
+
+    assert abs(later.panel.width() - 600) < 40, later.split()
+
+
+def test_a_visible_panel_saves_the_width_it_is_showing(window: MainWindow, qtbot: Any) -> None:
+    from autocut.gui.layout import load_layout
+
+    review = shown(window, qtbot)
+    set_panel_width(review, 520)
+    qtbot.wait(40)
+
+    window._save_layout()
+
+    assert abs(load_layout().review_panel_width - 520) < 40

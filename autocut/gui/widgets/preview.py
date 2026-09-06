@@ -20,7 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtCore import QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -59,6 +59,58 @@ def snap(value: float, sample_fps: float) -> float:
     if sample_fps <= 0:
         return value
     return round(value * sample_fps) / sample_fps
+
+
+class AspectStage(QWidget):
+    """Holds the preview at 16:9 of whatever width it is given.
+
+    The panel's height must not depend on what is playing. A `QStackedWidget` reports
+    the largest hint of its pages and `QVideoWidget` reports the footage's native size
+    once a clip is loaded, so on the Mac the first Play of a 4K clip turned the panel
+    into a 2160 px column and pushed every control under it off the screen.
+
+    Two things stop that. The stage answers `heightForWidth` instead of a size hint of
+    its own, so its height is a function of the panel width and nothing else. And the
+    pages inside it are given `Ignored` policies with a 1x1 minimum, so whichever hint
+    Qt consults on a given platform, there is nothing there to consult.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setMinimumSize(1, 1)
+        self._column = QVBoxLayout(self)
+        self._column.setContentsMargins(0, 0, 0, 0)
+
+    def set_content(self, widget: QWidget) -> None:
+        self._column.addWidget(widget)
+        neutralise(widget)
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802 - Qt override
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802 - Qt override
+        """Rounded, not floored: 600 px of panel is a 338 px stage, as the spec states."""
+        return round(width * 9 / 16)
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        width = self.width() or theme.current().metrics.panel_width
+        return QSize(width, self.heightForWidth(width))
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        """Nothing. The stage takes its height from its width, never from its content."""
+        return QSize(1, 1)
+
+
+def neutralise(widget: QWidget) -> None:
+    """Stop `widget` telling any layout how big it would like to be.
+
+    Used on the strip label and on the video widget: the point of the stage is that the
+    panel's height is a function of its width, and a page with a size hint of its own
+    is a page that can override that.
+    """
+    widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+    widget.setMinimumSize(1, 1)
 
 
 #: Below this an elided label says nothing at all, so it stops shrinking and the panel
@@ -114,6 +166,10 @@ class PreviewPanel(QWidget):
         # one picture too many.
         self.picture_stack = QStackedWidget()
         self.picture_stack.addWidget(self.frame)
+        neutralise(self.frame)
+        neutralise(self.picture_stack)
+        self.stage = AspectStage()
+        self.stage.set_content(self.picture_stack)
         self.video: QWidget | None = None
 
         self.scrub = QSlider(Qt.Orientation.Horizontal)
@@ -186,7 +242,9 @@ class PreviewPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(metrics.space + 2)
         layout.addLayout(heading)
-        layout.addWidget(self.picture_stack, 1)
+        # No stretch: the stage is exactly as tall as its width makes it, and the
+        # controls below keep their own height whatever is playing.
+        layout.addWidget(self.stage)
         layout.addWidget(self.scrub)
         layout.addLayout(bounds_heading)
         layout.addWidget(self.start_slider)
@@ -322,9 +380,11 @@ class PreviewPanel(QWidget):
 
         if video_output is None:
             video = QVideoWidget()
-            video.setMinimumHeight(180)
             self.video = video
             self.picture_stack.addWidget(video)
+            # Before anything is played: once a clip loads, this widget reports the
+            # footage's native size and a 4K clip would otherwise take the panel with it.
+            neutralise(video)
             video_output = video
         player.setVideoOutput(video_output)
 

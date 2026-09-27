@@ -449,7 +449,7 @@ instrument_alternates = ["rolling banjo"]
 [places]
 geocode = true
 min_interval_s = 1.0
-# user_agent = "autocut/0.0.1"   # defaults to autocut/<version>
+# user_agent = "autocut/0.5.0"   # defaults to autocut/<version>
 
 # The window. Everything here is about the desktop application and is ignored by the
 # commands. The theme is applied when the window opens, so a change takes effect at the

@@ -30,7 +30,7 @@
 
 ## 4. Gates and hand-back
 
-- [ ] 4.1 `make lint` in the venv. It covers `autocut/gui` because the venv has the `gui` extra.
-- [ ] 4.2 Validate the change: `openspec validate manifest-version-guard --strict`.
-- [ ] 4.3 Hand the suites to a test runner: `make test`, and the gui suite in `dev-gui` (`make docker-test-gui`). Quote the counts as printed.
-- [ ] 4.4 Push the branch and hand back. Tick these boxes in the same push.
+- [x] 4.1 `make lint` in the venv. It covers `autocut/gui` because the venv has the `gui` extra.
+- [x] 4.2 Validate the change: `openspec validate manifest-version-guard --strict`.
+- [x] 4.3 Hand the suites to a test runner: `make test`, and the gui suite in `dev-gui` (`make docker-test-gui`). Quote the counts as printed.
+- [x] 4.4 Push the branch and hand back. Tick these boxes in the same push.

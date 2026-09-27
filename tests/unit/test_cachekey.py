@@ -30,6 +30,15 @@ def test_copy_at_another_path_keeps_the_key(tmp_path: Path) -> None:
     assert cache_key(original) == cache_key(copied)
 
 
+def test_copy_without_the_mtime_gets_a_new_key(tmp_path: Path) -> None:
+    """The documented limit (ADR 6): a copy that resets the mtime is a new file."""
+    original = write(tmp_path / "src" / "DJI_0001.MP4", os.urandom(3 * 1024 * 1024))
+    copied = write(
+        tmp_path / "dst" / "DJI_0001.MP4", original.read_bytes(), mtime_ns=1_800_000_000_000_000_000
+    )
+    assert cache_key(original) != cache_key(copied)
+
+
 def test_different_first_megabyte_gives_a_different_key(tmp_path: Path) -> None:
     size = 3 * 1024 * 1024
     tail = os.urandom(size // 2)

@@ -412,7 +412,7 @@ Modules in order of value over complexity:
 
 `manifest.json` is the single source of truth and the project file. For each analyzed segment: source path, proxy path if any, class, in and out points, best window center, all raw metrics, composite score, outcome (selected or rejected) with reason, tags, caption, embedding reference, exported path. Opening a manifest in the GUI restores the full review state. The schema is versioned.
 
-**Analysis cache** is global, in the platform cache directory (`~/.cache/autocut/` on Linux, `~/Library/Caches/autocut/` on macOS). The key is path, size, mtime and a hash of the first and last 1 MB. Per source file, one `.npz` with metric arrays and embeddings plus a JSON with probe and telemetry. Re-running on the same footage with different weights is instantaneous, in any project. See ADR 6.
+**Analysis cache** is global, in the platform cache directory (`~/.cache/autocut/` on Linux, `~/Library/Caches/autocut/` on macOS). The key is size, mtime and a hash of the first and last 1 MB, without the path, so a file read over a share or copied with its mtime preserved keeps its entry; a copy that resets the mtime is analyzed again. Per source file, one `.npz` with metric arrays and embeddings plus a JSON with probe and telemetry. Re-running on the same footage with different weights is instantaneous, in any project. See ADR 6.
 
 ## 10. CLI
 

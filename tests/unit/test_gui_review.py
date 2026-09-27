@@ -1327,10 +1327,9 @@ def test_coming_back_selects_the_clip_that_was_playing(
     last = screen.montage.parts[-1]
     # Announced rather than seeked: offscreen the player's position never actually
     # moves, so a seek proves nothing. This is the path playback itself takes, which
-    # is what `show_grid` reads.
+    # is what `show_grid` reads. No wait follows: the real player is still playing,
+    # and the next position update would announce clip 0 again over this one (#69).
     screen.montage._announce(last)
-    qtbot.wait(50)
-
     screen.show_grid()
 
     assert screen.grid.current_id() == last.segment_id

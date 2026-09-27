@@ -11,7 +11,7 @@ In the flaky test (`tests/unit/test_gui_review.py:1318`), `play_all()` leaves a 
 
 ## Decisions
 
-**1. A dedicated error that is a `ValueError`.** Add `class ManifestVersionError(ValueError)` to `autocut/core/manifest.py`. It subclasses `ValueError` so that the GUI's existing `except (FileNotFoundError, ValueError)` handlers show it without change. It carries `found: int` and `supported: int` as attributes. The message is written for the user, with the path, for example:
+**1. A dedicated error that is a `ValueError`.** Add `class ManifestVersionError(ValueError)` to `autocut/core/manifest.py`. It subclasses `ValueError` so that the GUI's existing `except (FileNotFoundError, ValueError)` handlers show it without change. It carries `found: int` and `supported: int` as attributes. When no version can be read (a `schema_version` that is not an integer, or a top level that is not an object), `found` is `0`: no manifest was ever written with version 0, so the sentinel cannot be mistaken for a real version, and callers read the message, not the attribute (decided during the build). The message is written for the user, with the path, for example:
 
 `/path/manifest.json was saved by a newer AutoCut (manifest schema 2); this build reads up to schema 1. Update AutoCut to open this project.`
 

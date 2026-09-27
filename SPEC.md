@@ -410,7 +410,7 @@ Modules in order of value over complexity:
 
 ## 9. Data model
 
-`manifest.json` is the single source of truth and the project file. For each analyzed segment: source path, proxy path if any, class, in and out points, best window center, all raw metrics, composite score, outcome (selected or rejected) with reason, tags, caption, embedding reference, exported path. Opening a manifest in the GUI restores the full review state. The schema is versioned.
+`manifest.json` is the single source of truth and the project file. For each analyzed segment: source path, proxy path if any, class, in and out points, best window center, all raw metrics, composite score, outcome (selected or rejected) with reason, tags, caption, embedding reference, exported path. Opening a manifest in the GUI restores the full review state. The schema is versioned. A manifest from a newer schema is refused rather than loaded and rewritten, and an older one is brought up to date one version at a time by a migration step on load.
 
 **Analysis cache** is global, in the platform cache directory (`~/.cache/autocut/` on Linux, `~/Library/Caches/autocut/` on macOS). The key is path, size, mtime and a hash of the first and last 1 MB. Per source file, one `.npz` with metric arrays and embeddings plus a JSON with probe and telemetry. Re-running on the same footage with different weights is instantaneous, in any project. See ADR 6.
 

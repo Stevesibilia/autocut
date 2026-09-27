@@ -7,9 +7,10 @@ rather than final in and out points.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -17,6 +18,49 @@ from autocut.core.config import CutMode, SourceClass
 
 MANIFEST_SCHEMA_VERSION = 1
 ANALYSIS_SCHEMA_VERSION = 1
+
+
+class ManifestVersionError(ValueError):
+    """A manifest this build cannot read: a newer schema, or an unreadable version tag."""
+
+    def __init__(self, message: str, *, found: int, supported: int) -> None:
+        super().__init__(message)
+        self.found = found
+        self.supported = supported
+
+
+#: Migration steps keyed by the version each one migrates *from*. Empty while
+#: ``MANIFEST_SCHEMA_VERSION`` is 1, because there is nothing yet to migrate from.
+_MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {}
+
+
+def _migrate(data: dict[str, Any], path: Path) -> dict[str, Any]:
+    """Refuse a manifest from a newer schema, else bring it up to date one step at a time."""
+    version = data.get("schema_version", 1)
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise ManifestVersionError(
+            f"{path} has an unreadable schema_version ({version!r})",
+            found=0,
+            supported=MANIFEST_SCHEMA_VERSION,
+        )
+    if version > MANIFEST_SCHEMA_VERSION:
+        raise ManifestVersionError(
+            f"{path} was saved by a newer AutoCut (manifest schema {version}); this "
+            f"build reads up to schema {MANIFEST_SCHEMA_VERSION}. Update AutoCut to "
+            "open this project.",
+            found=version,
+            supported=MANIFEST_SCHEMA_VERSION,
+        )
+    while version < MANIFEST_SCHEMA_VERSION:
+        try:
+            step = _MIGRATIONS[version]
+        except KeyError:
+            raise RuntimeError(f"No migration registered for manifest schema {version}") from None
+        data = step(data)
+        version += 1
+    data["schema_version"] = MANIFEST_SCHEMA_VERSION
+    return data
+
 
 Outcome = Literal["candidate", "selected", "rejected"]
 TagSource = Literal["local", "cloud"]
@@ -635,7 +679,14 @@ class Manifest(BaseModel):
 
     @classmethod
     def load(cls, path: Path) -> Manifest:
-        return cls.model_validate_json(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ManifestVersionError(
+                f"{path} is not a manifest",
+                found=0,
+                supported=MANIFEST_SCHEMA_VERSION,
+            )
+        return cls.model_validate(_migrate(data, path))
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

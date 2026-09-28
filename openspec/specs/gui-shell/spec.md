@@ -3,9 +3,7 @@
 ## Purpose
 
 The GUI shell is the window, the navigation and the machinery under every screen: one state object over the manifest, worker threads for core stages, and autosave.
-
 ## Requirements
-
 ### Requirement: Entry point and window
 
 `autocut gui [project]` SHALL open a main window with a slim left rail over five screens: Project, Analysis, Review, Soundtrack, Export, each with an icon and a label, the active one marked in the accent colour. A top bar SHALL show the project name, the file and candidate counts, the selected clip count, the edit duration and the synced BPM when present, plus the primary actions of the current screen. The rail SHALL end with a block naming this machine's ffmpeg version, the embedding backend and whether cloud is on, and a toggle that collapses the rail to an icon only strip of `gui.rail_collapsed_width` (default 56 px) with the labels on tooltips, and expands it again. Screens later in the flow SHALL be disabled until their prerequisites exist in the manifest (analysis before review, selection before soundtrack and export). When the `gui` extra is not installed the command SHALL exit non-zero with a one line message naming the extra.
@@ -84,3 +82,27 @@ Every visible string SHALL be English. The window SHALL render with the design t
 
 - **WHEN** the application starts with the default settings on a light macOS desktop
 - **THEN** the window renders with the dark token set and the Fusion style
+
+### Requirement: Closing during a stage
+
+Closing the window while a stage runs SHALL cancel the stage, keep the window open with a status message, and close the window once the stage has ended. The manifest SHALL be saved only after the worker has stopped writing it. Closing SHALL NOT block the UI thread while it waits. Closing a project SHALL report failure, and SHALL NOT save, when the stage does not stop within `gui.close_wait_ms`.
+
+#### Scenario: Close during export
+
+- **WHEN** the user closes the window while an export is encoding a clip
+- **THEN** the window stays open with a message, the export stops after the current clip, the manifest is saved once, and the window closes
+
+#### Scenario: Stage does not stop in time
+
+- **WHEN** a project is closed and its stage does not stop within `gui.close_wait_ms`
+- **THEN** closing reports failure, nothing is saved, and the project stays open
+
+### Requirement: Worker lifetime
+
+A worker thread SHALL be released once its stage has ended.
+
+#### Scenario: Several stages
+
+- **WHEN** the user runs three stages one after another
+- **THEN** no finished worker thread remains alive
+

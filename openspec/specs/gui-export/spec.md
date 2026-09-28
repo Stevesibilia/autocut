@@ -3,9 +3,7 @@
 ## Purpose
 
 The Export screen turns the reviewed, synced edit into the folder that goes to CapCut, with every export option visible and the result one click away.
-
 ## Requirements
-
 ### Requirement: Options bound to config
 
 The screen SHALL expose target fps (auto or value), maximum resolution, precise or fast mode, codec, audio removal per class, vertical strategy, slow motion per class, LUT file per class, lens correction per class, the rejects folder toggle, and a "Also render the montage with the track" toggle with its fade-out length, bound to the project configuration and written to `autocut.toml`. When the render toggle is on, Export SHALL run the render after the clips and the summary SHALL name the rendered file.
@@ -42,3 +40,13 @@ The screen SHALL show how many stale files were moved to `_selects/_stale/` and 
 
 - **WHEN** three clips were dropped since the last export
 - **THEN** the summary reports three stale files moved and offers deletion
+
+### Requirement: Export summary measured off the UI thread
+
+The size of the selects folder shown in the export summary SHALL be measured by the export worker, not on the UI thread.
+
+#### Scenario: Large selects folder
+
+- **WHEN** an export finishes into a folder with many clips
+- **THEN** the summary shows the folder size and the window did not walk the folder on the UI thread
+

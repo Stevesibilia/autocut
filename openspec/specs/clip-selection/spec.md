@@ -3,9 +3,7 @@
 ## Purpose
 
 Clip selection chooses the final ordered set of clips from the scored candidates, balancing quality against diversity and honoring per-file, per-class and total caps.
-
 ## Requirements
-
 ### Requirement: Greedy selection with similarity penalty
 
 The system SHALL select candidates iteratively, at each step picking the candidate that maximizes `score - lambda * max(similarity to already selected)` among those still eligible, where `lambda` is `selection.diversity_lambda`. Rejected segments MUST never be eligible. When `export.vertical_strategy` is `exclude`, segments of display-vertical files MUST NOT be eligible and SHALL be marked with reason `vertical` while keeping outcome `candidate`, so the report shows them as excluded by policy rather than rejected on quality.
@@ -124,3 +122,18 @@ Selected segments SHALL have outcome `selected` and an `order` starting at 1 fol
 
 - **WHEN** `autocut run ./footage --out ./edit` completes
 - **THEN** `manifest.json` has selected segments and `report.html` exists
+
+### Requirement: Cached entries for re-selection
+
+Selection SHALL keep up to `cache.memory_entries` recently read analysis cache entries in memory. An entry SHALL be read from disk again only when its files changed or it was evicted. Cached entries SHALL be read-only, and the visual hashes derived from their thumbnails SHALL be computed once per entry. A value of 0 SHALL disable the cache.
+
+#### Scenario: Repeated re-selection
+
+- **WHEN** selection runs ten times in a row on an unchanged project
+- **THEN** each cache entry is read from disk once, and the selection result is the same each time
+
+#### Scenario: Re-analysed file
+
+- **WHEN** a file's cache entry is rewritten between two selections
+- **THEN** the second selection reads the new entry
+

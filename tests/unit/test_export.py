@@ -7,6 +7,7 @@ is skipped has nothing to do with libx264.
 
 from __future__ import annotations
 
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -765,6 +766,24 @@ def test_pool_worker_failure_is_isolated(tmp_path: Path, synthetic_dir: Path) ->
     assert b_segment.export_error.startswith("worker failed:")
 
 
+def test_a_timeout_leaves_no_partial_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manifest = project(tmp_path)
+    source = add_file(manifest, "a")
+    segment = add_segment(manifest, "a:0", "a")
+    plan = plan_export(segment, source, manifest, AutocutConfig(), output=tmp_path / "out.mp4")
+
+    def times_out(*args: object, **kwargs: object) -> None:
+        plan.output.parent.mkdir(parents=True, exist_ok=True)
+        plan.output.write_bytes(b"partial")
+        raise subprocess.TimeoutExpired(cmd="ffmpeg", timeout=1.0)
+
+    monkeypatch.setattr("subprocess.run", times_out)
+    clip = export_one(plan, "a:0", "digest")
+
+    assert clip.error
+    assert not plan.output.exists()
+
+
 def test_a_missing_ffmpeg_is_reported_as_such(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -805,8 +824,6 @@ def probe_rotation(path: Path) -> int:
 
 
 def _ffprobe(path: Path, entries: str, video_only: bool = False) -> str:
-    import subprocess
-
     command = ["ffprobe", "-v", "error"]
     if video_only:
         command += ["-select_streams", "v:0"]

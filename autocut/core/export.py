@@ -136,6 +136,8 @@ def export_one(plan: ExportPlan, segment_id: str, digest: str) -> ClipResult:
     except FileNotFoundError:
         return ClipResult(segment_id, plan.output, digest, error="ffmpeg not found on PATH")
     except subprocess.SubprocessError as exc:
+        # A timeout, among other things, can leave a partial file at the output path.
+        plan.output.unlink(missing_ok=True)
         return ClipResult(segment_id, plan.output, digest, error=str(exc))
 
     if completed.returncode != 0 or not plan.output.exists():

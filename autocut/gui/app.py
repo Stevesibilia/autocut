@@ -198,6 +198,10 @@ class MainWindow(QMainWindow):
         self.state.stage_started.connect(lambda name: self._set_status(f"Running {name}"))
         self.state.stage_finished.connect(lambda name: self._set_status(f"{name} finished"))
         self.state.stage_cancelled.connect(lambda name: self._set_status(f"{name} cancelled"))
+        # Set by a close that arrived during a stage: the window closes itself once the
+        # worker has stopped, rather than waiting for it on the UI thread.
+        self._close_pending = False
+        self.state.stage_ended.connect(self._close_if_pending)
 
         self.state.segments_changed.connect(lambda _ids: self.refresh_top_bar())
         self.state.selection_changed.connect(self.refresh_top_bar)
@@ -328,15 +332,34 @@ class MainWindow(QMainWindow):
         SettingsDialog(self.state, self).exec()
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
-        """Never lose review work, and never leave a thread running behind the window."""
+        """Never lose review work, and never leave a thread running behind the window.
+
+        A close during a stage is deferred, not waited out. The cancel is only seen
+        between files, so an encode can run on for minutes: waiting here froze the
+        window, and giving up on the wait saved the manifest while the worker was still
+        writing it. The stage is cancelled, the window stays open with a message, and
+        ``stage_ended`` closes it again once the worker has stopped.
+        """
         # Written now rather than on the debounce: the timer will not fire once the
         # window is gone, and the arrangement the user left is the one to restore.
         self._save_layout()
-        if self.state.is_running:
-            self.state.cancel()
-            self.state.wait_for_stage(10_000)
-        self.state.close_project()
+        state = self.state
+        if state.is_running:
+            name = state.running_stage or "the stage"
+            state.cancel()
+            self._close_pending = True
+            self._set_status(f"Stopping {name}; the window closes when the current file is done.")
+            event.ignore()
+            return
+        if not state.close_project():
+            event.ignore()
+            return
         event.accept()
+
+    def _close_if_pending(self, _name: str) -> None:
+        if self._close_pending:
+            self._close_pending = False
+            self.close()
 
 
 def resolve_theme(setting: str, app: QApplication) -> theme.ThemeName:

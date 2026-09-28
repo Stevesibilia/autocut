@@ -961,6 +961,16 @@ class GuiConfig(_Strict):
         description="Window width under which the Review screen starts with its right "
         "panel collapsed, so the grid keeps the width on a small display.",
     )
+    close_wait_ms: int = Field(
+        default=5000,
+        ge=0,
+        le=120_000,
+        description="How long closing a project waits for a cancelled stage to stop "
+        "before giving up without saving. The cancel is seen between files, so a stage "
+        "in the middle of an encode can outlast it; the window then stays open and "
+        "closes itself when the stage ends, rather than freezing or saving a manifest "
+        "the worker is still writing.",
+    )
     theme: Literal["dark", "light", "system"] = Field(
         default="dark",
         description="Which token set the window is drawn with. Dark by default because "

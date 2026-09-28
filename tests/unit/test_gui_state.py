@@ -300,11 +300,67 @@ def test_closing_during_a_stage_cancels_waits_and_then_saves(
     assert state.run_stage("analysis", work)
     assert started.wait(5.0)
 
-    state.close_project()
+    assert state.close_project() is True
 
     assert not state.is_running
     assert (out / "manifest.json").exists()
     assert not state.is_open
+
+
+def test_closing_gives_up_without_saving_when_the_stage_will_not_stop(
+    state: ProjectState, tmp_path: Path, qtbot: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stage deaf to cancel must not be saved under: the project stays open instead."""
+    out = tmp_path / "edit"
+    state.new_project([tmp_path], out)
+    state.config.gui.close_wait_ms = 50
+    saves: list[int] = []
+    monkeypatch.setattr(Manifest, "save", lambda _self, _path: saves.append(1))
+    gate = threading.Event()
+    assert state.run_stage("export", lambda _progress: gate.wait(10.0))
+
+    assert state.close_project() is False
+
+    assert saves == []
+    assert state.is_open
+    with qtbot.waitSignal(state.stage_ended, timeout=10_000):
+        gate.set()
+
+
+def test_stage_ended_comes_after_the_worker_is_gone(
+    state: ProjectState, tmp_path: Path, qtbot: Any
+) -> None:
+    """The window closes itself from this signal, so nothing may be running by then."""
+    out = tmp_path / "edit"
+    state.new_project([tmp_path], out)
+    seen: list[tuple[str, bool, str]] = []
+    state.stage_finished.connect(lambda name: seen.append(("finished", state.is_open, name)))
+    state.stage_ended.connect(lambda name: seen.append(("ended", state.is_running, name)))
+
+    with qtbot.waitSignal(state.stage_ended, timeout=5000):
+        assert state.run_stage("analysis", lambda _progress: None)
+
+    assert seen == [("finished", True, "analysis"), ("ended", False, "analysis")]
+    assert state.running_stage is None
+
+
+def test_finished_workers_are_released(state: ProjectState, tmp_path: Path, qtbot: Any) -> None:
+    out = tmp_path / "edit"
+    state.new_project([tmp_path], out)
+    destroyed: list[int] = []
+
+    def watch(_name: str) -> None:
+        worker = state._worker
+        assert worker is not None
+        worker.destroyed.connect(lambda: destroyed.append(1))
+
+    state.stage_started.connect(watch)
+    for _ in range(3):
+        with qtbot.waitSignal(state.stage_ended, timeout=5000):
+            assert state.run_stage("analysis", lambda _progress: None)
+
+    assert state._worker is None
+    qtbot.waitUntil(lambda: len(destroyed) == 3, timeout=5000)
 
 
 def test_a_failing_stage_reports_and_logs_the_traceback(

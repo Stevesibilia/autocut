@@ -150,6 +150,14 @@ class ProjectState(QObject):
     stage_started = Signal(str)
     stage_finished = Signal(str)
     stage_cancelled = Signal(str)
+    stage_ended = Signal(str)
+    """The worker of the named stage has stopped, however it stopped.
+
+    Emitted after ``is_running`` has turned false, so a slot may start the next stage
+    or close the window. ``stage_finished`` is too early for either: it arrives while
+    the thread that returned the result may still be winding down.
+    """
+
     error = Signal(str)
     saved = Signal()
 
@@ -186,6 +194,16 @@ class ProjectState(QObject):
     @property
     def is_running(self) -> bool:
         return self._worker is not None and self._worker.isRunning()
+
+    @property
+    def running_stage(self) -> str | None:
+        """The name of the stage on the worker, or None when nothing runs."""
+        return self._worker.name if self.is_running and self._worker is not None else None
+
+    @property
+    def cancel_requested(self) -> bool:
+        """Whether the current or last stage was asked to stop."""
+        return self._flag.cancelled
 
     @property
     def manifest_path(self) -> Path | None:
@@ -245,19 +263,24 @@ class ProjectState(QObject):
         self.manifest.config_snapshot = self.config.model_dump(mode="json")
         self.schedule_save()
 
-    def close_project(self) -> None:
-        """Stop any stage, save, and forget.
+    def close_project(self) -> bool:
+        """Stop any stage, save, and forget. False, with nothing saved, if it would not stop.
 
         The stage is cancelled and waited for rather than abandoned, because the save
-        that follows reads the manifest and the worker is still writing it. That wait
-        is also why this is the one place allowed to save during a run.
+        that follows reads the manifest and the worker is still writing it. The wait is
+        short (``gui.close_wait_ms``): the cancel is only seen between files, so a stage
+        in the middle of an encode can outlast any sensible wait, and saving then would
+        serialise a manifest the worker is still writing. The project stays open instead,
+        and the window closes itself once the stage has ended.
         """
         if self.is_running:
             self.cancel()
-            self.wait_for_stage()
+            if not self.wait_for_stage(self.config.gui.close_wait_ms):
+                return False
         self.save_now(force=True)
         self.manifest = None
         self.output_dir = None
+        return True
 
     # --- saving -------------------------------------------------------------
 
@@ -369,7 +392,18 @@ class ProjectState(QObject):
                 fh.write(f"--- {stamp} {message}\n{worker.traceback_text}\n")
 
     def _clear_worker(self) -> None:
-        self._worker = None
+        # The worker that finished, not whichever one is current when this slot runs: a
+        # completion handler may already have started the next stage by then.
+        worker = self.sender()
+        if not isinstance(worker, CoreWorker):
+            return
+        # Cleared before the signal, so a slot that closes the window or starts another
+        # stage finds nothing running. Deleted after it, so the thread object does not
+        # stay parented to the state for the rest of the session.
+        if self._worker is worker:
+            self._worker = None
+        self.stage_ended.emit(worker.name)
+        worker.deleteLater()
 
     @property
     def last_result(self) -> object:

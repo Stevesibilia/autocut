@@ -10,18 +10,19 @@ fingerprint is skipped. An output that no longer belongs to any current clip is
 moved to `_selects/_stale/` rather than deleted: a mistaken `select` run should
 cost a re-encode, never the previous edit.
 
-Clips run in a process pool half the size of the core count, because libx264 is
-already threaded and oversubscribing it makes the whole export slower.
+Clips run in a thread pool half the size of the core count, because libx264 is
+already threaded and oversubscribing it makes the whole export slower. The pool
+is threads, not processes: each worker only waits on the ffmpeg subprocess it
+launches, so there is nothing CPU bound in the worker itself to isolate.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import multiprocessing
 import shutil
 import subprocess
-from concurrent.futures import Future, ProcessPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -372,8 +373,7 @@ def _run(
             _finish(job, clip, result, progress, done, total)
         return
 
-    context = multiprocessing.get_context("spawn")
-    with ProcessPoolExecutor(max_workers=min(workers, len(pending)), mp_context=context) as pool:
+    with ThreadPoolExecutor(max_workers=min(workers, len(pending))) as pool:
         futures: dict[Future[ClipResult], _Job] = {
             pool.submit(export_one, job.plan, job.segment.id, job.digest): job for job in pending
         }

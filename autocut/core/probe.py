@@ -18,7 +18,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from autocut.core.manifest import GpsPoint, StreamInfo
+from autocut.core.manifest import GpsPoint, SourceFile, StreamInfo
 
 
 class ToolMissingError(RuntimeError):
@@ -133,6 +133,34 @@ def probe_file(path: Path, *, timeout_s: float = FFPROBE_TIMEOUT_S) -> ProbeResu
     except json.JSONDecodeError as exc:
         return ProbeResult(path=path, error=f"unreadable ffprobe output: {exc}")
     return parse_probe_json(path, payload)
+
+
+def probe_from_source(source: SourceFile) -> ProbeResult:
+    """Rebuild the probe result ingest already computed, without probing the file again.
+
+    Copies only what analysis reads from a probe: the fields ``SourceFile`` itself
+    carries. Everything else (``color_transfer``, ``encoder``, the tag dicts,
+    ``has_audio``) is not stored on the manifest and comes back at its default;
+    nothing downstream reads it (design decision 1, issue #82).
+    """
+    return ProbeResult(
+        path=source.path,
+        error=source.error,
+        duration_s=source.duration_s,
+        width=source.width,
+        height=source.height,
+        rotation=source.rotation,
+        fps=source.fps,
+        codec=source.codec,
+        pix_fmt=source.pix_fmt,
+        bit_depth=source.bit_depth,
+        creation_time=source.creation_time,
+        make=source.make,
+        model=source.model,
+        gps=source.gps,
+        subtitle_streams=source.subtitle_streams,
+        data_streams=source.data_streams,
+    )
 
 
 def parse_probe_json(path: Path, payload: dict[str, Any]) -> ProbeResult:

@@ -739,6 +739,37 @@ def test_a_worker_exception_does_not_stop_the_others(
     assert b_error is not None and b_error.startswith("worker failed:")
 
 
+def test_thread_pool_worker_failure_is_isolated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Threads share the interpreter, so a monkeypatched worker is now visible to the pool."""
+
+    def flaky(plan: object, segment_id: str, digest: str) -> ClipResult:
+        output: Path = plan.output  # type: ignore[attr-defined]
+        if segment_id == "b:0":
+            raise RuntimeError("boom")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"clip")
+        return ClipResult(segment_id, output, digest)
+
+    monkeypatch.setattr("autocut.core.export.export_one", flaky)
+    manifest = project(tmp_path)
+    add_file(manifest, "a", minutes=0)
+    add_file(manifest, "b", minutes=10)
+    add_segment(manifest, "a:0", "a", order=1)
+    add_segment(manifest, "b:0", "b", order=2)
+    config = AutocutConfig()
+    config.analysis.workers = 4
+
+    result = export_clips(manifest, config)
+
+    assert result.exported == 1
+    assert result.failed == 1
+    assert manifest.segments["a:0"].exported_path is not None
+    b_error = manifest.segments["b:0"].export_error
+    assert b_error is not None and b_error.startswith("worker failed:")
+
+
 @pytest.mark.ffmpeg
 def test_pool_worker_failure_is_isolated(tmp_path: Path, synthetic_dir: Path) -> None:
     """A real, spawn-visible failure: one clip's output directory already exists as a

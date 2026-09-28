@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 
 import numpy as np
 
-from autocut.core.cache import CacheEntry, read_entry, thumb_index
+from autocut.core.cache import CacheEntry, read_entry_cached, thumb_index
 from autocut.core.config import SOURCE_CLASSES, AutocutConfig, SourceClass
 from autocut.core.durations import assign_durations, buckets, shortfall, total_duration
 from autocut.core.manifest import Manifest, PlaceInfo, Segment, SelectionRun, SourceFile
@@ -226,7 +226,9 @@ def _load_entries(config: AutocutConfig, candidates: list[Segment]) -> dict[str,
             continue
         # Without the sprite strips: selection wants the metric arrays, the thumbnail
         # frames and the embeddings, and the strips are most of the bytes in the file.
-        entry = read_entry(segment.file_id, config, sprites=False)
+        # Read through the in-memory LRU: re-selection over an unchanged project reads
+        # each entry from disk once (design decision 5, issue #82).
+        entry = read_entry_cached(segment.file_id, config)
         if entry is not None:
             entries[segment.file_id] = entry
     return entries
@@ -318,12 +320,12 @@ def _build_features(
     for segment in candidates:
         source = manifest.files.get(segment.file_id)
         entry = entries.get(segment.file_id)
-        frame = _thumb_frame(segment, entry)
+        phash, histogram = _visual_features(segment, entry)
         features[segment.id] = CandidateFeatures(
             segment_id=segment.id,
             source_class=_class_of(manifest, segment.file_id),
-            phash=perceptual_hash(frame) if frame is not None else None,
-            histogram=color_histogram(frame) if frame is not None else None,
+            phash=phash,
+            histogram=histogram,
             embedding=_embedding(segment, entry),
             lat=source.gps.lat if source is not None and source.gps is not None else None,
             lon=source.gps.lon if source is not None and source.gps is not None else None,
@@ -333,14 +335,40 @@ def _build_features(
     return features
 
 
-def _thumb_frame(segment: Segment, entry: CacheEntry | None) -> np.ndarray | None:
+def _thumb_index(segment: Segment, entry: CacheEntry | None) -> int:
     if entry is None or entry.thumb_frames is None or entry.thumb_frames.size == 0:
-        return None
-    index = thumb_index(segment.id, int(entry.thumb_frames.shape[0]))
-    if index < 0:
+        return -1
+    return thumb_index(segment.id, int(entry.thumb_frames.shape[0]))
+
+
+def _thumb_frame(segment: Segment, entry: CacheEntry | None) -> np.ndarray | None:
+    index = _thumb_index(segment, entry)
+    if index < 0 or entry is None or entry.thumb_frames is None:
         return None
     frame: np.ndarray = entry.thumb_frames[index]
     return frame
+
+
+def _visual_features(
+    segment: Segment, entry: CacheEntry | None
+) -> tuple[int | None, np.ndarray | None]:
+    """The perceptual hash and color histogram of a segment's thumbnail, memoised.
+
+    Selection re-runs on every slider move over the same cached entries (design
+    decision 5, issue #82), so the hashes are kept on the entry and computed once
+    rather than recomputed from the thumbnail frame on every re-selection.
+    """
+    index = _thumb_index(segment, entry)
+    frame = _thumb_frame(segment, entry)
+    if frame is None or entry is None:
+        return None, None
+    key = f"visual:{index}"
+    cached = entry.derived.get(key)
+    if cached is None:
+        cached = (perceptual_hash(frame), color_histogram(frame))
+        entry.derived[key] = cached
+    phash, histogram = cached
+    return phash, histogram
 
 
 def _embedding(segment: Segment, entry: CacheEntry | None) -> np.ndarray | None:

@@ -951,6 +951,13 @@ class CacheConfig(_Strict):
         "disk, while a 350 MB checkpoint belongs to the machine and must not be "
         "downloaded again for every project. Defaults to the platform cache dir.",
     )
+    memory_entries: int = Field(
+        default=256,
+        ge=0,
+        description="Recently read analysis cache entries kept in memory, read-only, "
+        "across re-selections. 0 disables the in-memory cache and reads every entry "
+        "from disk on every selection.",
+    )
 
 
 class AutocutConfig(_Strict):

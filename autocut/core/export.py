@@ -359,9 +359,13 @@ def _run(
     if workers == 1 or len(pending) == 1:
         for job in pending:
             done += 1
-            _finish(
-                job, export_one(job.plan, job.segment.id, job.digest), result, progress, done, total
-            )
+            try:
+                clip = export_one(job.plan, job.segment.id, job.digest)
+            except Exception as exc:  # noqa: BLE001 - becomes this clip's error, see decision 2
+                clip = ClipResult(
+                    job.segment.id, job.plan.output, job.digest, error=f"worker failed: {exc}"
+                )
+            _finish(job, clip, result, progress, done, total)
         return
 
     context = multiprocessing.get_context("spawn")
@@ -372,7 +376,13 @@ def _run(
         for future in as_completed(futures):
             job = futures[future]
             done += 1
-            _finish(job, future.result(), result, progress, done, total)
+            try:
+                clip = future.result()
+            except Exception as exc:  # noqa: BLE001 - see decision 2
+                clip = ClipResult(
+                    job.segment.id, job.plan.output, job.digest, error=f"worker failed: {exc}"
+                )
+            _finish(job, clip, result, progress, done, total)
 
 
 def _finish(

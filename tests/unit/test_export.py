@@ -711,6 +711,60 @@ def test_a_failed_clip_leaves_no_partial_file(tmp_path: Path) -> None:
     assert not selects.exists() or list(selects.glob("*.mp4")) == []
 
 
+def test_a_worker_exception_does_not_stop_the_others(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def flaky(plan: object, segment_id: str, digest: str) -> ClipResult:
+        output: Path = plan.output  # type: ignore[attr-defined]
+        if segment_id == "b:0":
+            raise RuntimeError("boom")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"clip")
+        return ClipResult(segment_id, output, digest)
+
+    monkeypatch.setattr("autocut.core.export.export_one", flaky)
+    manifest = project(tmp_path)
+    add_file(manifest, "a", minutes=0)
+    add_file(manifest, "b", minutes=10)
+    add_segment(manifest, "a:0", "a", order=1)
+    add_segment(manifest, "b:0", "b", order=2)
+
+    result = export_clips(manifest, one_worker(AutocutConfig()))
+
+    assert result.exported == 1
+    assert result.failed == 1
+    assert manifest.segments["a:0"].exported_path is not None
+    b_error = manifest.segments["b:0"].export_error
+    assert b_error is not None and b_error.startswith("worker failed:")
+
+
+@pytest.mark.ffmpeg
+def test_pool_worker_failure_is_isolated(tmp_path: Path, synthetic_dir: Path) -> None:
+    """A real, spawn-visible failure: one clip's output directory already exists as a
+    plain file, so ``Path.mkdir`` raises for real inside the worker, not by monkeypatch."""
+    manifest = project(tmp_path)
+    add_file(manifest, "a", path=synthetic_dir / "sharp_pan.mp4", minutes=0)
+    add_file(manifest, "b", path=synthetic_dir / "sharp_pan.mp4", minutes=10)
+    add_segment(manifest, "a:0", "a", order=1)
+    add_segment(manifest, "b:0", "b", outcome="rejected", order=None, reason="x")
+    config = AutocutConfig()
+    config.analysis.workers = 4
+
+    out_dir = Path(manifest.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / REJECTS_DIR).write_text("not a directory")
+
+    result = export_clips(manifest, config, overrides=ExportOverrides(rejects=True))
+
+    assert result.exported == 1, result.errors
+    assert result.failed == 1
+    a_segment = manifest.segments["a:0"]
+    b_segment = manifest.segments["b:0"]
+    assert a_segment.exported_path is not None and a_segment.exported_path.exists()
+    assert b_segment.export_error is not None
+    assert b_segment.export_error.startswith("worker failed:")
+
+
 def test_a_missing_ffmpeg_is_reported_as_such(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

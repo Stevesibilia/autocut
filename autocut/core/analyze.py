@@ -12,6 +12,7 @@ re-raises so the front end can report a clean stop.
 from __future__ import annotations
 
 import multiprocessing
+import signal
 from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,6 +44,11 @@ from autocut.core.thumbs import build_sprite, write_sprite, write_thumbnail
 
 class AnalysisCancelled(Exception):  # noqa: N818 - a cancellation, not an error
     """Raised by a progress callback to stop analysis between files."""
+
+
+def _ignore_sigint() -> None:
+    """Pool initializer: workers let their ffmpeg children take Ctrl-C, not print their own."""
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
 @dataclass(slots=True)
@@ -188,29 +194,50 @@ def analyze_files(
     hwaccel, hwaccel_warnings = choose_hwaccel(config, pending)
 
     if workers == 1 or total == 1:
-        for index, source in enumerate(pending, start=1):
-            results[source.id] = analyze_file(source, config, hwaccel)
-            try:
-                progress(_event(index, total, source, results[source.id]))
-            except AnalysisCancelled as exc:
-                cancelled = exc
-                break
-    else:
-        context = multiprocessing.get_context("spawn")
-        with ProcessPoolExecutor(max_workers=min(workers, total), mp_context=context) as pool:
-            futures: dict[Future[FileAnalysis], SourceFile] = {
-                pool.submit(analyze_file, source, config, hwaccel): source for source in pending
-            }
-            for done, future in enumerate(as_completed(futures), start=1):
-                source = futures[future]
-                results[source.id] = future.result()
+        try:
+            for index, source in enumerate(pending, start=1):
                 try:
-                    progress(_event(done, total, source, results[source.id]))
+                    results[source.id] = analyze_file(source, config, hwaccel)
+                except Exception as exc:  # noqa: BLE001 - becomes this file's error, see decision 2
+                    results[source.id] = FileAnalysis(
+                        file_id=source.id, error=f"worker failed: {exc}"
+                    )
+                try:
+                    progress(_event(index, total, source, results[source.id]))
                 except AnalysisCancelled as exc:
                     cancelled = exc
-                    for other in futures:
-                        other.cancel()
                     break
+        except KeyboardInterrupt:
+            cancelled = AnalysisCancelled("interrupted")
+    else:
+        futures: dict[Future[FileAnalysis], SourceFile] = {}
+        try:
+            context = multiprocessing.get_context("spawn")
+            with ProcessPoolExecutor(
+                max_workers=min(workers, total), mp_context=context, initializer=_ignore_sigint
+            ) as pool:
+                futures = {
+                    pool.submit(analyze_file, source, config, hwaccel): source for source in pending
+                }
+                for done, future in enumerate(as_completed(futures), start=1):
+                    source = futures[future]
+                    try:
+                        results[source.id] = future.result()
+                    except Exception as exc:  # noqa: BLE001 - see decision 2
+                        results[source.id] = FileAnalysis(
+                            file_id=source.id, error=f"worker failed: {exc}"
+                        )
+                    try:
+                        progress(_event(done, total, source, results[source.id]))
+                    except AnalysisCancelled as exc:
+                        cancelled = exc
+                        for other in futures:
+                            other.cancel()
+                        break
+        except KeyboardInterrupt:
+            cancelled = AnalysisCancelled("interrupted")
+            for other in futures:
+                other.cancel()
 
     _build_segments(manifest, config, results)
     manifest.analysis = AnalysisRun(

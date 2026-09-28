@@ -185,7 +185,10 @@ def ingest(
     results: dict[Path, SourceFile] = {}
     if workers == 1 or total == 1:
         for index, item in enumerate(scanned, start=1):
-            results[item.path] = ingest_file(item, config)
+            try:
+                results[item.path] = ingest_file(item, config)
+            except Exception as exc:  # noqa: BLE001 - becomes this file's error, see decision 2
+                results[item.path] = _failed_source(item, exc)
             progress(ProgressEvent(stage="probe", current=index, total=total, path=item.path))
     else:
         context = multiprocessing.get_context("spawn")
@@ -193,10 +196,21 @@ def ingest(
             futures = {pool.submit(ingest_file, item, config): item for item in scanned}
             for index, future in enumerate(as_completed(futures), start=1):
                 item = futures[future]
-                results[item.path] = future.result()
+                try:
+                    results[item.path] = future.result()
+                except Exception as exc:  # noqa: BLE001 - see decision 2
+                    results[item.path] = _failed_source(item, exc)
                 progress(ProgressEvent(stage="probe", current=index, total=total, path=item.path))
 
     return sorted(results.values(), key=_chronological_key)
+
+
+def _failed_source(item: ScannedFile, exc: Exception) -> SourceFile:
+    return SourceFile(
+        id=cache_key(item.path) or f"path:{item.path}",
+        path=item.path,
+        error=f"worker failed: {exc}",
+    )
 
 
 def _chronological_key(source: SourceFile) -> tuple[datetime, str]:

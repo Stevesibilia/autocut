@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from autocut.core import analyze as analyze_module
 from autocut.core.analyze import AnalysisCancelled, analyze_files, choose_hwaccel
+from autocut.core.cache import entry_path
 from autocut.core.config import AutocutConfig
 from autocut.core.events import ProgressEvent
 from autocut.core.ingest import ingest
@@ -201,6 +203,80 @@ def test_cancellation_stops_between_files(synthetic_dir: Path, tmp_path: Path) -
     assert seen == 2
     analyzed_files = {segment.file_id for segment in manifest.segments.values()}
     assert len(analyzed_files) == 2
+
+
+def test_one_worker_failing_does_not_stop_the_others(
+    synthetic_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = AutocutConfig()
+    settings.analysis.workers = 1
+    settings.cache.dir = tmp_path / "cache"
+    manifest = project(tmp_path, [synthetic_dir])
+    manifest.files = {source.id: source for source in ingest([synthetic_dir], settings)}
+    assert len(manifest.files) >= 3
+    victim = sorted(manifest.files)[1]
+
+    real_analyze_file = analyze_module.analyze_file
+
+    def flaky(source: object, config: object, hwaccel: object = None) -> object:
+        if getattr(source, "id", None) == victim:
+            raise RuntimeError("boom")
+        return real_analyze_file(source, config, hwaccel)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(analyze_module, "analyze_file", flaky)
+    analyze_files(manifest, settings)
+
+    other_ids = {file_id for file_id in manifest.files if file_id != victim}
+    segment_file_ids = {segment.file_id for segment in manifest.segments.values()}
+    assert segment_file_ids == other_ids
+    assert manifest.analysis.files_failed == 1
+
+
+def test_keyboard_interrupt_from_progress_is_a_cancellation(
+    synthetic_dir: Path, tmp_path: Path
+) -> None:
+    settings = AutocutConfig()
+    settings.analysis.workers = 1
+    settings.cache.dir = tmp_path / "cache"
+    manifest = project(tmp_path, [synthetic_dir])
+    manifest.files = {source.id: source for source in ingest([synthetic_dir], settings)}
+    assert len(manifest.files) > 1
+
+    seen = 0
+
+    def interrupt_after_one(event: ProgressEvent) -> None:
+        nonlocal seen
+        seen += 1
+        if seen >= 1:
+            raise KeyboardInterrupt
+
+    with pytest.raises(AnalysisCancelled):
+        analyze_files(manifest, settings, interrupt_after_one)
+
+    assert seen == 1
+    assert not manifest.analysis.completed
+    assert len(manifest.segments) > 0
+
+
+def test_pool_worker_failure_is_isolated(synthetic_dir: Path, tmp_path: Path) -> None:
+    """A real, spawn-visible failure: the cache write for one file collides with a
+    pre-existing directory of the same name, so ``write_entry`` raises for real."""
+    settings = AutocutConfig()
+    settings.analysis.workers = 2
+    settings.cache.dir = tmp_path / "cache"
+    manifest = project(tmp_path, [synthetic_dir])
+    manifest.files = {source.id: source for source in ingest([synthetic_dir], settings)}
+    assert len(manifest.files) >= 2
+    victim_id = sorted(manifest.files)[0]
+    victim_path = entry_path(victim_id, settings)
+    victim_path.mkdir(parents=True)
+
+    analyze_files(manifest, settings)
+
+    segment_file_ids = {segment.file_id for segment in manifest.segments.values()}
+    assert victim_id not in segment_file_ids
+    assert manifest.analysis.files_failed == 1
+    assert len(segment_file_ids) == len(manifest.files) - 1
 
 
 def test_a_manifest_without_files_is_a_no_op(tmp_path: Path) -> None:

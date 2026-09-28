@@ -7,6 +7,7 @@ rather than final in and out points.
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -51,6 +52,12 @@ def _migrate(data: dict[str, Any], path: Path) -> dict[str, Any]:
             found=version,
             supported=MANIFEST_SCHEMA_VERSION,
         )
+    if version < MANIFEST_SCHEMA_VERSION:
+        # A backup of the file as it was found, before anything touches it. Only one is
+        # kept per source version: a second load of the same old file must not clobber it.
+        backup = path.with_name(f"{path.stem}.v{version}.json.bak")
+        if not backup.exists():
+            shutil.copy2(path, backup)
     while version < MANIFEST_SCHEMA_VERSION:
         try:
             step = _MIGRATIONS[version]

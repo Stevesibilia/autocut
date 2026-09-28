@@ -295,3 +295,64 @@ def test_a_class_can_opt_back_into_its_ambience(tmp_path: Path) -> None:
     remove_audio = AutocutConfig.load(toml).export.remove_audio
     assert remove_audio.phone is False
     assert remove_audio.drone is True
+
+
+# --- strict configuration (decision 6, issue #78) ----------------------------
+
+
+def test_an_unknown_top_level_key_is_rejected(tmp_path: Path) -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    toml = tmp_path / "autocut.toml"
+    toml.write_text("made_up_section = true\n", encoding="utf-8")
+    with pytest.raises(ValidationError):
+        AutocutConfig.load(toml)
+
+
+def test_a_misspelled_nested_key_is_rejected(tmp_path: Path) -> None:
+    """The scenario in specs/configuration: a typo in a nested key is not silently dropped."""
+    import pytest
+    from pydantic import ValidationError
+
+    toml = tmp_path / "autocut.toml"
+    toml.write_text("[analysis]\nsample_fsp = 3\n", encoding="utf-8")
+    with pytest.raises(ValidationError) as excinfo:
+        AutocutConfig.load(toml)
+    assert "sample_fsp" in str(excinfo.value)
+
+
+def test_sample_fps_must_be_positive() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from autocut.core.config import AnalysisConfig
+
+    with pytest.raises(ValidationError):
+        AnalysisConfig(sample_fps=0)
+
+
+def test_workers_must_be_at_least_one() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from autocut.core.config import AnalysisConfig
+
+    with pytest.raises(ValidationError):
+        AnalysisConfig(workers=0)
+
+
+def test_sprite_max_frames_must_be_at_least_one() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from autocut.core.config import AnalysisConfig
+
+    with pytest.raises(ValidationError):
+        AnalysisConfig(sprite_max_frames=0)
+
+
+def test_the_shipped_example_still_loads_under_the_strict_schema() -> None:
+    """The scenario in specs/configuration: the example is documentation, and must load."""
+    example = Path(__file__).resolve().parents[2] / "autocut.example.toml"
+    AutocutConfig.load(example)

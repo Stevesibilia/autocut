@@ -567,6 +567,46 @@ def test_a_missing_migration_step_is_a_programming_error(
         manifest_module.Manifest.load(out)
 
 
+def _mark_migrated(data: dict[str, Any]) -> dict[str, Any]:
+    return {**data, "migrated": True}
+
+
+def test_a_migration_backs_up_the_original_file_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(manifest_module, "MANIFEST_SCHEMA_VERSION", 2)
+    monkeypatch.setattr(manifest_module, "_MIGRATIONS", {1: _mark_migrated})
+    out = tmp_path / "manifest.json"
+    data = _valid_manifest_dict(out)
+    data["schema_version"] = 1
+    original_bytes = json.dumps(data).encode("utf-8")
+    out.write_bytes(original_bytes)
+
+    manifest_module.Manifest.load(out)
+
+    backup = tmp_path / "manifest.v1.json.bak"
+    assert backup.exists()
+    assert backup.read_bytes() == original_bytes
+
+
+def test_a_second_migration_does_not_overwrite_an_existing_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(manifest_module, "MANIFEST_SCHEMA_VERSION", 2)
+    monkeypatch.setattr(manifest_module, "_MIGRATIONS", {1: _mark_migrated})
+    out = tmp_path / "manifest.json"
+    data = _valid_manifest_dict(out)
+    data["schema_version"] = 1
+    out.write_bytes(json.dumps(data).encode("utf-8"))
+
+    backup = tmp_path / "manifest.v1.json.bak"
+    backup.write_text("kept", encoding="utf-8")
+
+    manifest_module.Manifest.load(out)
+
+    assert backup.read_text(encoding="utf-8") == "kept"
+
+
 def test_a_current_manifest_round_trips_through_save_and_load_unchanged(tmp_path: Path) -> None:
     now = datetime.now(UTC)
     m = Manifest(created_at=now, updated_at=now, sources=[Path("/footage")], output_dir=tmp_path)

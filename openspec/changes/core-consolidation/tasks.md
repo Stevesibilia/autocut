@@ -53,6 +53,6 @@
 
 ### Part B gates and hand-back
 
-- [ ] B.1 `make lint`, `openspec validate core-consolidation --strict`, `make test` and `make docker-test-gui` through the test runner.
-- [ ] B.2 Real run: `autocut analyze`, `autocut select` and `autocut export` on the synthetic fixtures, plus `autocut gui` opened on that project with an analysis run started from the window. Describe what you saw.
-- [ ] B.3 Tick the part B boxes, push, and hand back.
+- [x] B.1 `make lint`, `openspec validate core-consolidation --strict`, `make test` and `make docker-test-gui` through the test runner.
+- [x] B.2 Real run: `autocut analyze`, `autocut select` and `autocut export` on the synthetic fixtures, plus `autocut gui` opened on that project with an analysis run started from the window. Describe what you saw.
+- [x] B.3 Tick the part B boxes, push, and hand back.

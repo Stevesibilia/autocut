@@ -2,30 +2,30 @@
 
 ### 1. `run_tool` (design decision 1), one commit
 
-- [ ] 1.1 `autocut/core/proc.py` with `ToolRun`, `run_tool`, `first_stderr_line`, `ToolMissingError`, `require_tools`. Rewrite the ten sites, and update every import of `ToolMissingError`/`require_tools`.
-- [ ] 1.2 Tests in `tests/unit/test_proc.py`: success, non-zero exit, missing binary, timeout (a `python -c "import time; time.sleep(5)"` command with `timeout_s=0.2`), and `first_stderr_line` on blank-led text. The existing tests for the rewritten sites pass unchanged, or their changes are listed in the hand-back.
-- [ ] 1.3 Commit: `refactor(core): run external tools through one runner`.
+- [x] 1.1 `autocut/core/proc.py` with `ToolRun`, `run_tool`, `first_stderr_line`, `ToolMissingError`, `require_tools`. Rewrite the ten sites, and update every import of `ToolMissingError`/`require_tools`.
+- [x] 1.2 Tests in `tests/unit/test_proc.py`: success, non-zero exit, missing binary, timeout (a `python -c "import time; time.sleep(5)"` command with `timeout_s=0.2`), and `first_stderr_line` on blank-led text. The existing tests for the rewritten sites pass unchanged, or their changes are listed in the hand-back.
+- [x] 1.3 Commit: `refactor(core): run external tools through one runner`.
 
 ### 2. Tunables (decision 2), one commit
 
-- [ ] 2.1 The new config fields and `TimeoutsConfig`. Replace the constants, pass `config.timeouts.*` where a config is in reach, and add the two "why this stays a constant" comments. Update `autocut.example.toml`.
-- [ ] 2.2 Tests:
+- [x] 2.1 The new config fields and `TimeoutsConfig`. Replace the constants, pass `config.timeouts.*` where a config is in reach, and add the two "why this stays a constant" comments. Update `autocut.example.toml`.
+- [x] 2.2 Tests:
   - every new field's default equals the old constant (one parametrized test);
   - `[timeouts] ffprobe_s = 5` reaches `probe_file` through `ingest_file` (monkeypatch `run_tool` to capture `timeout_s`);
   - `similarity.hash_share = 1.0` makes the visual similarity equal the hash similarity;
   - `export.workers = 3` is used.
-- [ ] 2.3 Commit: `refactor(core): move the remaining tunables into configuration`.
+- [x] 2.3 Commit: `refactor(core): move the remaining tunables into configuration`.
 
 ### 3. Cleanups (decision 3), one commit
 
-- [ ] 3.1 `ingest.scan` without `config`, and its callers.
-- [ ] 3.2 Commit: `refactor(core): drop the unused config parameter of scan`.
+- [x] 3.1 `ingest.scan` without `config`, and its callers.
+- [x] 3.2 Commit: `refactor(core): drop the unused config parameter of scan`.
 
 ### Part A gates and hand-back
 
-- [ ] A.1 `make lint`, `openspec validate core-consolidation --strict`, and `make test` through the test runner. Quote the counts.
-- [ ] A.2 Real run: `autocut analyze tests/fixtures/synthetic --out <tmp>` then `autocut export`. Put the summary lines in the hand-back.
-- [ ] A.3 Tick the part A boxes, push, and hand back. Stop there: part B is a separate brief.
+- [x] A.1 `make lint`, `openspec validate core-consolidation --strict`, and `make test` through the test runner. Quote the counts.
+- [x] A.2 Real run: `autocut analyze tests/fixtures/synthetic --out <tmp>` then `autocut export`. Put the summary lines in the hand-back.
+- [x] A.3 Tick the part A boxes, push, and hand back. Stop there: part B is a separate brief.
 
 ## Part B: brief 2, after #80 has merged
 

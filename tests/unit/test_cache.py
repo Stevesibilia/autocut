@@ -12,6 +12,7 @@ import pytest
 from typer.testing import CliRunner
 
 from autocut.cli.main import app
+from autocut.core import cache as cache_module
 from autocut.core.cache import (
     CacheEntry,
     cache_dir,
@@ -19,6 +20,7 @@ from autocut.core.cache import (
     entry_path,
     prune,
     read_entry,
+    read_entry_cached,
     thumb_index,
     write_entry,
 )
@@ -346,3 +348,103 @@ def test_a_write_then_read_round_trips_with_no_tmp_left(tmp_path: Path) -> None:
     assert loaded is not None
     assert loaded.shot_bounds == entry.shot_bounds
     assert list(cache_dir(config).glob("*.tmp")) == []
+
+
+# --- the in-memory LRU (design decision 5, issue #82) ------------------------
+
+
+def counting_read_entry(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Count calls to the real ``read_entry`` that ``read_entry_cached`` falls through to."""
+    calls: list[str] = []
+    real_read_entry = cache_module.read_entry
+
+    def counting(file_key: str, config: AutocutConfig, sprites: bool = True) -> CacheEntry | None:
+        calls.append(file_key)
+        return real_read_entry(file_key, config, sprites=sprites)
+
+    monkeypatch.setattr(cache_module, "read_entry", counting)
+    return calls
+
+
+def test_a_cache_hit_reads_from_disk_only_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = config_in(tmp_path)
+    write_entry(sample_entry(), config)
+    calls = counting_read_entry(monkeypatch)
+
+    for _ in range(5):
+        loaded = read_entry_cached("abc123", config)
+        assert loaded is not None
+
+    assert calls == ["abc123"]
+
+
+def test_rewriting_an_entry_is_read_again(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = config_in(tmp_path)
+    write_entry(sample_entry(), config)
+    calls = counting_read_entry(monkeypatch)
+
+    assert read_entry_cached("abc123", config) is not None
+    write_entry(sample_entry(), config)
+    assert read_entry_cached("abc123", config) is not None
+
+    assert calls == ["abc123", "abc123"]
+
+
+def test_memory_entries_zero_disables_the_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = config_in(tmp_path)
+    config.cache.memory_entries = 0
+    write_entry(sample_entry(), config)
+    calls = counting_read_entry(monkeypatch)
+
+    for _ in range(3):
+        assert read_entry_cached("abc123", config) is not None
+
+    assert calls == ["abc123", "abc123", "abc123"]
+
+
+def test_the_cache_holds_at_most_memory_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = config_in(tmp_path)
+    config.cache.memory_entries = 2
+    for key in ("a", "b", "c"):
+        write_entry(sample_entry(key), config)
+    calls = counting_read_entry(monkeypatch)
+
+    read_entry_cached("a", config)
+    read_entry_cached("b", config)
+    read_entry_cached("c", config)  # evicts "a", the least recently used
+    calls.clear()
+
+    assert read_entry_cached("a", config) is not None  # missed, reads again
+    assert calls == ["a"]
+    calls.clear()
+    assert read_entry_cached("c", config) is not None  # still cached
+    assert calls == []
+
+
+def test_a_missing_file_reads_as_none_and_is_not_cached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = config_in(tmp_path)
+    calls = counting_read_entry(monkeypatch)
+    assert read_entry_cached("nothing", config) is None
+    assert calls == []
+
+
+def test_a_cached_array_cannot_be_written(tmp_path: Path) -> None:
+    config = config_in(tmp_path)
+    entry = sample_entry()
+    write_entry(entry, config)
+
+    loaded = read_entry_cached("abc123", config)
+    assert loaded is not None
+    assert loaded.thumb_frames is not None
+    with pytest.raises(ValueError, match="read-only"):
+        loaded.arrays["sharpness"][0] = 999.0
+    with pytest.raises(ValueError, match="read-only"):
+        loaded.thumb_frames[0, 0, 0, 0] = 1

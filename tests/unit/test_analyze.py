@@ -34,6 +34,30 @@ def analyzed(
     return manifest, events
 
 
+def test_analyze_file_runs_no_second_ffprobe(
+    synthetic_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Analysis takes dimensions, rotation, duration, fps and streams from ingest."""
+    from autocut.core import probe as probe_module
+    from autocut.core.analyze import analyze_file
+
+    settings = AutocutConfig()
+    settings.cache.dir = tmp_path / "cache"
+    [source] = [
+        source
+        for source in ingest([synthetic_dir], settings)
+        if source.path.name == "sharp_pan.mp4"
+    ]
+
+    def explode(*args: object, **kwargs: object) -> object:
+        raise AssertionError("analyze_file must not probe a file ingest already probed")
+
+    monkeypatch.setattr(probe_module, "probe_file", explode)
+    result = analyze_file(source, settings)
+    assert result.error is None
+    assert result.entry is not None
+
+
 def test_every_file_gets_at_least_one_scored_segment(synthetic_dir: Path, tmp_path: Path) -> None:
     settings = AutocutConfig()
     settings.analysis.workers = 2

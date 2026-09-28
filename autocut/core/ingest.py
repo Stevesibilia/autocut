@@ -1,19 +1,20 @@
 """Scan source folders, probe every file and order the result chronologically.
 
 Probing and telemetry extraction are subprocess bound, so files are handled by a
-process pool sized on physical cores. The pool always uses the ``spawn`` start
-method: it is the only one macOS offers, and forking from the Rich progress
-thread or from Qt is unsafe. The worker is therefore a module level function so
-it stays picklable.
+thread pool sized on physical cores: each worker mostly waits on ffprobe, a
+subtitle extract, a hash read and a directory listing, and threads share the
+interpreter that a spawned process would otherwise re-import numpy, cv2 and
+pydantic into. The worker stays a module level function so it stays picklable,
+which the pool no longer needs but a test still asserts (issue #82).
 """
 
 from __future__ import annotations
 
-import multiprocessing
+import functools
 import os
 import platform
 import subprocess
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePath
@@ -46,8 +47,13 @@ class ScannedFile:
             return PurePath(self.path.name)
 
 
+@functools.cache
 def physical_cores() -> int:
-    """Physical core count, falling back to the logical count then to one."""
+    """Physical core count, falling back to the logical count then to one.
+
+    Cached: the ``sysctl``/``/proc/cpuinfo`` probe is shelled out or read once
+    per process, not once per pool created (design decision 2, issue #82).
+    """
     if platform.system() == "Darwin":
         try:
             output = subprocess.run(
@@ -192,8 +198,7 @@ def ingest(
                 results[item.path] = _failed_source(item, exc)
             progress(ProgressEvent(stage="probe", current=index, total=total, path=item.path))
     else:
-        context = multiprocessing.get_context("spawn")
-        with ProcessPoolExecutor(max_workers=min(workers, total), mp_context=context) as pool:
+        with ThreadPoolExecutor(max_workers=min(workers, total)) as pool:
             futures = {pool.submit(ingest_file, item, config): item for item in scanned}
             for index, future in enumerate(as_completed(futures), start=1):
                 item = futures[future]

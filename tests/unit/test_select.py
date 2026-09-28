@@ -1011,3 +1011,46 @@ def test_a_share_of_zero_switches_the_tag_cap_off(
     dominant = [manifest.segments[i].dominant_tag for i in result.selected]
     assert dominant.count("beach") == 10
     assert result.held_by_tag == 0
+
+
+# --- the in-memory entry cache across re-selections (design decision 5, issue #82) --
+
+
+def test_ten_selections_read_each_cache_entry_from_disk_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autocut.core import cache as cache_module
+
+    no_similarity(monkeypatch)
+    config = AutocutConfig()
+    config.cache.dir = tmp_path / "cache"
+    manifest = project(tmp_path)
+    add_file(manifest, "a")
+    add_file(manifest, "b")
+    add_segment(manifest, "a:0", "a", score=0.9)
+    add_segment(manifest, "b:0", "b", score=0.8)
+
+    for key in ("a", "b"):
+        cache_module.write_entry(
+            cache_module.CacheEntry(
+                file_key=key,
+                source="original",
+                arrays={"timestamps": np.array([0.0, 0.5, 1.0, 1.5])},
+                shot_bounds=[(0.0, 2.0)],
+            ),
+            config,
+        )
+
+    calls: list[str] = []
+    real_read_entry = cache_module.read_entry
+
+    def counting(file_key: str, cfg: AutocutConfig, sprites: bool = True) -> object:
+        calls.append(file_key)
+        return real_read_entry(file_key, cfg, sprites=sprites)
+
+    monkeypatch.setattr(cache_module, "read_entry", counting)
+
+    results = [select_clips(manifest, config) for _ in range(10)]
+
+    assert sorted(calls) == ["a", "b"]
+    assert all(result.selected == results[0].selected for result in results)

@@ -21,8 +21,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
 import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -51,6 +53,9 @@ class CacheEntry:
     embeddings: np.ndarray | None = None
     embedding_model: str | None = None
     warnings: list[str] = field(default_factory=list)
+    derived: dict[str, Any] = field(default_factory=dict)
+    """Values computed from this entry, such as a segment's visual hashes. Memory only,
+    never written by :func:`write_entry` (design decision 5, issue #82)."""
 
     @property
     def frame_count(self) -> int:
@@ -172,6 +177,85 @@ def read_entry(file_key: str, config: AutocutConfig, sprites: bool = True) -> Ca
         embedding_model=embedding_model,
         warnings=list(meta.get("warnings", [])),
     )
+
+
+_MemoryKey = tuple[str, int, int, int, str | None]
+
+# In-process, read-only LRU of recently read entries (design decision 5, issue #82).
+# Keyed by the arrays path so a stale entry for a rewritten or deleted file is found
+# and dropped even when it no longer matches the current stat.
+_memory_cache: OrderedDict[str, tuple[_MemoryKey, CacheEntry]] = OrderedDict()
+_memory_lock = threading.Lock()
+
+
+def _memory_key(arrays_path: Path, meta_path: Path, config: AutocutConfig) -> _MemoryKey | None:
+    """One ``stat`` of each file, plus the embedding model. ``None`` when either is missing."""
+    try:
+        npz_stat = arrays_path.stat()
+        json_stat = meta_path.stat()
+    except OSError:
+        return None
+    return (
+        str(arrays_path),
+        npz_stat.st_mtime_ns,
+        npz_stat.st_size,
+        json_stat.st_mtime_ns,
+        config.providers.embedding_model,
+    )
+
+
+def _freeze(entry: CacheEntry) -> CacheEntry:
+    """Mark every array on ``entry`` read-only, so a shared cache hit cannot be mutated."""
+    for array in entry.arrays.values():
+        array.flags.writeable = False
+    if entry.thumb_frames is not None:
+        entry.thumb_frames.flags.writeable = False
+    if entry.embeddings is not None:
+        entry.embeddings.flags.writeable = False
+    return entry
+
+
+def read_entry_cached(file_key: str, config: AutocutConfig) -> CacheEntry | None:
+    """``read_entry(..., sprites=False)`` behind an in-process, read-only LRU.
+
+    Selection reads every candidate's entry on every run, which is what the review
+    sliders trigger on every move. This keeps up to ``config.cache.memory_entries``
+    entries in memory, keyed on one ``stat`` of each file and the embedding model,
+    so a rewritten or deleted entry misses instead of returning stale arrays. A
+    hit's arrays are shared with every caller, so they come back read-only; write
+    through :func:`write_entry` instead of mutating one. ``memory_entries = 0``
+    disables the cache and reads from disk every time.
+    """
+    arrays_path = entry_path(file_key, config)
+    meta_path = arrays_path.with_suffix(".json")
+    path_key = str(arrays_path)
+    current = _memory_key(arrays_path, meta_path, config)
+
+    with _memory_lock:
+        cached = _memory_cache.get(path_key)
+        if cached is not None and cached[0] == current:
+            _memory_cache.move_to_end(path_key)
+            return cached[1]
+        if cached is not None:
+            del _memory_cache[path_key]
+
+    if current is None:
+        return None
+
+    entry = read_entry(file_key, config, sprites=False)
+    if entry is None:
+        return None
+    _freeze(entry)
+
+    limit = config.cache.memory_entries
+    if limit <= 0:
+        return entry
+    with _memory_lock:
+        _memory_cache[path_key] = (current, entry)
+        _memory_cache.move_to_end(path_key)
+        while len(_memory_cache) > limit:
+            _memory_cache.popitem(last=False)
+    return entry
 
 
 def write_entry(entry: CacheEntry, config: AutocutConfig) -> Path:

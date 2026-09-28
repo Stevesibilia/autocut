@@ -466,3 +466,7 @@ theme = "dark"                  # "dark", "light" or "system"
 [cache]
 # dir = "~/.cache/autocut"
 # models_dir = "~/.cache/autocut"
+# Recently read analysis cache entries kept in memory, read-only, across
+# re-selections. 0 disables the in-memory cache and reads every entry from disk on
+# every selection.
+memory_entries = 256

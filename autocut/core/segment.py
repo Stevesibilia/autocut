@@ -41,12 +41,21 @@ def content_series(frames: np.ndarray) -> np.ndarray:
 
     HSV mean absolute difference, the signal PySceneDetect's ``ContentDetector``
     thresholds. The first frame has no predecessor and scores 0.
+
+    Walks consecutive frames and keeps only the previous converted frame, rather
+    than stacking every frame as float64 HSV at once (design decision 4, issue
+    #82). The formula and dtype are unchanged, so only the floating point
+    reduction order can differ from a fully vectorized version.
     """
     count = int(frames.shape[0])
     if count < 2:
         return np.zeros(max(count, 0))
-    hsv = np.stack([cv2.cvtColor(frame, cv2.COLOR_RGB2HSV) for frame in frames]).astype(np.float64)
-    diffs = np.abs(np.diff(hsv, axis=0)).mean(axis=(1, 2, 3)) / 255.0
+    diffs = np.empty(count - 1, dtype=np.float64)
+    previous = cv2.cvtColor(frames[0], cv2.COLOR_RGB2HSV).astype(np.float64)
+    for index in range(1, count):
+        current = cv2.cvtColor(frames[index], cv2.COLOR_RGB2HSV).astype(np.float64)
+        diffs[index - 1] = np.abs(current - previous).mean() / 255.0
+        previous = current
     return np.concatenate(([0.0], diffs))
 
 

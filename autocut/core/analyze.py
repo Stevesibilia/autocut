@@ -28,7 +28,7 @@ from autocut.core.hwaccel import verify as verify_hwaccel
 from autocut.core.ingest import physical_cores
 from autocut.core.manifest import AnalysisRun, Manifest, Metrics, Segment, SourceFile
 from autocut.core.metrics import frame_metrics
-from autocut.core.probe import ProbeResult, probe_file
+from autocut.core.probe import ProbeResult, probe_from_source
 from autocut.core.rules import apply_rules
 from autocut.core.sampler import sample_frames
 from autocut.core.score import score_metrics
@@ -70,7 +70,7 @@ def analyze_file(
     if cached is not None:
         return FileAnalysis(file_id=source.id, entry=cached, cached=True)
 
-    probe = probe_file(source.path)
+    probe = probe_from_source(source)
     if not probe.ok:
         return FileAnalysis(file_id=source.id, error=probe.error)
 
@@ -103,7 +103,9 @@ def analyze_file(
         },
         shot_bounds=bounds,
         telemetry=_telemetry_payload(probe, source),
-        probe=probe.model_dump(mode="json"),
+        # Only what ingest recorded: a field it never probed (has_audio, the tags) is left
+        # out rather than stored as a default that reads like a measurement.
+        probe=probe.model_dump(mode="json", exclude_unset=True),
         thumb_frames=_thumb_frames(sampled.frames, sampled.timestamps, bounds),
         sprites=_sprites(sampled.frames, sampled.timestamps, bounds, config),
         warnings=sampled.warnings,

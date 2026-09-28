@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from autocut.core.manifest import GpsPoint, SourceFile, StreamInfo
 from autocut.core.probe import (
     ToolMissingError,
     ffprobe_command,
     parse_probe_json,
     probe_file,
+    probe_from_source,
     require_tools,
 )
 
@@ -119,6 +122,56 @@ def test_ffprobe_failure_is_reported_not_raised(tmp_path: Path) -> None:
     probe = probe_file(not_a_video)
     assert not probe.ok
     assert probe.error
+
+
+def test_probe_from_source_round_trips_every_field_it_carries() -> None:
+    source = SourceFile(
+        id="key",
+        path=Path("/footage/a.mp4"),
+        error=None,
+        duration_s=12.5,
+        width=1920,
+        height=1080,
+        rotation=-90,
+        fps=29.97,
+        codec="hevc",
+        pix_fmt="yuv420p10le",
+        bit_depth=10,
+        creation_time=datetime(2025, 7, 14, 13, 37, tzinfo=UTC),
+        make="DJI",
+        model="Osmo Action 4",
+        gps=GpsPoint(lat=39.9664, lon=9.6850),
+        subtitle_streams=[StreamInfo(index=2, codec_type="subtitle", codec_name="mov_text")],
+        data_streams=[StreamInfo(index=3, codec_type="data", codec_tag="djmd")],
+    )
+    probe = probe_from_source(source)
+    assert probe.ok
+    assert probe.path == source.path
+    assert probe.duration_s == source.duration_s
+    assert probe.width == source.width
+    assert probe.height == source.height
+    assert probe.rotation == source.rotation
+    assert probe.fps == source.fps
+    assert probe.codec == source.codec
+    assert probe.pix_fmt == source.pix_fmt
+    assert probe.bit_depth == source.bit_depth
+    assert probe.creation_time == source.creation_time
+    assert probe.make == source.make
+    assert probe.model == source.model
+    assert probe.gps == source.gps
+    assert probe.subtitle_streams == source.subtitle_streams
+    assert probe.data_streams == source.data_streams
+    # Not carried by SourceFile, so left at the ProbeResult default.
+    assert probe.color_transfer is None
+    assert probe.encoder is None
+    assert probe.has_audio is False
+
+
+def test_probe_from_source_carries_the_error_through() -> None:
+    source = SourceFile(id="key", path=Path("/footage/broken.mp4"), error="ffprobe failed")
+    probe = probe_from_source(source)
+    assert not probe.ok
+    assert probe.error == "ffprobe failed"
 
 
 def test_require_tools_passes_when_everything_is_on_path(

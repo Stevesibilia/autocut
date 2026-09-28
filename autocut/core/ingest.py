@@ -141,13 +141,17 @@ def find_proxy(path: Path, config: AutocutConfig | None = None) -> Path | None:
 def ingest_file(scanned: ScannedFile, config: AutocutConfig) -> SourceFile:
     """Probe, detect telemetry, classify and key one file. Runs inside a pool worker."""
     path = scanned.path
-    probe = probe_file(path)
+    probe = probe_file(path, timeout_s=config.timeouts.ffprobe_s)
     telemetry_kind: TelemetryKind = "none"
     series: TelemetrySeries | None = None
     if probe.ok:
         telemetry_kind, series = detect_telemetry(probe, path)
     classification = classify(
-        probe, telemetry_kind, scanned.rel_path, config.analysis.class_overrides
+        probe,
+        telemetry_kind,
+        scanned.rel_path,
+        config.analysis.class_overrides,
+        high_fps_threshold=config.analysis.high_fps_threshold,
     )
     return SourceFile(
         id=cache_key(path) or f"path:{path}",

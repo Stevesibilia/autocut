@@ -24,16 +24,17 @@ from pathlib import Path
 
 import numpy as np
 
-from autocut.core.config import AutocutConfig
+from autocut.core.config import AutocutConfig, TimeoutsConfig
 from autocut.core.durations import heroes, trimmed_span
 from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
 from autocut.core.ffmpeg_cmd import resolve_target_fps, slow_motion_ratio
 from autocut.core.manifest import DurationReason, Manifest, Segment
 from autocut.core.proc import first_stderr_line
 
+_TIMEOUTS = TimeoutsConfig()
+
 #: librosa works on mono at a modest rate, and a beat tracker gains nothing from more.
 SAMPLE_RATE = 22050
-DECODE_TIMEOUT_S = 300.0
 
 BEATMAP_FILENAME = "beatmap.txt"
 
@@ -96,7 +97,9 @@ class QuantizeResult:
         return self.total_after_s - self.total_before_s
 
 
-def decode_audio(path: Path, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
+def decode_audio(
+    path: Path, sample_rate: int = SAMPLE_RATE, *, timeout_s: float = _TIMEOUTS.audio_decode_s
+) -> np.ndarray:
     """The track as mono float samples, decoded by ffmpeg.
 
     Raw ``f32le`` rather than a WAV stream as the design suggested: the pipeline is the
@@ -123,9 +126,7 @@ def decode_audio(path: Path, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
         "-",
     ]
     try:
-        completed = subprocess.run(
-            command, capture_output=True, timeout=DECODE_TIMEOUT_S, check=False
-        )
+        completed = subprocess.run(command, capture_output=True, timeout=timeout_s, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
         raise AudioUnavailableError(f"could not run ffmpeg on {path.name}: {exc}") from exc
     if completed.returncode != 0 or not completed.stdout:

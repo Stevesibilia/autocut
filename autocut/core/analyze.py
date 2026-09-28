@@ -124,7 +124,14 @@ def _shot_bounds(
     duration = probe.duration_s or source.duration_s
     if config.analysis.detector == "pyscenedetect":
         target = source.proxy_path if source.proxy_path and config.analysis.use_proxies else None
-        min_len_frames = max(1, int(round(config.analysis.min_scene_seconds * (probe.fps or 25))))
+        min_len_frames = max(
+            1,
+            int(
+                round(
+                    config.analysis.min_scene_seconds * (probe.fps or config.analysis.fallback_fps)
+                )
+            ),
+        )
         bounds = detect_shots_pyscenedetect(
             target or source.path, config.analysis.scene_threshold, min_len_frames
         )

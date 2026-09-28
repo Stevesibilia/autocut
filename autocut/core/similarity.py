@@ -26,10 +26,11 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
-from autocut.core.config import AutocutConfig
+from autocut.core.config import AutocutConfig, SimilarityConfig
 
-HASH_BITS = 64
-HISTOGRAM_BINS = 8
+_DEFAULTS = SimilarityConfig()
+
+HASH_BITS = 64  # fixed by the 8x8 average-hash structure, not a tunable.
 EARTH_RADIUS_M = 6_371_000.0
 
 
@@ -69,18 +70,16 @@ def perceptual_hash(frame: np.ndarray) -> int:
     return bits
 
 
-def color_histogram(frame: np.ndarray) -> np.ndarray:
-    """Normalized 8x8x8 RGB histogram of a frame."""
+def color_histogram(frame: np.ndarray, bins: int = _DEFAULTS.histogram_bins) -> np.ndarray:
+    """Normalized ``bins x bins x bins`` RGB histogram of a frame."""
     if frame.size == 0 or frame.ndim != 3:
-        return np.zeros(HISTOGRAM_BINS**3)
-    quantized = (frame.astype(np.int32) * HISTOGRAM_BINS) // 256
-    quantized = np.clip(quantized, 0, HISTOGRAM_BINS - 1)
-    flat = (
-        quantized[:, :, 0] * HISTOGRAM_BINS**2
-        + quantized[:, :, 1] * HISTOGRAM_BINS
-        + quantized[:, :, 2]
-    ).reshape(-1)
-    counts = np.bincount(flat, minlength=HISTOGRAM_BINS**3).astype(np.float64)
+        return np.zeros(bins**3)
+    quantized = (frame.astype(np.int32) * bins) // 256
+    quantized = np.clip(quantized, 0, bins - 1)
+    flat = (quantized[:, :, 0] * bins**2 + quantized[:, :, 1] * bins + quantized[:, :, 2]).reshape(
+        -1
+    )
+    counts = np.bincount(flat, minlength=bins**3).astype(np.float64)
     total = counts.sum()
     return counts / total if total > 0 else counts
 
@@ -149,7 +148,8 @@ class VisualSignal:
     def value(self, a: CandidateFeatures, b: CandidateFeatures, config: AutocutConfig) -> float:
         assert a.phash is not None and b.phash is not None
         assert a.histogram is not None and b.histogram is not None
-        return 0.5 * hash_similarity(a.phash, b.phash) + 0.5 * histogram_similarity(
+        share = config.similarity.hash_share
+        return share * hash_similarity(a.phash, b.phash) + (1 - share) * histogram_similarity(
             a.histogram, b.histogram
         )
 

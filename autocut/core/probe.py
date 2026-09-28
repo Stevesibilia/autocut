@@ -16,8 +16,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from autocut.core.config import TimeoutsConfig
 from autocut.core.manifest import GpsPoint, SourceFile, StreamInfo
 from autocut.core.proc import first_stderr_line, run_tool
+
+_TIMEOUTS = TimeoutsConfig()
 
 FFPROBE_ARGS: tuple[str, ...] = (
     "-v",
@@ -27,7 +30,6 @@ FFPROBE_ARGS: tuple[str, ...] = (
     "-show_format",
     "-show_streams",
 )
-FFPROBE_TIMEOUT_S = 60.0
 
 # ISO 6709: "+39.9664+9.6850", "+39.9268+009.6641/", optionally with altitude.
 _ISO6709 = re.compile(
@@ -99,7 +101,7 @@ class ProbeResult(BaseModel):
         return self.display_height > self.display_width
 
 
-def probe_file(path: Path, *, timeout_s: float = FFPROBE_TIMEOUT_S) -> ProbeResult:
+def probe_file(path: Path, *, timeout_s: float = _TIMEOUTS.ffprobe_s) -> ProbeResult:
     """Probe ``path`` with ffprobe. Never raises: errors land in ``ProbeResult.error``."""
     result = run_tool(ffprobe_command(path), timeout_s=timeout_s)
     if result.error is not None:

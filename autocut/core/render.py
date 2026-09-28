@@ -21,18 +21,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from autocut.core.avmux import (
-    CONCAT_TIMEOUT_S,
     concat_command,
     probe_duration,
     run_ffmpeg,
     write_concat_list,
 )
-from autocut.core.config import AutocutConfig
+from autocut.core.config import AutocutConfig, TimeoutsConfig
 from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
 from autocut.core.export import ExportResult, export_clips, export_is_current
 from autocut.core.ffmpeg_cmd import ExportOverrides
 from autocut.core.manifest import Manifest, Segment
 from autocut.core.proc import run_tool
+
+_TIMEOUTS = TimeoutsConfig()
 
 #: The keys that have to agree across the clips for a stream copy concat to be valid.
 VIDEO_KEYS = ("codec_name", "width", "height", "pix_fmt", "r_frame_rate")
@@ -186,7 +187,7 @@ def is_current(
     return state.fingerprint == render_fingerprint(manifest, config, track)
 
 
-def probe_streams(path: Path, *, timeout_s: float = 60.0) -> StreamInfo:
+def probe_streams(path: Path, *, timeout_s: float = _TIMEOUTS.ffprobe_s) -> StreamInfo:
     """One ffprobe per clip, kept to what decides whether the clips concatenate."""
     command = [
         "ffprobe",
@@ -410,7 +411,7 @@ def _join(
             audio_bitrate=config.render.audio_bitrate,
             keep_clip_audio=check.has_audio,
         ),
-        CONCAT_TIMEOUT_S,
+        config.timeouts.concat_s,
         temporary,
     )
     list_file.unlink(missing_ok=True)

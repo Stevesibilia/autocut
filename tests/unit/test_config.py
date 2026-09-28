@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from autocut.core.config import SOURCE_CLASSES, AutocutConfig
 
 
@@ -356,3 +358,36 @@ def test_the_shipped_example_still_loads_under_the_strict_schema() -> None:
     """The scenario in specs/configuration: the example is documentation, and must load."""
     example = Path(__file__).resolve().parents[2] / "autocut.example.toml"
     AutocutConfig.load(example)
+
+
+# --- tunables moved into configuration (core-consolidation, issue #81) ------
+
+
+@pytest.mark.parametrize(
+    ("getter", "old_constant"),
+    [
+        (lambda cfg: cfg.analysis.high_fps_threshold, 100.0),
+        (lambda cfg: cfg.analysis.fallback_fps, 25.0),
+        (lambda cfg: cfg.similarity.histogram_bins, 8),
+        (lambda cfg: cfg.similarity.hash_share, 0.5),
+        (lambda cfg: cfg.export.workers, None),
+        (lambda cfg: cfg.timeouts.ffprobe_s, 60.0),
+        (lambda cfg: cfg.timeouts.hwaccel_probe_s, 20.0),
+        (lambda cfg: cfg.timeouts.sample_read_s, 900.0),
+        (lambda cfg: cfg.timeouts.export_clip_s, 1800.0),
+        (lambda cfg: cfg.timeouts.montage_part_s, 300.0),
+        (lambda cfg: cfg.timeouts.concat_s, 600.0),
+        (lambda cfg: cfg.timeouts.audio_decode_s, 300.0),
+        (lambda cfg: cfg.timeouts.telemetry_extract_s, 60.0),
+        (lambda cfg: cfg.timeouts.version_check_s, 10.0),
+    ],
+)
+def test_every_moved_tunable_defaults_to_the_old_constant(
+    getter: object, old_constant: object
+) -> None:
+    assert getter(AutocutConfig()) == old_constant  # type: ignore[operator]
+
+
+def test_the_shipped_example_lists_the_timeouts_defaults() -> None:
+    example = Path(__file__).resolve().parents[2] / "autocut.example.toml"
+    assert AutocutConfig.load(example).timeouts == AutocutConfig().timeouts

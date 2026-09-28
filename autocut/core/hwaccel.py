@@ -26,14 +26,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from autocut.core.config import TimeoutsConfig
 from autocut.core.proc import first_stderr_line, run_tool
 
 HwaccelMethod = Literal["none", "vaapi", "videotoolbox"]
 
+_TIMEOUTS = TimeoutsConfig()
+
 # The render node a VAAPI capable Linux host exposes. Anything else is unusual
 # enough that the user should name the method explicitly in autocut.toml.
 VAAPI_RENDER_NODE = Path("/dev/dri/renderD128")
-PROBE_TIMEOUT_S = 20.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +66,7 @@ class Hwaccel:
 SOFTWARE = Hwaccel()
 
 
-def available_methods(timeout_s: float = PROBE_TIMEOUT_S) -> list[str]:
+def available_methods(timeout_s: float = _TIMEOUTS.hwaccel_probe_s) -> list[str]:
     """What ``ffmpeg -hwaccels`` reports, lowercased. Empty when ffmpeg cannot be run."""
     result = run_tool(["ffmpeg", "-hide_banner", "-hwaccels"], timeout_s=timeout_s)
     if not result.ok:
@@ -126,7 +128,9 @@ def select(
     return Hwaccel(reason=f"no known hardware decoder for {system}")
 
 
-def verify(hwaccel: Hwaccel, path: Path, timeout_s: float = PROBE_TIMEOUT_S) -> tuple[bool, str]:
+def verify(
+    hwaccel: Hwaccel, path: Path, timeout_s: float = _TIMEOUTS.hwaccel_probe_s
+) -> tuple[bool, str]:
     """Decode one frame of ``path`` with ``hwaccel``. Returns whether it worked and why not.
 
     Run once per run against a real file, because whether a driver works is not

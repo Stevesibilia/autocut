@@ -80,6 +80,18 @@ class AnalysisConfig(_Strict):
         drone=1.0, actioncam=1.0, phone=0.3, reflex=0.5, generic=0.5
     )
     class_overrides: list[ClassOverride] = Field(default_factory=list)
+    high_fps_threshold: float = Field(
+        default=100.0,
+        gt=0,
+        description="A frame rate at or above this only comes from a camera built for "
+        "slow motion, and classifies an otherwise unrecognized file as actioncam.",
+    )
+    fallback_fps: float = Field(
+        default=25.0,
+        gt=0,
+        description="Frame rate assumed for the pyscenedetect minimum scene length when "
+        "ffprobe reports none.",
+    )
 
 
 class ScoringWeights(_Strict):
@@ -339,6 +351,16 @@ class SimilarityConfig(_Strict):
         description="Cosine similarity mapped to 0. CLIP vectors of two unrelated "
         "holiday shots still sit around 0.5, so the useful range is the half above "
         "it and stretching that half is what makes the signal discriminate.",
+    )
+    histogram_bins: int = Field(
+        default=8, ge=2, le=32, description="Per channel buckets of the fallback colour histogram."
+    )
+    hash_share: float = Field(
+        default=0.5,
+        ge=0,
+        le=1,
+        description="Share of the visual fallback signal that comes from the perceptual "
+        "hash. The colour histogram gets the rest.",
     )
 
 
@@ -749,6 +771,12 @@ class ExportConfig(_Strict):
         drone=False, actioncam=False, phone=False, reflex=False, generic=False
     )
     keep_rejects: bool = False
+    workers: int | None = Field(
+        default=None,
+        ge=1,
+        description="Thread pool size for encoding clips. Defaults to "
+        "max(1, (analysis.workers or physical cores) // 2).",
+    )
     uniform_frame: bool = Field(
         default=False,
         description="Scale and pad every selected clip onto one common frame, the "
@@ -960,6 +988,43 @@ class CacheConfig(_Strict):
     )
 
 
+class TimeoutsConfig(_Strict):
+    """How long AutoCut waits for one external tool call before giving up on it."""
+
+    ffprobe_s: float = Field(
+        default=60.0, gt=0, description="One ffprobe call: a file, or an exported clip."
+    )
+    hwaccel_probe_s: float = Field(
+        default=20.0,
+        gt=0,
+        description="Listing ffmpeg's compiled-in hardware decoders, or verifying one "
+        "against a real file.",
+    )
+    sample_read_s: float = Field(
+        default=900.0,
+        gt=0,
+        description="Reading the sampled frames ffmpeg writes to a pipe during analysis.",
+    )
+    export_clip_s: float = Field(default=1800.0, gt=0, description="Encoding one exported clip.")
+    montage_part_s: float = Field(
+        default=300.0, gt=0, description="Encoding one clip of the review montage."
+    )
+    concat_s: float = Field(
+        default=600.0,
+        gt=0,
+        description="Joining already-encoded clips into a render or a montage.",
+    )
+    audio_decode_s: float = Field(
+        default=300.0, gt=0, description="Decoding the soundtrack for beat sync."
+    )
+    telemetry_extract_s: float = Field(
+        default=60.0, gt=0, description="Extracting an embedded telemetry subtitle track."
+    )
+    version_check_s: float = Field(
+        default=10.0, gt=0, description="Reading one external tool's version, for `autocut doctor`."
+    )
+
+
 class AutocutConfig(_Strict):
     """Root configuration model."""
 
@@ -976,6 +1041,7 @@ class AutocutConfig(_Strict):
     places: PlacesConfig = PlacesConfig()
     gui: GuiConfig = GuiConfig()
     cache: CacheConfig = CacheConfig()
+    timeouts: TimeoutsConfig = TimeoutsConfig()
 
     @classmethod
     def load(cls, path: Path | None) -> AutocutConfig:

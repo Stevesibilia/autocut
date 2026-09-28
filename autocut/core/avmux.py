@@ -14,11 +14,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from autocut.core.config import TimeoutsConfig
 from autocut.core.proc import first_stderr_line, run_tool
 
-#: A concat of clips already on disk is I/O and a container rewrite, but a long holiday
-#: edit is still gigabytes of it.
-CONCAT_TIMEOUT_S = 600.0
+_TIMEOUTS = TimeoutsConfig()
 
 #: The concat demuxer escapes a single quote by doubling it.
 _QUOTE = chr(39)
@@ -110,7 +109,7 @@ def concat_command(
     return command
 
 
-def probe_duration(path: Path, *, timeout_s: float = 60.0) -> float:
+def probe_duration(path: Path, *, timeout_s: float = _TIMEOUTS.ffprobe_s) -> float:
     """The duration ffmpeg says the file has, which is what an index has to use.
 
     Measured rather than computed from the frame count: a player maps a position onto

@@ -19,7 +19,7 @@ from pathlib import Path
 
 from autocut.core import embeddings
 from autocut.core.cache import cache_stats
-from autocut.core.config import AutocutConfig
+from autocut.core.config import AutocutConfig, TimeoutsConfig
 from autocut.core.hwaccel import select as select_hwaccel
 from autocut.core.hwaccel import verify as verify_hwaccel
 from autocut.core.proc import run_tool
@@ -30,7 +30,7 @@ from autocut.core.providers import (
     find_key,
 )
 
-VERSION_TIMEOUT_S = 10.0
+_TIMEOUTS = TimeoutsConfig()
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +108,7 @@ def _binary_check(name: str) -> Check:
     return Check(name=name, ok=True, detail=f"{version} at {path}")
 
 
-def _binary_version(name: str, *, timeout_s: float = VERSION_TIMEOUT_S) -> str | None:
+def _binary_version(name: str, *, timeout_s: float = _TIMEOUTS.version_check_s) -> str | None:
     result = run_tool([name, "-hide_banner", "-version"], timeout_s=timeout_s)
     if result.error is not None or result.returncode != 0:
         return None

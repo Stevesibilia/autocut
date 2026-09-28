@@ -772,7 +772,7 @@ def sync(
     # A re-run is a fresh measurement, not a drift on top of the last one.
     reset_final_bounds(manifest)
     try:
-        track = measure_track(decode_audio(audio))
+        track = measure_track(decode_audio(audio, timeout_s=cfg.timeouts.audio_decode_s))
     except AudioUnavailableError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc

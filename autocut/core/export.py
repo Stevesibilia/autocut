@@ -26,7 +26,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from autocut.core.config import AutocutConfig
+from autocut.core.config import AutocutConfig, TimeoutsConfig
 from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
 from autocut.core.ffmpeg_cmd import (
     ExportOverrides,
@@ -48,7 +48,7 @@ from autocut.core.naming import (
 from autocut.core.proc import first_stderr_line, require_tools, run_tool
 from autocut.core.select import absolute_time
 
-FFMPEG_TIMEOUT_S = 1800.0
+_TIMEOUTS = TimeoutsConfig()
 
 
 @dataclass(slots=True)
@@ -121,7 +121,7 @@ def fingerprint(plan: ExportPlan, source_id: str) -> str:
 
 
 def export_one(
-    plan: ExportPlan, segment_id: str, digest: str, *, timeout_s: float = FFMPEG_TIMEOUT_S
+    plan: ExportPlan, segment_id: str, digest: str, *, timeout_s: float = _TIMEOUTS.export_clip_s
 ) -> ClipResult:
     """Run ffmpeg for one clip. Runs inside a pool worker."""
     plan.output.parent.mkdir(parents=True, exist_ok=True)
@@ -345,7 +345,7 @@ def _run(
     require_tools("ffmpeg")
 
     done = result.skipped
-    workers = max(1, (config.analysis.workers or physical_cores()) // 2)
+    workers = config.export.workers or max(1, (config.analysis.workers or physical_cores()) // 2)
     if workers == 1 or len(pending) == 1:
         for job in pending:
             done += 1

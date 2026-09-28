@@ -8,6 +8,7 @@ is skipped has nothing to do with libx264.
 from __future__ import annotations
 
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -768,6 +769,35 @@ def test_thread_pool_worker_failure_is_isolated(
     assert manifest.segments["a:0"].exported_path is not None
     b_error = manifest.segments["b:0"].export_error
     assert b_error is not None and b_error.startswith("worker failed:")
+
+
+def test_export_workers_overrides_the_default_pool_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``export.workers`` wins over ``max(1, (analysis.workers or physical cores) // 2)``."""
+    stub_encoder(monkeypatch)
+    captured: list[int | None] = []
+    real_pool = ThreadPoolExecutor
+
+    class SpyPool(real_pool):  # type: ignore[misc]
+        def __init__(self, max_workers: int | None = None, *args: object, **kwargs: object) -> None:
+            captured.append(max_workers)
+            super().__init__(max_workers, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("autocut.core.export.ThreadPoolExecutor", SpyPool)
+    manifest = project(tmp_path)
+    for index, name in enumerate(("a", "b", "c", "d")):
+        add_file(manifest, name, minutes=index * 10)
+        add_segment(manifest, f"{name}:0", name, order=index + 1)
+    config = AutocutConfig()
+    # The old formula would give max(1, (1 or physical cores) // 2) == 1, which takes
+    # the single threaded path instead of the pool. workers overrides it to 3.
+    config.analysis.workers = 1
+    config.export.workers = 3
+
+    export_clips(manifest, config)
+
+    assert captured == [3]
 
 
 @pytest.mark.ffmpeg

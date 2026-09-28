@@ -16,12 +16,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from autocut.core.config import TimeoutsConfig
 from autocut.core.manifest import TelemetryKind
 from autocut.core.probe import ProbeResult
 from autocut.core.proc import run_tool
 from autocut.core.telemetry import TelemetrySample, TelemetrySeries
 
-EXTRACT_TIMEOUT_S = 60.0
+_TIMEOUTS = TimeoutsConfig()
 
 # GPS is written longitude first, then latitude, then altitude in metres.
 _GPS = re.compile(
@@ -146,7 +147,7 @@ def extract_command(path: Path, stream_index: int) -> list[str]:
     ]
 
 
-def _run(command: list[str], *, timeout_s: float = EXTRACT_TIMEOUT_S) -> str:
+def _run(command: list[str], *, timeout_s: float = _TIMEOUTS.telemetry_extract_s) -> str:
     result = run_tool(command, timeout_s=timeout_s)
     return result.stdout if result.error is None and result.returncode == 0 else ""
 

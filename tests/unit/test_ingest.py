@@ -10,22 +10,45 @@ from pathlib import Path
 
 import pytest
 
+from autocut.core import probe as probe_module
 from autocut.core.config import AutocutConfig
 from autocut.core.events import ProgressEvent
 from autocut.core.ingest import (
+    ScannedFile,
     _chronological_key,
     find_proxy,
     ingest,
+    ingest_file,
     physical_cores,
     scan,
 )
 from autocut.core.manifest import SourceFile
+from autocut.core.proc import ToolRun
 
 
 def touch(path: Path, payload: bytes = b"x") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(payload)
     return path
+
+
+def test_timeouts_ffprobe_s_reaches_probe_file_through_ingest_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: list[float] = []
+
+    def fake_run_tool(command: list[str], *, timeout_s: float) -> ToolRun:
+        captured.append(timeout_s)
+        return ToolRun(returncode=1, stdout="", stderr="", error="stubbed")
+
+    monkeypatch.setattr(probe_module, "run_tool", fake_run_tool)
+    config = AutocutConfig()
+    config.timeouts.ffprobe_s = 5.0
+    scanned = ScannedFile(path=tmp_path / "missing.mp4", source_root=tmp_path)
+
+    ingest_file(scanned, config)
+
+    assert captured == [5.0]
 
 
 def test_scan_of_a_mixed_folder(tmp_path: Path) -> None:

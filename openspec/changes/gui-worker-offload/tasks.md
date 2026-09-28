@@ -28,6 +28,6 @@
 
 - [x] 4.1 `make lint` in this worktree's venv (`make venv` first; it has the gui extra, so mypy covers `autocut/gui`).
 - [x] 4.2 `openspec validate gui-worker-offload --strict`.
-- [ ] 4.3 Through the test runner: `make test`, and `make docker-test-gui`. Quote the counts.
+- [x] 4.3 Through the test runner: `make test`, and `make docker-test-gui`. Quote the counts.
 - [x] 4.4 Real run on the host (macOS, the target platform): `autocut gui` on a project built from `tests/fixtures/synthetic`. Load `click` from the fixtures as a track, and check that the window stays movable while it loads. Start an export and close the window mid-export: the window closes by itself after the clip. Describe what you saw in the hand-back. You cannot screenshot a claim, so say plainly what you could not observe.
 - [x] 4.5 Tick these boxes, push the branch and hand back.

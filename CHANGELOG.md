@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-28
+
 - `autocut gui`, a PySide6 window over the same core the CLI uses: one `ProjectState` per project owning the manifest and configuration with a debounced autosave, a `CoreWorker` thread that runs any core stage with progress and cooperative cancellation, and a five screen window whose navigation unlocks a screen when the project has what it needs (ADR 9).
 - The Project screen: drag and drop or browse for source folders with clip counts, an output folder that says when it already holds a project, the drone, family and mixed profiles applied as a diff the user sees first, a recent projects list, and the `doctor` report inline.
 - The Analysis screen: stage steps, progress with the current file and an estimate, cancel that keeps what it reached, and resume made cheap by the analysis cache.

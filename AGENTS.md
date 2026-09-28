@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-AutoCut selects, trims, orders and normalizes short clips from raw vacation footage (drone, action cam, phone, camera) for import into CapCut. It is a Python library (`autocut/core`) with a Typer CLI (`autocut/cli`) and a planned PySide6 GUI (`autocut/gui`). The core never imports from the front ends and never prints; progress flows through callbacks in `autocut/core/events.py`.
+AutoCut selects, trims, orders and normalizes short clips from raw vacation footage (drone, action cam, phone, camera) for import into CapCut. It is a Python library (`autocut/core`) with a Typer CLI (`autocut/cli`) and a PySide6 GUI (`autocut/gui`). The core never imports from the front ends and never prints; progress flows through callbacks in `autocut/core/events.py`.
 
-Read `SPEC.md` before changing behavior. Design trade-offs are recorded in `docs/adr/`. Add a new ADR for any decision that changes structure, dependencies or interfaces.
+Read `SPEC.md` before changing behavior. Design trade-offs are recorded in `docs/adr/`. Add a new ADR for any decision that changes structure, dependencies or interfaces. Changes are planned as OpenSpec changes in `openspec/changes/` and archived after merge (ADR 13).
 
 **Tech stack:** Python 3.11+, ffmpeg and ffprobe as external binaries, NumPy, OpenCV headless, PySceneDetect, librosa, Pydantic, Typer and Rich. Optional extras: `ai` (torch, open_clip), `gui` (PySide6), `dev` (pytest, ruff, mypy), `build` (PyInstaller).
 
@@ -103,10 +103,10 @@ curl -s https://pypi.org/pypi/<package>/json | jq '{version: .info.version, requ
 
 GitHub Actions.
 
-| Workflow      | Trigger                                                | Purpose                                                                                                                                 |
-| ------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Workflow      | Trigger                                        | Purpose                                                                                                                                             |
+| ------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ci.yml`      | pull requests that touch code, manual dispatch | ruff, mypy, fixtures, pytest on 3.12 per PR, full 3.11/3.12/3.14 matrix on manual dispatch; `ai` and `gui` Docker jobs only when their files change |
-| `release.yml` | tags `v*`                                              | macOS arm64 PyInstaller `.dmg`, attached to a GitHub release                                                                            |
+| `release.yml` | tags `v*`                                      | macOS arm64 PyInstaller `.dmg`, attached to a GitHub release                                                                                        |
 
 ## Command Safety
 

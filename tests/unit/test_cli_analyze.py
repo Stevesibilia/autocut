@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import math
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from autocut.cli.main import app
-from autocut.core.manifest import Manifest
+from autocut.core.manifest import MANIFEST_SCHEMA_VERSION, Manifest
 
 runner = CliRunner()
 
@@ -176,6 +178,27 @@ def test_report_command_rerenders_from_an_existing_manifest(
     assert result.exit_code == 0, result.stdout
     assert (out / "report.html").exists()
     assert "Report written to" in result.stdout
+
+
+def test_report_on_a_manifest_from_a_newer_schema_exits_non_zero(tmp_path: Path) -> None:
+    out = tmp_path / "edit"
+    out.mkdir()
+    now = datetime.now(UTC)
+    manifest = Manifest(created_at=now, updated_at=now, sources=[Path("/footage")], output_dir=out)
+    data = manifest.model_dump(mode="json")
+    newer = MANIFEST_SCHEMA_VERSION + 1
+    data["schema_version"] = newer
+    manifest_path = out / "manifest.json"
+    manifest_path.write_text(json.dumps(data), encoding="utf-8")
+    before = manifest_path.read_bytes()
+
+    result = runner.invoke(app, ["report", str(out)])
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert str(newer) in result.output
+    assert str(MANIFEST_SCHEMA_VERSION) in result.output
+    assert manifest_path.read_bytes() == before
 
 
 def test_select_without_a_manifest_exits_non_zero(tmp_path: Path) -> None:

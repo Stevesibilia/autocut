@@ -48,7 +48,7 @@ from autocut.core.events import ProgressEvent
 from autocut.core.export import export_clips
 from autocut.core.ffmpeg_cmd import ExportOverrides
 from autocut.core.ingest import ingest
-from autocut.core.manifest import Manifest
+from autocut.core.manifest import Manifest, ManifestVersionError
 from autocut.core.providers import clear_key, cloud_enabled, find_key, set_key
 from autocut.core.providers.openrouter import OpenRouterProvider
 from autocut.core.render import RenderResult, render_edit
@@ -212,13 +212,22 @@ def analyze(
         raise typer.Exit(code=130)
 
 
+def _load_manifest(path: Path) -> Manifest:
+    """Load a manifest, reporting a refused newer schema as one line instead of a traceback."""
+    try:
+        return Manifest.load(path)
+    except ManifestVersionError as error:
+        console.print(f"[red]Cannot open the project[/red]: {error}")
+        raise typer.Exit(code=1) from None
+
+
 def _open_manifest(out: Path, sources: list[Path], cfg: AutocutConfig) -> Manifest:
     """Load the manifest in ``out`` when it exists, otherwise start a new one."""
     path = out / "manifest.json"
     now = datetime.now(UTC)
     resolved = [source.resolve() for source in sources]
     if path.exists():
-        manifest = Manifest.load(path)
+        manifest = _load_manifest(path)
         manifest.sources = resolved
         manifest.output_dir = out
         manifest.config_snapshot = cfg.model_dump(mode="json")
@@ -238,7 +247,7 @@ def _open_project(project: Path) -> Manifest:
     if not manifest_path.exists():
         console.print(f"[red]No manifest found[/red] at {manifest_path}. Run analyze first.")
         raise typer.Exit(code=1)
-    return Manifest.load(manifest_path)
+    return _load_manifest(manifest_path)
 
 
 def _run_embed(manifest: Manifest, cfg: AutocutConfig) -> EmbedResult:
@@ -702,7 +711,7 @@ def report(
     if not manifest_path.exists():
         console.print(f"[red]No manifest found[/red] at {manifest_path}. Run analyze first.")
         raise typer.Exit(code=1)
-    path = render_report(Manifest.load(manifest_path), project)
+    path = render_report(_load_manifest(manifest_path), project)
     console.print(f"Report written to {path}")
 
 

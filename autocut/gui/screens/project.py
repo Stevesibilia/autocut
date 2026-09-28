@@ -389,7 +389,7 @@ class ProjectScreen(QWidget):
         profile = PROFILES_BY_KEY[str(self.profile.currentData())]
         try:
             self._state.new_project(self.sources.folders, out)
-        except OSError as error:
+        except (OSError, ValueError) as error:
             QMessageBox.warning(self, "Cannot use that folder", str(error))
             return False
         apply_profile(self._state.config, profile)

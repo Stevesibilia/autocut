@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -12,13 +13,14 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QMimeData, QPoint, Qt, QUrl  # noqa: E402
 from PySide6.QtGui import QDropEvent  # noqa: E402
 
+from autocut.core.manifest import MANIFEST_SCHEMA_VERSION  # noqa: E402
 from autocut.gui.screens.project import (  # noqa: E402
     ProjectScreen,
     count_videos,
     doctor_rows,
     doctor_table,
 )
-from autocut.gui.state import ProjectState  # noqa: E402
+from autocut.gui.state import AUTOSAVE_DEBOUNCE_MS, ProjectState  # noqa: E402
 from tests.unit.test_gui_state import a_manifest  # noqa: E402
 
 pytestmark = pytest.mark.gui
@@ -216,6 +218,37 @@ def test_opening_a_folder_without_a_manifest_warns_and_changes_nothing(
 
     assert warned and "manifest.json" in warned[0]
     assert not screen._state.is_open
+
+
+def test_creating_a_project_on_a_folder_with_a_newer_manifest_warns_and_changes_nothing(
+    screen: ProjectScreen, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, qtbot: Any
+) -> None:
+    from autocut.gui.screens import project as project_module
+
+    out = tmp_path / "edit"
+    out.mkdir()
+    data = a_manifest(out).model_dump(mode="json")
+    newer = MANIFEST_SCHEMA_VERSION + 1
+    data["schema_version"] = newer
+    manifest_path = out / "manifest.json"
+    manifest_path.write_text(json.dumps(data), encoding="utf-8")
+    before = manifest_path.read_bytes()
+
+    warned: list[str] = []
+    monkeypatch.setattr(
+        project_module.QMessageBox,
+        "warning",
+        lambda _parent, _title, message: warned.append(message),
+    )
+    drop(screen.sources, [a_card_folder(tmp_path)])
+    screen.output.setText(str(out))
+
+    assert screen.create_project() is False
+
+    assert warned and str(newer) in warned[0]
+    assert screen._state.manifest is None
+    qtbot.wait(AUTOSAVE_DEBOUNCE_MS + 400)
+    assert manifest_path.read_bytes() == before
 
 
 def test_the_screen_shows_a_project_opened_from_somewhere_else(

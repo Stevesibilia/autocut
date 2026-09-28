@@ -1,11 +1,17 @@
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
+import pytest
+
+from autocut.core import manifest as manifest_module
 from autocut.core.manifest import (
+    MANIFEST_SCHEMA_VERSION,
     AnalysisRun,
     GpsPoint,
     Manifest,
+    ManifestVersionError,
     Metrics,
     Segment,
     SelectionRun,
@@ -467,3 +473,107 @@ def test_place_fields_roundtrip(tmp_path: Path) -> None:
     assert back.segments["k:1"].held_by == []
     assert back.selection.places == 9
     assert back.selection.visits == 12
+
+
+def _valid_manifest_dict(out: Path) -> dict[str, Any]:
+    """A manifest that validates as is, as a plain dict ready to be edited and written."""
+    now = datetime.now(UTC)
+    m = Manifest(created_at=now, updated_at=now, sources=[Path("/footage")], output_dir=out)
+    return m.model_dump(mode="json")
+
+
+def test_a_newer_manifest_is_refused_and_left_untouched(tmp_path: Path) -> None:
+    out = tmp_path / "manifest.json"
+    data = _valid_manifest_dict(out)
+    newer = MANIFEST_SCHEMA_VERSION + 1
+    data["schema_version"] = newer
+    out.write_text(json.dumps(data), encoding="utf-8")
+    before = out.read_bytes()
+
+    with pytest.raises(ManifestVersionError) as excinfo:
+        Manifest.load(out)
+
+    message = str(excinfo.value)
+    assert str(newer) in message
+    assert str(MANIFEST_SCHEMA_VERSION) in message
+    assert str(out) in message
+    assert excinfo.value.found == newer
+    assert excinfo.value.supported == MANIFEST_SCHEMA_VERSION
+    assert out.read_bytes() == before
+
+
+def test_a_missing_schema_version_loads_as_the_current_one(tmp_path: Path) -> None:
+    out = tmp_path / "manifest.json"
+    data = _valid_manifest_dict(out)
+    del data["schema_version"]
+    out.write_text(json.dumps(data), encoding="utf-8")
+
+    back = Manifest.load(out)
+
+    assert back.schema_version == MANIFEST_SCHEMA_VERSION
+
+
+def test_a_string_schema_version_is_refused(tmp_path: Path) -> None:
+    out = tmp_path / "manifest.json"
+    data = _valid_manifest_dict(out)
+    data["schema_version"] = "1"
+    out.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(ManifestVersionError, match="unreadable schema_version"):
+        Manifest.load(out)
+
+
+def test_a_manifest_whose_top_level_is_not_an_object_is_refused(tmp_path: Path) -> None:
+    out = tmp_path / "manifest.json"
+    out.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+
+    with pytest.raises(ManifestVersionError, match="is not a manifest"):
+        Manifest.load(out)
+
+
+def test_a_registered_migration_step_runs_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(manifest_module, "MANIFEST_SCHEMA_VERSION", 2)
+    calls: list[dict[str, Any]] = []
+
+    def step(data: dict[str, Any]) -> dict[str, Any]:
+        calls.append(data)
+        return {**data, "migrated": True}
+
+    monkeypatch.setattr(manifest_module, "_MIGRATIONS", {1: step})
+    out = tmp_path / "manifest.json"
+    data = _valid_manifest_dict(out)
+    data["schema_version"] = 1
+    out.write_text(json.dumps(data), encoding="utf-8")
+
+    back = manifest_module.Manifest.load(out)
+
+    assert len(calls) == 1
+    assert back.schema_version == 2
+
+
+def test_a_missing_migration_step_is_a_programming_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(manifest_module, "MANIFEST_SCHEMA_VERSION", 2)
+    monkeypatch.setattr(manifest_module, "_MIGRATIONS", {})
+    out = tmp_path / "manifest.json"
+    data = _valid_manifest_dict(out)
+    data["schema_version"] = 1
+    out.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(RuntimeError):
+        manifest_module.Manifest.load(out)
+
+
+def test_a_current_manifest_round_trips_through_save_and_load_unchanged(tmp_path: Path) -> None:
+    now = datetime.now(UTC)
+    m = Manifest(created_at=now, updated_at=now, sources=[Path("/footage")], output_dir=tmp_path)
+    out = tmp_path / "manifest.json"
+    m.save(out)
+
+    back = Manifest.load(out)
+
+    assert back.schema_version == MANIFEST_SCHEMA_VERSION
+    assert back.model_dump(mode="json") == m.model_dump(mode="json")

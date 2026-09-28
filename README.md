@@ -10,7 +10,7 @@ Milestones M1 to M5 are complete: the whole pipeline works from the command line
 
 ## Requirements
 
-- **Python 3.11 or newer.**
+- **Python 3.12 or newer.**
 - **ffmpeg and ffprobe** on `PATH`.
 - **Linux or macOS.** Hardware decoding uses VAAPI on Linux and videotoolbox on macOS when available.
 

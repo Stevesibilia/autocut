@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Changed
+
+- Python floor raised to 3.12, every dependency floor raised to the newest release at least 5 days old, and a generated `constraints.txt` now pins every transitive version for the venv, Docker images and CI (ADR 11).
+- `scenedetect` moves from a core dependency to the optional `scenedetect` extra: the default install carries a single `cv2` distribution, `opencv-python-headless` (ADR 11).
+
+### Removed
+
+- Python 3.11 support.
+
 ### Fixed
 
 - A clip that made ffmpeg write a lot of decode errors could hang its worker forever, because the sampler read stderr only after stdout ended. ffmpeg's stderr is now drained on a background thread while frames are read, so any amount of error output cannot block decoding.

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,6 +22,7 @@ from autocut.core.cache import cache_stats
 from autocut.core.config import AutocutConfig
 from autocut.core.hwaccel import select as select_hwaccel
 from autocut.core.hwaccel import verify as verify_hwaccel
+from autocut.core.proc import run_tool
 from autocut.core.providers import (
     KEY_ENV_VAR,
     KEYRING_SERVICE,
@@ -108,20 +108,11 @@ def _binary_check(name: str) -> Check:
     return Check(name=name, ok=True, detail=f"{version} at {path}")
 
 
-def _binary_version(name: str) -> str | None:
-    try:
-        completed = subprocess.run(
-            [name, "-hide_banner", "-version"],
-            capture_output=True,
-            text=True,
-            timeout=VERSION_TIMEOUT_S,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
+def _binary_version(name: str, *, timeout_s: float = VERSION_TIMEOUT_S) -> str | None:
+    result = run_tool([name, "-hide_banner", "-version"], timeout_s=timeout_s)
+    if result.error is not None or result.returncode != 0:
         return None
-    if completed.returncode != 0:
-        return None
-    first = completed.stdout.splitlines()[0] if completed.stdout else ""
+    first = result.stdout.splitlines()[0] if result.stdout else ""
     words = first.split()
     # "ffmpeg version 8.0 Copyright (c) ..." is the shape of the line.
     return words[2] if len(words) > 2 and words[1] == "version" else first or None

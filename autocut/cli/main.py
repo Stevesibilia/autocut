@@ -51,7 +51,7 @@ from autocut.core.export import export_clips
 from autocut.core.ffmpeg_cmd import ExportOverrides
 from autocut.core.ingest import ingest
 from autocut.core.manifest import Manifest
-from autocut.core.probe import ToolMissingError
+from autocut.core.proc import ToolMissingError
 from autocut.core.providers import clear_key, cloud_enabled, find_key, set_key
 from autocut.core.providers.openrouter import OpenRouterProvider
 from autocut.core.render import RenderResult, render_edit

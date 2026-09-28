@@ -132,7 +132,7 @@ def test_available_methods_parses_the_ffmpeg_listing(monkeypatch: pytest.MonkeyP
         assert command[-1] == "-hwaccels"
         return subprocess.CompletedProcess(command, 0, listing, "")
 
-    monkeypatch.setattr("autocut.core.hwaccel.subprocess.run", fake_run)
+    monkeypatch.setattr("autocut.core.proc.subprocess.run", fake_run)
     assert available_methods() == ["vdpau", "cuda", "vaapi", "qsv"]
 
 
@@ -140,7 +140,7 @@ def test_available_methods_survives_a_missing_ffmpeg(monkeypatch: pytest.MonkeyP
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         raise FileNotFoundError("ffmpeg")
 
-    monkeypatch.setattr("autocut.core.hwaccel.subprocess.run", fake_run)
+    monkeypatch.setattr("autocut.core.proc.subprocess.run", fake_run)
     assert available_methods() == []
 
 
@@ -160,7 +160,7 @@ def test_verify_reports_a_driver_that_is_listed_but_broken(
         assert command.index("-hwaccel") < command.index("-i")
         return subprocess.CompletedProcess(command, 1, "", "Cannot load libcuda.so.1\n")
 
-    monkeypatch.setattr("autocut.core.hwaccel.subprocess.run", fake_run)
+    monkeypatch.setattr("autocut.core.proc.subprocess.run", fake_run)
     works, why = verify(Hwaccel(method="vaapi"), Path("clip.mp4"))
     assert not works
     assert why == "Cannot load libcuda.so.1"
@@ -173,7 +173,7 @@ def test_verify_decodes_a_single_frame_and_discards_it(monkeypatch: pytest.Monke
         seen.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
-    monkeypatch.setattr("autocut.core.hwaccel.subprocess.run", fake_run)
+    monkeypatch.setattr("autocut.core.proc.subprocess.run", fake_run)
     works, _ = verify(Hwaccel(method="videotoolbox"), Path("clip.mp4"))
     assert works
     command = seen[0]

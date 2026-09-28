@@ -12,8 +12,9 @@ for the preview.
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
+
+from autocut.core.proc import first_stderr_line, run_tool
 
 #: A concat of clips already on disk is I/O and a container rewrite, but a long holiday
 #: edit is still gigabytes of it.
@@ -109,7 +110,7 @@ def concat_command(
     return command
 
 
-def probe_duration(path: Path) -> float:
+def probe_duration(path: Path, *, timeout_s: float = 60.0) -> float:
     """The duration ffmpeg says the file has, which is what an index has to use.
 
     Measured rather than computed from the frame count: a player maps a position onto
@@ -127,32 +128,21 @@ def probe_duration(path: Path) -> float:
         "default=noprint_wrappers=1:nokey=1",
         str(path),
     ]
+    result = run_tool(command, timeout_s=timeout_s)
+    if result.error is not None:
+        return 0.0
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
-        return float(completed.stdout.strip())
-    except (OSError, subprocess.SubprocessError, ValueError):
+        return float(result.stdout.strip())
+    except ValueError:
         return 0.0
 
 
 def run_ffmpeg(command: list[str], timeout: float, output: Path) -> str | None:
     """Run ffmpeg. Returns an error message, or ``None`` when the file was written."""
-    try:
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-            stdin=subprocess.DEVNULL,
-        )
-    except FileNotFoundError:
-        return "ffmpeg not found on PATH"
-    except subprocess.SubprocessError as exc:
-        return str(exc)
-    if completed.returncode != 0 or not output.exists() or output.stat().st_size == 0:
+    result = run_tool(command, timeout_s=timeout)
+    if result.error is not None:
+        return result.error
+    if result.returncode != 0 or not output.exists() or output.stat().st_size == 0:
         output.unlink(missing_ok=True)
-        for line in completed.stderr.splitlines():
-            if line.strip():
-                return line.strip()
-        return f"ffmpeg exit status {completed.returncode}"
+        return first_stderr_line(result.stderr) or f"ffmpeg exit status {result.returncode}"
     return None

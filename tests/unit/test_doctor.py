@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 
 from autocut.cli.main import app
 from autocut.core import doctor as doctor_module
+from autocut.core import proc as proc_module
 from autocut.core.config import AutocutConfig
 from autocut.core.doctor import Check, DoctorReport, inspect_environment
 from autocut.core.hwaccel import Hwaccel
@@ -39,7 +40,7 @@ def minimal_machine(
         doctor_module.shutil, "which", lambda name: f"/usr/bin/{name}" if binaries else None
     )
     monkeypatch.setattr(
-        doctor_module.subprocess,
+        proc_module.subprocess,
         "run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
             args=args[0] if args else [], returncode=0, stdout=FFMPEG_VERSION_OUTPUT, stderr=""

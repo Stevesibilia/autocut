@@ -29,6 +29,7 @@ from autocut.core.durations import heroes, trimmed_span
 from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
 from autocut.core.ffmpeg_cmd import resolve_target_fps, slow_motion_ratio
 from autocut.core.manifest import DurationReason, Manifest, Segment
+from autocut.core.proc import first_stderr_line
 
 #: librosa works on mono at a modest rate, and a beat tracker gains nothing from more.
 SAMPLE_RATE = 22050
@@ -101,6 +102,9 @@ def decode_audio(path: Path, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
     Raw ``f32le`` rather than a WAV stream as the design suggested: the pipeline is the
     same ffmpeg call, and a bare float stream needs no header parser and no second
     audio library to read one from a pipe.
+
+    Reads bytes off stdout, so it keeps its own ``subprocess.run`` rather than going
+    through :func:`autocut.core.proc.run_tool`, which decodes stdout as text.
     """
     command = [
         "ffmpeg",
@@ -125,16 +129,10 @@ def decode_audio(path: Path, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
     except (OSError, subprocess.SubprocessError) as exc:
         raise AudioUnavailableError(f"could not run ffmpeg on {path.name}: {exc}") from exc
     if completed.returncode != 0 or not completed.stdout:
-        detail = _first_line(completed.stderr.decode("utf-8", "replace")) or "no audio decoded"
+        stderr_text = completed.stderr.decode("utf-8", "replace")
+        detail = first_stderr_line(stderr_text) or "no audio decoded"
         raise AudioUnavailableError(f"could not decode {path.name}: {detail}")
     return np.frombuffer(completed.stdout, dtype=np.float32)
-
-
-def _first_line(text: str) -> str:
-    for line in text.splitlines():
-        if line.strip():
-            return line.strip()
-    return ""
 
 
 def measure_track(samples: np.ndarray, sample_rate: int = SAMPLE_RATE) -> Track:

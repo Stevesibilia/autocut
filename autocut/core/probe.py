@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
-import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -19,18 +17,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from autocut.core.manifest import GpsPoint, SourceFile, StreamInfo
-
-
-class ToolMissingError(RuntimeError):
-    """A required external binary is not on PATH."""
-
-
-def require_tools(*names: str) -> None:
-    """Raise :class:`ToolMissingError` once, naming every missing binary at once."""
-    missing = [name for name in names if shutil.which(name) is None]
-    if missing:
-        raise ToolMissingError(f"{', '.join(missing)} not found on PATH. Run `autocut doctor`.")
-
+from autocut.core.proc import first_stderr_line, run_tool
 
 FFPROBE_ARGS: tuple[str, ...] = (
     "-v",
@@ -114,22 +101,13 @@ class ProbeResult(BaseModel):
 
 def probe_file(path: Path, *, timeout_s: float = FFPROBE_TIMEOUT_S) -> ProbeResult:
     """Probe ``path`` with ffprobe. Never raises: errors land in ``ProbeResult.error``."""
+    result = run_tool(ffprobe_command(path), timeout_s=timeout_s)
+    if result.error is not None:
+        return ProbeResult(path=path, error=result.error)
+    if result.returncode != 0:
+        return ProbeResult(path=path, error=first_stderr_line(result.stderr) or "ffprobe failed")
     try:
-        completed = subprocess.run(
-            ffprobe_command(path),
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-            check=False,
-        )
-    except FileNotFoundError:
-        return ProbeResult(path=path, error="ffprobe not found on PATH")
-    except subprocess.TimeoutExpired:
-        return ProbeResult(path=path, error=f"ffprobe timed out after {timeout_s:g}s")
-    if completed.returncode != 0:
-        return ProbeResult(path=path, error=_first_line(completed.stderr) or "ffprobe failed")
-    try:
-        payload = json.loads(completed.stdout)
+        payload = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
         return ProbeResult(path=path, error=f"unreadable ffprobe output: {exc}")
     return parse_probe_json(path, payload)
@@ -225,13 +203,6 @@ def _primary_video(streams: list[dict[str, Any]]) -> dict[str, Any] | None:
             continue
         return stream
     return videos[0]
-
-
-def _first_line(text: str) -> str:
-    for line in text.splitlines():
-        if line.strip():
-            return line.strip()
-    return ""
 
 
 def _optional_str(value: Any) -> str | None:

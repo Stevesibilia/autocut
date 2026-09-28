@@ -11,12 +11,10 @@ import pytest
 
 from autocut.core.manifest import GpsPoint, SourceFile, StreamInfo
 from autocut.core.probe import (
-    ToolMissingError,
     ffprobe_command,
     parse_probe_json,
     probe_file,
     probe_from_source,
-    require_tools,
 )
 
 DATA = Path(__file__).resolve().parents[1] / "data" / "ffprobe"
@@ -172,19 +170,3 @@ def test_probe_from_source_carries_the_error_through() -> None:
     probe = probe_from_source(source)
     assert not probe.ok
     assert probe.error == "ffprobe failed"
-
-
-def test_require_tools_passes_when_everything_is_on_path(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
-    require_tools("ffmpeg", "ffprobe")
-
-
-def test_require_tools_names_every_missing_binary(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("shutil.which", lambda name: None if name == "ffprobe" else "/usr/bin/x")
-    with pytest.raises(ToolMissingError) as excinfo:
-        require_tools("ffmpeg", "ffprobe")
-    assert "ffprobe" in str(excinfo.value)
-    assert "ffmpeg" not in str(excinfo.value)
-    assert "autocut doctor" in str(excinfo.value)

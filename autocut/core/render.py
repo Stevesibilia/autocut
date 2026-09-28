@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,6 +32,7 @@ from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
 from autocut.core.export import ExportResult, export_clips, export_is_current
 from autocut.core.ffmpeg_cmd import ExportOverrides
 from autocut.core.manifest import Manifest, Segment
+from autocut.core.proc import run_tool
 
 #: The keys that have to agree across the clips for a stream copy concat to be valid.
 VIDEO_KEYS = ("codec_name", "width", "height", "pix_fmt", "r_frame_rate")
@@ -186,7 +186,7 @@ def is_current(
     return state.fingerprint == render_fingerprint(manifest, config, track)
 
 
-def probe_streams(path: Path) -> StreamInfo:
+def probe_streams(path: Path, *, timeout_s: float = 60.0) -> StreamInfo:
     """One ffprobe per clip, kept to what decides whether the clips concatenate."""
     command = [
         "ffprobe",
@@ -199,10 +199,12 @@ def probe_streams(path: Path) -> StreamInfo:
         str(path),
     ]
     info = StreamInfo(path=Path(path))
+    result = run_tool(command, timeout_s=timeout_s)
+    if result.error is not None:
+        return info
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
-        payload = json.loads(completed.stdout or "{}")
-    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
         return info
     for stream in payload.get("streams", []):
         kind = stream.get("codec_type")

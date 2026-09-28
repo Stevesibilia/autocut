@@ -51,7 +51,7 @@ from autocut.core.export import export_clips
 from autocut.core.ffmpeg_cmd import ExportOverrides
 from autocut.core.ingest import ingest
 from autocut.core.manifest import Manifest
-from autocut.core.probe import ToolMissingError
+from autocut.core.proc import ToolMissingError
 from autocut.core.providers import clear_key, cloud_enabled, find_key, set_key
 from autocut.core.providers.openrouter import OpenRouterProvider
 from autocut.core.render import RenderResult, render_edit
@@ -772,7 +772,7 @@ def sync(
     # A re-run is a fresh measurement, not a drift on top of the last one.
     reset_final_bounds(manifest)
     try:
-        track = measure_track(decode_audio(audio))
+        track = measure_track(decode_audio(audio, timeout_s=cfg.timeouts.audio_decode_s))
     except AudioUnavailableError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc

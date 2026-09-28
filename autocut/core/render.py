@@ -16,23 +16,24 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 from autocut.core.avmux import (
-    CONCAT_TIMEOUT_S,
     concat_command,
     probe_duration,
     run_ffmpeg,
     write_concat_list,
 )
-from autocut.core.config import AutocutConfig
+from autocut.core.config import AutocutConfig, TimeoutsConfig
 from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
 from autocut.core.export import ExportResult, export_clips, export_is_current
 from autocut.core.ffmpeg_cmd import ExportOverrides
 from autocut.core.manifest import Manifest, Segment
+from autocut.core.proc import run_tool
+
+_TIMEOUTS = TimeoutsConfig()
 
 #: The keys that have to agree across the clips for a stream copy concat to be valid.
 VIDEO_KEYS = ("codec_name", "width", "height", "pix_fmt", "r_frame_rate")
@@ -186,7 +187,7 @@ def is_current(
     return state.fingerprint == render_fingerprint(manifest, config, track)
 
 
-def probe_streams(path: Path) -> StreamInfo:
+def probe_streams(path: Path, *, timeout_s: float = _TIMEOUTS.ffprobe_s) -> StreamInfo:
     """One ffprobe per clip, kept to what decides whether the clips concatenate."""
     command = [
         "ffprobe",
@@ -199,10 +200,12 @@ def probe_streams(path: Path) -> StreamInfo:
         str(path),
     ]
     info = StreamInfo(path=Path(path))
+    result = run_tool(command, timeout_s=timeout_s)
+    if result.error is not None:
+        return info
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
-        payload = json.loads(completed.stdout or "{}")
-    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
         return info
     for stream in payload.get("streams", []):
         kind = stream.get("codec_type")
@@ -217,7 +220,7 @@ def probe_streams(path: Path) -> StreamInfo:
     return info
 
 
-def check_parts_uniform(paths: list[Path]) -> PartsCheck:
+def check_parts_uniform(paths: list[Path], *, timeout_s: float = _TIMEOUTS.ffprobe_s) -> PartsCheck:
     """Whether these files can be joined by stream copy, and what they are.
 
     A fast mode export stream copies from the sources, so a folder can hold a 4K 30 fps
@@ -229,7 +232,7 @@ def check_parts_uniform(paths: list[Path]) -> PartsCheck:
         if not Path(path).exists():
             check.error = f"{Path(path).name} is missing from the export"
             return check
-        check.clips.append(probe_streams(Path(path)))
+        check.clips.append(probe_streams(Path(path), timeout_s=timeout_s))
 
     if not check.clips:
         check.error = "there are no exported clips to join"
@@ -354,7 +357,7 @@ def render_edit(
         return result
 
     progress(ProgressEvent(stage="render", current=1, total=3, message="checking the clips"))
-    check = check_parts_uniform(paths)
+    check = check_parts_uniform(paths, timeout_s=config.timeouts.ffprobe_s)
     if not check.uniform:
         result.errors.append(("render", check.error or "the clips cannot be joined"))
         return result
@@ -366,7 +369,7 @@ def render_edit(
         return result
 
     result.path = output
-    result.duration_s = probe_duration(output)
+    result.duration_s = probe_duration(output, timeout_s=config.timeouts.ffprobe_s)
     result.size_bytes = output.stat().st_size
     result.clips = len(paths)
     result.has_audio = chosen is not None or check.has_audio
@@ -408,7 +411,7 @@ def _join(
             audio_bitrate=config.render.audio_bitrate,
             keep_clip_audio=check.has_audio,
         ),
-        CONCAT_TIMEOUT_S,
+        config.timeouts.concat_s,
         temporary,
     )
     list_file.unlink(missing_ok=True)

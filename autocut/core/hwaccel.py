@@ -22,17 +22,20 @@ macOS, which is the production target and where the decoder is worth having.
 from __future__ import annotations
 
 import platform
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from autocut.core.config import TimeoutsConfig
+from autocut.core.proc import first_stderr_line, run_tool
+
 HwaccelMethod = Literal["none", "vaapi", "videotoolbox"]
+
+_TIMEOUTS = TimeoutsConfig()
 
 # The render node a VAAPI capable Linux host exposes. Anything else is unusual
 # enough that the user should name the method explicitly in autocut.toml.
 VAAPI_RENDER_NODE = Path("/dev/dri/renderD128")
-PROBE_TIMEOUT_S = 20.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,22 +66,13 @@ class Hwaccel:
 SOFTWARE = Hwaccel()
 
 
-def available_methods(timeout_s: float = PROBE_TIMEOUT_S) -> list[str]:
+def available_methods(timeout_s: float = _TIMEOUTS.hwaccel_probe_s) -> list[str]:
     """What ``ffmpeg -hwaccels`` reports, lowercased. Empty when ffmpeg cannot be run."""
-    try:
-        completed = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-hwaccels"],
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return []
-    if completed.returncode != 0:
+    result = run_tool(["ffmpeg", "-hide_banner", "-hwaccels"], timeout_s=timeout_s)
+    if not result.ok:
         return []
     methods: list[str] = []
-    for line in completed.stdout.splitlines():
+    for line in result.stdout.splitlines():
         name = line.strip().lower()
         # The first line is a heading, and it is the only line with a space in it.
         if name and " " not in name:
@@ -134,7 +128,9 @@ def select(
     return Hwaccel(reason=f"no known hardware decoder for {system}")
 
 
-def verify(hwaccel: Hwaccel, path: Path, timeout_s: float = PROBE_TIMEOUT_S) -> tuple[bool, str]:
+def verify(
+    hwaccel: Hwaccel, path: Path, timeout_s: float = _TIMEOUTS.hwaccel_probe_s
+) -> tuple[bool, str]:
     """Decode one frame of ``path`` with ``hwaccel``. Returns whether it worked and why not.
 
     Run once per run against a real file, because whether a driver works is not
@@ -159,19 +155,9 @@ def verify(hwaccel: Hwaccel, path: Path, timeout_s: float = PROBE_TIMEOUT_S) -> 
         "null",
         "-",
     ]
-    try:
-        completed = subprocess.run(
-            command, capture_output=True, text=True, timeout=timeout_s, check=False
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return False, str(exc)
-    if completed.returncode == 0:
+    result = run_tool(command, timeout_s=timeout_s)
+    if result.error is not None:
+        return False, result.error
+    if result.returncode == 0:
         return True, ""
-    return False, _first_line(completed.stderr) or f"exit status {completed.returncode}"
-
-
-def _first_line(text: str) -> str:
-    for line in text.splitlines():
-        if line.strip():
-            return line.strip()
-    return ""
+    return False, first_stderr_line(result.stderr) or f"exit status {result.returncode}"

@@ -21,13 +21,12 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
-import subprocess
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from autocut.core.config import AutocutConfig
+from autocut.core.config import AutocutConfig, TimeoutsConfig
 from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
 from autocut.core.ffmpeg_cmd import (
     ExportOverrides,
@@ -46,10 +45,10 @@ from autocut.core.naming import (
     clip_name,
     stale_outputs,
 )
-from autocut.core.probe import require_tools
+from autocut.core.proc import first_stderr_line, require_tools, run_tool
 from autocut.core.select import absolute_time
 
-FFMPEG_TIMEOUT_S = 1800.0
+_TIMEOUTS = TimeoutsConfig()
 
 
 @dataclass(slots=True)
@@ -121,39 +120,25 @@ def fingerprint(plan: ExportPlan, source_id: str) -> str:
     return digest.hexdigest()[:16]
 
 
-def export_one(plan: ExportPlan, segment_id: str, digest: str) -> ClipResult:
+def export_one(
+    plan: ExportPlan, segment_id: str, digest: str, *, timeout_s: float = _TIMEOUTS.export_clip_s
+) -> ClipResult:
     """Run ffmpeg for one clip. Runs inside a pool worker."""
     plan.output.parent.mkdir(parents=True, exist_ok=True)
     command = build_export_command(plan)
-    try:
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=FFMPEG_TIMEOUT_S,
-            check=False,
-            stdin=subprocess.DEVNULL,
-        )
-    except FileNotFoundError:
-        return ClipResult(segment_id, plan.output, digest, error="ffmpeg not found on PATH")
-    except subprocess.SubprocessError as exc:
-        # A timeout, among other things, can leave a partial file at the output path.
+    result = run_tool(command, timeout_s=timeout_s)
+    if result.error is not None:
+        # A missing binary or a timeout, either of which can leave a partial file
+        # at the output path.
         plan.output.unlink(missing_ok=True)
-        return ClipResult(segment_id, plan.output, digest, error=str(exc))
+        return ClipResult(segment_id, plan.output, digest, error=result.error)
 
-    if completed.returncode != 0 or not plan.output.exists():
-        error = _first_line(completed.stderr) or f"ffmpeg exit status {completed.returncode}"
+    if result.returncode != 0 or not plan.output.exists():
+        error = first_stderr_line(result.stderr) or f"ffmpeg exit status {result.returncode}"
         # A partial file would be picked up as a finished output by the next run.
         plan.output.unlink(missing_ok=True)
         return ClipResult(segment_id, plan.output, digest, error=error)
     return ClipResult(segment_id, plan.output, digest)
-
-
-def _first_line(text: str) -> str:
-    for line in text.splitlines():
-        if line.strip():
-            return line.strip()
-    return ""
 
 
 @dataclass(slots=True)
@@ -360,12 +345,13 @@ def _run(
     require_tools("ffmpeg")
 
     done = result.skipped
-    workers = max(1, (config.analysis.workers or physical_cores()) // 2)
+    workers = config.export.workers or max(1, (config.analysis.workers or physical_cores()) // 2)
+    timeout_s = config.timeouts.export_clip_s
     if workers == 1 or len(pending) == 1:
         for job in pending:
             done += 1
             try:
-                clip = export_one(job.plan, job.segment.id, job.digest)
+                clip = export_one(job.plan, job.segment.id, job.digest, timeout_s=timeout_s)
             except Exception as exc:  # noqa: BLE001 - becomes this clip's error, see decision 2
                 clip = ClipResult(
                     job.segment.id, job.plan.output, job.digest, error=f"worker failed: {exc}"
@@ -375,7 +361,8 @@ def _run(
 
     with ThreadPoolExecutor(max_workers=min(workers, len(pending))) as pool:
         futures: dict[Future[ClipResult], _Job] = {
-            pool.submit(export_one, job.plan, job.segment.id, job.digest): job for job in pending
+            pool.submit(export_one, job.plan, job.segment.id, job.digest, timeout_s=timeout_s): job
+            for job in pending
         }
         for future in as_completed(futures):
             job = futures[future]

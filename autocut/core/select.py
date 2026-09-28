@@ -137,7 +137,7 @@ def select_clips(
     index = _assign_places(manifest, config, candidates, entries)
     result.places = index.place_count
     result.visits = index.visit_count
-    features = _build_features(manifest, candidates, entries)
+    features = _build_features(manifest, candidates, entries, config)
     matrix = SimilarityMatrix(features, config)
 
     ids = [segment.id for segment in candidates]
@@ -314,13 +314,16 @@ def _bounds(segment: Segment) -> tuple[float, float]:
 
 
 def _build_features(
-    manifest: Manifest, candidates: list[Segment], entries: dict[str, CacheEntry]
+    manifest: Manifest,
+    candidates: list[Segment],
+    entries: dict[str, CacheEntry],
+    config: AutocutConfig,
 ) -> dict[str, CandidateFeatures]:
     features: dict[str, CandidateFeatures] = {}
     for segment in candidates:
         source = manifest.files.get(segment.file_id)
         entry = entries.get(segment.file_id)
-        phash, histogram = _visual_features(segment, entry)
+        phash, histogram = _visual_features(segment, entry, config)
         features[segment.id] = CandidateFeatures(
             segment_id=segment.id,
             source_class=_class_of(manifest, segment.file_id),
@@ -350,7 +353,7 @@ def _thumb_frame(segment: Segment, entry: CacheEntry | None) -> np.ndarray | Non
 
 
 def _visual_features(
-    segment: Segment, entry: CacheEntry | None
+    segment: Segment, entry: CacheEntry | None, config: AutocutConfig
 ) -> tuple[int | None, np.ndarray | None]:
     """The perceptual hash and color histogram of a segment's thumbnail, memoised.
 
@@ -365,7 +368,7 @@ def _visual_features(
     key = f"visual:{index}"
     cached = entry.derived.get(key)
     if cached is None:
-        cached = (perceptual_hash(frame), color_histogram(frame))
+        cached = (perceptual_hash(frame), color_histogram(frame, config.similarity.histogram_bins))
         entry.derived[key] = cached
     phash, histogram = cached
     return phash, histogram

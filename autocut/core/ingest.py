@@ -24,7 +24,8 @@ from autocut.core.classify import classify
 from autocut.core.config import AutocutConfig
 from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
 from autocut.core.manifest import SourceFile, TelemetryKind
-from autocut.core.probe import probe_file, require_tools
+from autocut.core.probe import probe_file
+from autocut.core.proc import require_tools
 from autocut.core.telemetry import TelemetrySeries, detect_telemetry
 
 ACCEPTED_EXTENSIONS = frozenset({".mp4", ".mov", ".mkv", ".avi", ".m4v", ".insv"})
@@ -87,9 +88,8 @@ def physical_cores() -> int:
     return os.cpu_count() or 1
 
 
-def scan(sources: list[Path], config: AutocutConfig | None = None) -> list[ScannedFile]:
+def scan(sources: list[Path]) -> list[ScannedFile]:
     """Collect accepted video files under ``sources``, recursively and deterministically."""
-    del config  # Accepted for symmetry with the rest of the API; nothing to tune yet.
     found: dict[Path, ScannedFile] = {}
     for source in sources:
         root = source.resolve()
@@ -140,13 +140,17 @@ def find_proxy(path: Path, config: AutocutConfig | None = None) -> Path | None:
 def ingest_file(scanned: ScannedFile, config: AutocutConfig) -> SourceFile:
     """Probe, detect telemetry, classify and key one file. Runs inside a pool worker."""
     path = scanned.path
-    probe = probe_file(path)
+    probe = probe_file(path, timeout_s=config.timeouts.ffprobe_s)
     telemetry_kind: TelemetryKind = "none"
     series: TelemetrySeries | None = None
     if probe.ok:
         telemetry_kind, series = detect_telemetry(probe, path)
     classification = classify(
-        probe, telemetry_kind, scanned.rel_path, config.analysis.class_overrides
+        probe,
+        telemetry_kind,
+        scanned.rel_path,
+        config.analysis.class_overrides,
+        high_fps_threshold=config.analysis.high_fps_threshold,
     )
     return SourceFile(
         id=cache_key(path) or f"path:{path}",
@@ -181,7 +185,7 @@ def ingest(
     progress: ProgressCallback = null_progress,
 ) -> list[SourceFile]:
     """Ingest every accepted file under ``sources``, ordered chronologically."""
-    scanned = scan(sources, config)
+    scanned = scan(sources)
     total = len(scanned)
     progress(ProgressEvent(stage="scan", current=total, total=total))
     if not scanned:

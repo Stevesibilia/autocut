@@ -25,16 +25,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from autocut.core.avmux import (
-    CONCAT_TIMEOUT_S,
     concat_command,
     probe_duration,
     run_ffmpeg,
     write_concat_list,
 )
-from autocut.core.config import AutocutConfig
+from autocut.core.config import AutocutConfig, TimeoutsConfig
 from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
 from autocut.core.ffmpeg_cmd import ExportPlan, even, plan_export, resolve_target_fps
 from autocut.core.manifest import Manifest, Segment, SourceFile
+
+_TIMEOUTS = TimeoutsConfig()
 
 PREVIEW_DIRNAME = "preview"
 PARTS_DIRNAME = "parts"
@@ -56,11 +57,6 @@ def montage_path(manifest: Manifest, fingerprint: str) -> Path:
 def index_path_for(montage: Path) -> Path:
     """The index beside one montage, named after it for the same reason."""
     return montage.with_suffix(".json")
-
-
-#: A part is seconds of work at 360 px; a whole montage of a long holiday is minutes.
-#: The concat's own timeout is shared with the final render, in ``avmux``.
-PART_TIMEOUT_S = 300.0
 
 
 class MontageCancelled(Exception):  # noqa: N818 - a cancellation, not an error
@@ -346,7 +342,9 @@ def render_parts(
         path = directory / f"{digest}.mp4"
         reused = path.exists() and path.stat().st_size > 0
         if not reused:
-            error = run_ffmpeg(part_command(plan, height, config, path), PART_TIMEOUT_S, path)
+            error = run_ffmpeg(
+                part_command(plan, height, config, path), config.timeouts.montage_part_s, path
+            )
             if error is not None:
                 errors.append((segment.id, error))
                 progress(
@@ -382,7 +380,12 @@ def render_parts(
     return parts, errors
 
 
-def concat_montage(parts: list[Part], track: Path | None, output: Path) -> str | None:
+def concat_montage(
+    parts: list[Part],
+    track: Path | None,
+    output: Path,
+    timeout_s: float = _TIMEOUTS.concat_s,
+) -> str | None:
     """Join the parts into ``output``. Returns an error message, or ``None``."""
     if not parts:
         return "there are no parts to join"
@@ -391,7 +394,7 @@ def concat_montage(parts: list[Part], track: Path | None, output: Path) -> str |
     list_file = write_concat_list([part.path for part in parts], output.parent / "parts.txt")
     # No fade: the preview is watched to judge the cuts, and a fade at the end of it
     # would only hide the last one.
-    return run_ffmpeg(concat_command(list_file, track, output, duration), CONCAT_TIMEOUT_S, output)
+    return run_ffmpeg(concat_command(list_file, track, output, duration), timeout_s, output)
 
 
 def build_montage(
@@ -435,13 +438,13 @@ def build_montage(
         result.skipped_reason = "no clip could be rendered"
         return result
 
-    error = concat_montage(parts, track, output)
+    error = concat_montage(parts, track, output, config.timeouts.concat_s)
     if error is not None:
         result.errors.append(("montage", error))
         return result
 
     result.path = output
-    result.duration_s = probe_duration(output)
+    result.duration_s = probe_duration(output, timeout_s=config.timeouts.ffprobe_s)
     result.has_audio = track is not None
     result.index_path = write_index(manifest, parts, output)
     _forget_unused_parts(manifest, parts)

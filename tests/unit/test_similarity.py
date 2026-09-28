@@ -20,6 +20,7 @@ from autocut.core.similarity import (
     assign_clusters,
     color_histogram,
     combined_similarity,
+    hash_similarity,
     haversine_m,
     perceptual_hash,
 )
@@ -97,6 +98,14 @@ def test_beach_and_dinner_score_low() -> None:
     signal = VisualSignal()
     a, b = features("a", beach()), features("b", dinner())
     assert signal.value(a, b, AutocutConfig()) < 0.4
+
+
+def test_hash_share_of_one_makes_the_visual_signal_equal_the_hash_alone() -> None:
+    config = AutocutConfig()
+    config.similarity.hash_share = 1.0
+    a, b = features("a", beach()), features("b", beach_panned())
+    assert a.phash is not None and b.phash is not None
+    assert VisualSignal().value(a, b, config) == pytest.approx(hash_similarity(a.phash, b.phash))
 
 
 def test_visual_signal_needs_both_thumbnails() -> None:

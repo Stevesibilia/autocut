@@ -16,9 +16,11 @@ from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import PurePath, PurePosixPath
 
-from autocut.core.config import ClassOverride, SourceClass
+from autocut.core.config import AnalysisConfig, ClassOverride, SourceClass
 from autocut.core.manifest import TelemetryKind
 from autocut.core.probe import ANDROID_MAKE_KEY, APPLE_MAKE_KEY, ProbeResult
+
+_DEFAULTS = AnalysisConfig()
 
 # Telemetry kinds that identify the aircraft or the camera on their own.
 TELEMETRY_CLASSES: dict[TelemetryKind, SourceClass] = {
@@ -43,9 +45,6 @@ FILENAME_PATTERNS: tuple[tuple[str, SourceClass], ...] = (
     ("DSC", "reflex"),
 )
 
-# A frame rate this high only comes from a camera built for slow motion.
-HIGH_FPS_THRESHOLD = 100.0
-
 
 @dataclass(slots=True)
 class Classification:
@@ -61,6 +60,8 @@ def classify(
     telemetry_kind: TelemetryKind,
     rel_path: PurePath,
     overrides: list[ClassOverride] | None = None,
+    *,
+    high_fps_threshold: float = _DEFAULTS.high_fps_threshold,
 ) -> Classification:
     """Derive the source class. Overrides run last and win."""
     override = _match_override(rel_path, overrides or [])
@@ -87,7 +88,7 @@ def classify(
     if probe.is_vertical and probe.width > 0:
         return Classification("phone", "aspect")
 
-    if probe.fps >= HIGH_FPS_THRESHOLD:
+    if probe.fps >= high_fps_threshold:
         return Classification("actioncam", "fps")
 
     name = rel_path.name.upper()

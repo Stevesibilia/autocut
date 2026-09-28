@@ -8,6 +8,7 @@ is skipped has nothing to do with libx264.
 from __future__ import annotations
 
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from autocut.core.export import (
 from autocut.core.ffmpeg_cmd import ExportOverrides, plan_export
 from autocut.core.manifest import Manifest, Segment, SourceFile
 from autocut.core.naming import REJECTS_DIR, SELECTS_DIR, STALE_DIR
+from autocut.core.proc import ToolRun
 
 DAY = datetime(2026, 8, 12, 10, 30, tzinfo=UTC)
 
@@ -94,7 +96,7 @@ def stub_encoder(monkeypatch: pytest.MonkeyPatch, fail: set[str] | None = None) 
     written: list[Path] = []
     failing = fail or set()
 
-    def fake(plan: object, segment_id: str, digest: str) -> ClipResult:
+    def fake(plan: object, segment_id: str, digest: str, *, timeout_s: float = 0.0) -> ClipResult:
         assert hasattr(plan, "output")
         output: Path = plan.output  # type: ignore[attr-defined]
         if segment_id in failing:
@@ -715,7 +717,7 @@ def test_a_failed_clip_leaves_no_partial_file(tmp_path: Path) -> None:
 def test_a_worker_exception_does_not_stop_the_others(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def flaky(plan: object, segment_id: str, digest: str) -> ClipResult:
+    def flaky(plan: object, segment_id: str, digest: str, *, timeout_s: float = 0.0) -> ClipResult:
         output: Path = plan.output  # type: ignore[attr-defined]
         if segment_id == "b:0":
             raise RuntimeError("boom")
@@ -744,7 +746,7 @@ def test_thread_pool_worker_failure_is_isolated(
 ) -> None:
     """Threads share the interpreter, so a monkeypatched worker is now visible to the pool."""
 
-    def flaky(plan: object, segment_id: str, digest: str) -> ClipResult:
+    def flaky(plan: object, segment_id: str, digest: str, *, timeout_s: float = 0.0) -> ClipResult:
         output: Path = plan.output  # type: ignore[attr-defined]
         if segment_id == "b:0":
             raise RuntimeError("boom")
@@ -768,6 +770,56 @@ def test_thread_pool_worker_failure_is_isolated(
     assert manifest.segments["a:0"].exported_path is not None
     b_error = manifest.segments["b:0"].export_error
     assert b_error is not None and b_error.startswith("worker failed:")
+
+
+def test_export_workers_overrides_the_default_pool_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``export.workers`` wins over ``max(1, (analysis.workers or physical cores) // 2)``."""
+    stub_encoder(monkeypatch)
+    captured: list[int | None] = []
+    real_pool = ThreadPoolExecutor
+
+    class SpyPool(real_pool):  # type: ignore[misc]
+        def __init__(self, max_workers: int | None = None, *args: object, **kwargs: object) -> None:
+            captured.append(max_workers)
+            super().__init__(max_workers, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("autocut.core.export.ThreadPoolExecutor", SpyPool)
+    manifest = project(tmp_path)
+    for index, name in enumerate(("a", "b", "c", "d")):
+        add_file(manifest, name, minutes=index * 10)
+        add_segment(manifest, f"{name}:0", name, order=index + 1)
+    config = AutocutConfig()
+    # The old formula would give max(1, (1 or physical cores) // 2) == 1, which takes
+    # the single threaded path instead of the pool. workers overrides it to 3.
+    config.analysis.workers = 1
+    config.export.workers = 3
+
+    export_clips(manifest, config)
+
+    assert captured == [3]
+
+
+def test_timeouts_export_clip_s_reaches_run_tool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: list[float] = []
+
+    def fake_run_tool(command: list[str], *, timeout_s: float) -> ToolRun:
+        captured.append(timeout_s)
+        return ToolRun(returncode=1, stdout="", stderr="", error="stubbed")
+
+    monkeypatch.setattr("autocut.core.export.run_tool", fake_run_tool)
+    manifest = project(tmp_path)
+    add_file(manifest, "a")
+    add_segment(manifest, "a:0", "a")
+    config = one_worker(AutocutConfig())
+    config.timeouts.export_clip_s = 7.0
+
+    export_clips(manifest, config)
+
+    assert captured == [7.0]
 
 
 @pytest.mark.ffmpeg

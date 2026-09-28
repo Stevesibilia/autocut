@@ -17,6 +17,8 @@ use_proxies = true
 # on an AMD host before failing on every file.
 hwaccel = "auto"
 sprites = false       # thumbnail strips for GUI scrubbing
+high_fps_threshold = 100.0   # at or above this fps, an unclassified file is called actioncam
+fallback_fps = 25.0          # assumed frame rate for min scene length when ffprobe has none
 
 [analysis.head_trim_seconds]
 drone = 1.0
@@ -119,6 +121,10 @@ visual_fallback = true   # perceptual hash plus colour histogram
 spatial = true
 temporal = true
 motion = true
+histogram_bins = 8   # per channel buckets of the fallback colour histogram
+# Share of the visual fallback signal from the perceptual hash; the rest is the
+# colour histogram.
+hash_share = 0.5
 spatial_radius_m = 200.0   # GPS distance at which the spatial signal reaches 0
 temporal_radius_s = 600.0  # time distance at which the temporal signal reaches 0
 # Cosine similarity mapped to 0. Two unrelated holiday shots still score around 0.5
@@ -199,6 +205,8 @@ max_height = 2160
 pix_fmt = "yuv420p"
 vertical_strategy = "exclude"   # exclude | blur_pad | center_crop
 keep_rejects = false  # also export rejected segments into _rejects/
+# Encoder thread pool size. Defaults to max(1, (analysis.workers or physical cores) // 2).
+# workers = 3
 # Put every clip on one frame, the smallest of their fitted sizes, so nothing is
 # upscaled and the outputs can be joined without re-encoding. A render turns this on
 # for the export it runs, whatever is set here.
@@ -470,3 +478,15 @@ theme = "dark"                  # "dark", "light" or "system"
 # re-selections. 0 disables the in-memory cache and reads every entry from disk on
 # every selection.
 memory_entries = 256
+
+# How long AutoCut waits for one external tool call before giving up on it, in seconds.
+[timeouts]
+ffprobe_s = 60.0             # one ffprobe call: a file, or an exported clip
+hwaccel_probe_s = 20.0       # listing or verifying a hardware decoder
+sample_read_s = 900.0        # reading the sampled frames ffmpeg writes during analysis
+export_clip_s = 1800.0       # encoding one exported clip
+montage_part_s = 300.0       # encoding one clip of the review montage
+concat_s = 600.0             # joining already-encoded clips into a render or a montage
+audio_decode_s = 300.0       # decoding the soundtrack for beat sync
+telemetry_extract_s = 60.0   # extracting an embedded telemetry subtitle track
+version_check_s = 10.0       # reading one external tool's version, for "autocut doctor"

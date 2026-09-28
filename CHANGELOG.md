@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-28
+
 ### Changed
 
 - Python floor raised to 3.12, every dependency floor raised to the newest release at least 5 days old, and a generated `constraints.txt` now pins every transitive version for the venv, Docker images and CI (ADR 11).

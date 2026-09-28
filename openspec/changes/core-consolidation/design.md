@@ -81,7 +81,7 @@ Amended at review of part A:
 
 ### Part B
 
-**4. One analysis pipeline, `autocut/core/pipeline.py`.** Move `AnalysisOutcome` there from `gui/state.py` and add `interrupted: bool = False`. Add:
+**4. One analysis pipeline, `autocut/core/pipeline.py`.** Move `AnalysisOutcome` there from `gui/state.py` (amended at review: the planned `interrupted` field was dropped, because `analyze_project` re-raises `AnalysisCancelled` and no caller ever sees an outcome from an interrupted run). Add:
 
 - `ingest_into(manifest, config, progress) -> list[SourceFile]`: runs `ingest(list(manifest.sources), config, progress)`, sets `manifest.files`, and returns the files.
 - `run_embed(manifest, config, progress) -> EmbedResult`: `embed_project` plus the two `analysis.embedding_*` fields.

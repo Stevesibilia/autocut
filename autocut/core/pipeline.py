@@ -34,7 +34,6 @@ class AnalysisOutcome:
     embed: EmbedResult | None = None
     tag: TagResult | None = None
     describe: DescribeResult | None = None
-    interrupted: bool = False
 
 
 def ingest_into(
@@ -108,7 +107,6 @@ def analyze_project(
     try:
         analyze_files(manifest, config, on_analysis)
     except AnalysisCancelled:
-        outcome.interrupted = True
         outcome.cached_files = cached
         outcome.segments = len(manifest.segments)
         raise

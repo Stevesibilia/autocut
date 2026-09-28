@@ -62,6 +62,7 @@ def test_every_screen_can_be_grabbed_in_both_themes(
     qtbot.addWidget(first)
     with qtbot.waitSignal(state.stage_finished, timeout=180_000):
         assert first.screens["analysis"].run()  # type: ignore[attr-defined]
+    assert state.wait_for_stage(30_000)
     assert state.run_selection()
 
     directory = shots_dir()
@@ -118,6 +119,7 @@ def test_every_review_state_is_grabbed(tmp_path: Path, synthetic_dir: Path, qtbo
     window.resize(1400, 880)
     with qtbot.waitSignal(state.stage_finished, timeout=180_000):
         assert window.screens["analysis"].run()  # type: ignore[attr-defined]
+    assert state.wait_for_stage(30_000)
     assert state.run_selection()
     window.refresh_navigation()
     window.go_to("review")
@@ -182,6 +184,7 @@ def test_the_soundtrack_and_export_states_are_grabbed(
     window.resize(1400, 880)
     with qtbot.waitSignal(state.stage_finished, timeout=180_000):
         assert window.screens["analysis"].run()  # type: ignore[attr-defined]
+    assert state.wait_for_stage(30_000)
     assert state.run_selection()
     window.refresh_navigation()
 
@@ -221,6 +224,7 @@ def test_the_soundtrack_and_export_states_are_grabbed(
 
     with qtbot.waitSignal(state.stage_finished, timeout=60_000):
         assert soundtrack.apply_sync()
+    assert state.wait_for_stage(30_000)
     grab("soundtrack-synced")
 
     # --- the export screen ------------------------------------------------
@@ -332,6 +336,7 @@ def test_the_review_screen_is_grabbed_at_both_window_sizes(
     qtbot.addWidget(window)
     with qtbot.waitSignal(state.stage_finished, timeout=180_000):
         assert window.screens["analysis"].run()  # type: ignore[attr-defined]
+    assert state.wait_for_stage(30_000)
     assert state.run_selection()
     window.refresh_navigation()
     window.go_to("review")
@@ -369,6 +374,7 @@ def test_the_workspace_arrangements_are_grabbed(
     window.resize(1440, 900)
     with qtbot.waitSignal(state.stage_finished, timeout=180_000):
         assert window.screens["analysis"].run()  # type: ignore[attr-defined]
+    assert state.wait_for_stage(30_000)
     assert state.run_selection()
     window.refresh_navigation()
     window.go_to("review")

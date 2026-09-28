@@ -251,6 +251,7 @@ def test_a_second_export_skips_everything(real_clips: ExportScreen, qtbot: Any) 
     state = screen._state
     with qtbot.waitSignal(state.stage_finished, timeout=180_000):
         screen.run()
+    assert state.wait_for_stage(30_000)
     first_outcome = state.last_result
     assert isinstance(first_outcome, ExportOutcome)
     first = first_outcome.export

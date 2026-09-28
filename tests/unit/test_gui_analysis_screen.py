@@ -264,6 +264,7 @@ def test_a_cancelled_run_keeps_what_it_analysed_and_can_be_resumed(
     with qtbot.waitSignal(state.stage_cancelled, timeout=180_000):
         assert screen.run()
 
+    assert state.wait_for_stage(30_000)
     partial = Manifest.load(out / "manifest.json")
     assert partial.files
     assert "Cancelled" in screen.current_file.text()

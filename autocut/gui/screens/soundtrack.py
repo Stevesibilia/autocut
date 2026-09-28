@@ -9,8 +9,10 @@ the track drifted.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
@@ -44,7 +46,12 @@ from autocut.core.events import ProgressCallback, ProgressEvent
 from autocut.core.manifest import PromptVariant
 from autocut.core.montage import MontageResult, discard
 from autocut.core.providers import TextProvider, cloud_enabled, find_key
-from autocut.core.soundtrack.build import build_soundtrack, store_user_variant, write_prompt_file
+from autocut.core.soundtrack.build import (
+    SoundtrackResult,
+    build_soundtrack,
+    store_user_variant,
+    write_prompt_file,
+)
 from autocut.core.soundtrack.prompt import MoodDirection, RoomDirection, apply_mood
 from autocut.gui import theme
 from autocut.gui.state import ProjectState
@@ -56,6 +63,20 @@ AUDIO_FILTER = "Audio (*.mp3 *.wav *.m4a *.flac *.ogg *.aac);;All files (*)"
 
 MOOD_POSITIONS: tuple[MoodDirection, ...] = ("calmer", "keep", "energetic")
 ROOM_POSITIONS: tuple[RoomDirection, ...] = ("intimate", "keep", "cinematic")
+
+
+@dataclass(frozen=True)
+class TrackLoad:
+    """What the track stage measured, or why it could not.
+
+    A file that will not decode is an answer, not a stage failure: the reason goes in
+    the track label, where the user is looking, rather than into an error dialog.
+    """
+
+    path: Path
+    track: Track | None = None
+    pairs: np.ndarray | None = None
+    error: str | None = None
 
 
 def _scrolled(inner: QWidget) -> QScrollArea:
@@ -73,6 +94,8 @@ class SoundtrackScreen(QWidget):
 
     prompt_written = Signal(str)
     synced = Signal()
+    track_loaded = Signal(bool)
+    """A track load ended: True with the track on screen, False with the reason shown."""
 
     def __init__(self, state: ProjectState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -85,6 +108,9 @@ class SoundtrackScreen(QWidget):
         # is applied to these rather than to the last result, so "as matched" really
         # goes back and asking for calmer twice is not calmer twice.
         self._generated: list[PromptVariant] = []
+        # A genre or BPM change that arrived while a generation ran on the worker. Kept
+        # as one flag rather than a queue: only the controls' last position matters.
+        self._regenerate_pending = False
 
         # --- the prompt half -------------------------------------------------
         self.editor = PromptEditor(state.config, self)
@@ -216,6 +242,7 @@ class SoundtrackScreen(QWidget):
         state.stage_started.connect(lambda _name: self._set_running(True))
         state.stage_finished.connect(self._stage_finished)
         state.stage_cancelled.connect(lambda _name: self._set_running(False))
+        state.stage_ended.connect(self._stage_ended)
         # Also on error: a failed stage emits neither finished nor cancelled, and
         # without this the screen stayed disabled until the next stage ran.
         state.error.connect(lambda _message: self._set_running(False))
@@ -314,21 +341,51 @@ class SoundtrackScreen(QWidget):
     # --- the prompt --------------------------------------------------------
 
     def generate(self) -> bool:
-        """Run the soundtrack stage with the screen's BPM, genre and mood settings."""
+        """Run the soundtrack stage with the screen's BPM, genre and mood settings.
+
+        Inline when nothing leaves the machine, because the template takes milliseconds
+        and the genre box answers as it is turned. On the worker when a hosted model
+        refines the prompt, because that is an HTTP request and the window would freeze
+        for as long as it takes. True means done, or started on the worker.
+        """
         state = self._state
         manifest = state.manifest
         if manifest is None or state.is_running:
             return False
+        config = state.config
         genre = self.genre_box.currentData()
+        genre_override = str(genre) if genre else None
+        bpm = self.bpm_field.value()
         provider = self._provider()
-        result = build_soundtrack(
-            manifest,
-            state.config,
-            provider=provider,
-            bpm_override=self.bpm_field.value(),
-            genre_override=str(genre) if genre else None,
-            geocode=False,
-        )
+        if provider is None:
+            result = build_soundtrack(
+                manifest,
+                config,
+                bpm_override=bpm,
+                genre_override=genre_override,
+                geocode=False,
+            )
+            return self._after_generate(result)
+
+        def work(progress: ProgressCallback) -> SoundtrackResult:
+            return build_soundtrack(
+                manifest,
+                config,
+                provider=provider,
+                progress=progress,
+                bpm_override=bpm,
+                genre_override=genre_override,
+                geocode=False,
+            )
+
+        return state.run_stage("soundtrack", work)
+
+    def _after_generate(self, result: SoundtrackResult) -> bool:
+        """Show what generation produced. On the UI thread, whichever path it took."""
+        state = self._state
+        manifest = state.manifest
+        if manifest is None:
+            return False
         if result.skipped_reason:
             self.matched_label.setText(result.skipped_reason)
             return False
@@ -425,6 +482,11 @@ class SoundtrackScreen(QWidget):
         manifest = self._state.manifest
         if manifest is None or not manifest.soundtrack.variants:
             return
+        if self._state.is_running:
+            # Applied once when the stage ends, instead of a "still running" error for
+            # every turn of the genre box during a refinement.
+            self._regenerate_pending = True
+            return
         self.generate()
 
     def _variant_chosen(self, index: int) -> None:
@@ -463,8 +525,6 @@ class SoundtrackScreen(QWidget):
         manifest = state.manifest
         if manifest is None or state.is_running:
             return None
-        from autocut.core.soundtrack.build import SoundtrackResult
-
         result = SoundtrackResult(
             bpm=int(manifest.soundtrack.proposed_bpm or self.bpm_field.value()),
             beat_distance=manifest.soundtrack.beat_distance or 0.0,
@@ -484,24 +544,49 @@ class SoundtrackScreen(QWidget):
             self.load_track(Path(name))
 
     def load_track(self, path: Path) -> bool:
-        """Decode, measure, draw, and say how the tempo compares to what was asked for."""
+        """Decode and measure on the worker; ``track_loaded`` says when it is on screen.
+
+        Beat tracking a whole song takes seconds, which is a frozen window on the UI
+        thread. True means the stage started.
+        """
         state = self._state
         manifest = state.manifest
         if manifest is None:
             return False
-        try:
-            samples = decode_audio(path)
-            track = measure_track(samples)
-        except AudioUnavailableError as error:
-            self.track_label.setText(str(error))
+        output_dir = Path(manifest.output_dir)
+
+        def work(_progress: ProgressCallback) -> TrackLoad:
+            try:
+                samples = decode_audio(path)
+                track = measure_track(samples)
+            except AudioUnavailableError as error:
+                return TrackLoad(path=path, error=str(error))
+            pairs = load_or_build_envelope(samples, output_dir, path)
+            return TrackLoad(path=path, track=track, pairs=pairs)
+
+        return state.run_stage("track", work)
+
+    def _after_track(self, load: TrackLoad) -> None:
+        """Draw the measured track and record it. The manifest is written only here."""
+        state = self._state
+        manifest = state.manifest
+        # The window may have been closed, and the project with it, while the track
+        # was being measured.
+        if manifest is None:
+            self.track_loaded.emit(False)
+            return
+        track = load.track
+        if track is None or load.pairs is None:
+            self.track_label.setText(load.error or f"{load.path.name} could not be loaded")
             self.waveform.clear()
             self.apply_button.setEnabled(False)
             self.play_with_track_button.setEnabled(False)
-            return False
+            self.track_loaded.emit(False)
+            return
+        path = load.path
         self._track = track
         self._audio = path
-        pairs = load_or_build_envelope(samples, Path(manifest.output_dir), path)
-        self.waveform.set_track(pairs, track.beats_s, track.duration_s)
+        self.waveform.set_track(load.pairs, track.beats_s, track.duration_s)
         self.track_label.setText(
             f"{path.name}  {track.duration_s:.1f} s  "
             f"measured {track.bpm:g} bpm from {len(track.beats_s)} beats"
@@ -514,9 +599,11 @@ class SoundtrackScreen(QWidget):
         # Loading a track can only take this button away: the clips are cut to whatever
         # the last sync used, and that is not this track until Apply says so.
         self.play_with_track_button.setEnabled(self._synced_with_a_track())
-        state.schedule_save()
+        # Forced: this is the stage's completion handler, so the worker has stopped
+        # writing, and the state's own save ran before these fields were set.
+        state.save_now(force=True)
         self.refresh_preview()
-        return True
+        self.track_loaded.emit(True)
 
     def _describe_comparison(self, track: Track) -> None:
         manifest = self._state.manifest
@@ -665,6 +752,18 @@ class SoundtrackScreen(QWidget):
 
     def _stage_finished(self, name: str) -> None:
         self._set_running(False)
+        if name == "track":
+            load = self._state.last_result
+            if isinstance(load, TrackLoad):
+                self._after_track(load)
+            return
+        if name == "soundtrack":
+            result = self._state.last_result
+            if isinstance(result, SoundtrackResult):
+                self._after_generate(result)
+                # The state saved before the mood moves above; save what is on screen.
+                self._state.save_now(force=True)
+            return
         if name == "montage":
             result = self._state.last_result
             if isinstance(result, MontageResult) and result.ok and self._show_montage():
@@ -688,6 +787,20 @@ class SoundtrackScreen(QWidget):
         # off the grid with nothing to hear.
         self.play_with_track_button.setEnabled(self._synced_with_a_track())
         self.synced.emit()
+
+    def _stage_ended(self, _name: str) -> None:
+        """Apply a genre or BPM change that arrived during a generation, once.
+
+        Here rather than on ``stage_finished``, which arrives while the worker may still
+        be winding down and would refuse the new run. Dropped after a cancel: that is
+        the window closing or the user stopping the stage, and neither asked for more.
+        """
+        state = self._state
+        if not self._regenerate_pending or state.is_running:
+            return
+        self._regenerate_pending = False
+        if not state.cancel_requested:
+            self.generate()
 
     def _set_running(self, running: bool) -> None:
         for widget in (

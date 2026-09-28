@@ -214,7 +214,9 @@ def test_the_soundtrack_and_export_states_are_grabbed(
     grab("soundtrack-invalid-edit")
     soundtrack.editor.show_variant(soundtrack._state.manifest.soundtrack.variants[0])
 
-    assert soundtrack.load_track(synthetic_dir / "click_120bpm.wav")
+    with qtbot.waitSignal(soundtrack.track_loaded, timeout=60_000):
+        assert soundtrack.load_track(synthetic_dir / "click_120bpm.wav")
+    assert state.wait_for_stage(30_000)
     grab("soundtrack-track")
 
     with qtbot.waitSignal(state.stage_finished, timeout=60_000):
@@ -281,7 +283,9 @@ def test_the_montage_states_are_grabbed(tmp_path: Path, synthetic_dir: Path, qtb
     soundtrack = window.screens["soundtrack"]
     assert isinstance(soundtrack, SoundtrackScreen)
     assert soundtrack.generate()
-    assert soundtrack.load_track(synthetic_dir / "click_120bpm.wav")
+    with qtbot.waitSignal(soundtrack.track_loaded, timeout=60_000):
+        assert soundtrack.load_track(synthetic_dir / "click_120bpm.wav")
+    assert state.wait_for_stage(30_000)
     with qtbot.waitSignal(state.stage_finished, timeout=60_000):
         assert soundtrack.apply_sync()
     assert state.wait_for_stage(30_000)

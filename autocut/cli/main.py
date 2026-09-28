@@ -49,6 +49,7 @@ from autocut.core.export import export_clips
 from autocut.core.ffmpeg_cmd import ExportOverrides
 from autocut.core.ingest import ingest
 from autocut.core.manifest import Manifest, ManifestVersionError
+from autocut.core.probe import ToolMissingError
 from autocut.core.providers import clear_key, cloud_enabled, find_key, set_key
 from autocut.core.providers.openrouter import OpenRouterProvider
 from autocut.core.render import RenderResult, render_edit
@@ -139,7 +140,11 @@ def analyze(
             name = event.path.name if event.path else ""
             progress.update(task, completed=event.current, total=event.total, description=name)
 
-        files = ingest(list(sources), cfg, on_event)
+        try:
+            files = ingest(list(sources), cfg, on_event)
+        except ToolMissingError as error:
+            console.print(f"[red]Missing tool[/red]: {error}")
+            raise typer.Exit(code=1) from None
 
     if not files:
         console.print("[red]No video files found[/red] in the given source folders.")
@@ -877,7 +882,11 @@ def export(
             name = event.path.name if event.path else ""
             progress.update(task, completed=event.current, total=event.total, description=name)
 
-        result = export_clips(manifest, cfg, on_event, overrides)
+        try:
+            result = export_clips(manifest, cfg, on_event, overrides)
+        except ToolMissingError as tool_error:
+            console.print(f"[red]Missing tool[/red]: {tool_error}")
+            raise typer.Exit(code=1) from None
 
     manifest.updated_at = datetime.now(UTC)
     manifest.save(project / "manifest.json")

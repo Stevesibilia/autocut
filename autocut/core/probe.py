@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +19,18 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from autocut.core.manifest import GpsPoint, StreamInfo
+
+
+class ToolMissingError(RuntimeError):
+    """A required external binary is not on PATH."""
+
+
+def require_tools(*names: str) -> None:
+    """Raise :class:`ToolMissingError` once, naming every missing binary at once."""
+    missing = [name for name in names if shutil.which(name) is None]
+    if missing:
+        raise ToolMissingError(f"{', '.join(missing)} not found on PATH. Run `autocut doctor`.")
+
 
 FFPROBE_ARGS: tuple[str, ...] = (
     "-v",

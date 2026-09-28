@@ -45,6 +45,7 @@ from autocut.core.naming import (
     clip_name,
     stale_outputs,
 )
+from autocut.core.probe import require_tools
 from autocut.core.select import absolute_time
 
 FFMPEG_TIMEOUT_S = 1800.0
@@ -353,6 +354,7 @@ def _run(
     if not pending:
         progress(ProgressEvent(stage="export", current=total, total=total, message="all skipped"))
         return
+    require_tools("ffmpeg")
 
     done = result.skipped
     workers = max(1, (config.analysis.workers or physical_cores()) // 2)

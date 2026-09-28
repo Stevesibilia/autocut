@@ -23,7 +23,7 @@ from autocut.core.classify import classify
 from autocut.core.config import AutocutConfig
 from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
 from autocut.core.manifest import SourceFile, TelemetryKind
-from autocut.core.probe import probe_file
+from autocut.core.probe import probe_file, require_tools
 from autocut.core.telemetry import TelemetrySeries, detect_telemetry
 
 ACCEPTED_EXTENSIONS = frozenset({".mp4", ".mov", ".mkv", ".avi", ".m4v", ".insv"})
@@ -180,6 +180,7 @@ def ingest(
     progress(ProgressEvent(stage="scan", current=total, total=total))
     if not scanned:
         return []
+    require_tools("ffprobe", "ffmpeg")
 
     workers = max(1, config.analysis.workers or physical_cores())
     results: dict[Path, SourceFile] = {}

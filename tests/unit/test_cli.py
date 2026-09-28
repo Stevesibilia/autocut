@@ -1,3 +1,6 @@
+from pathlib import Path
+
+import pytest
 from typer.testing import CliRunner
 
 from autocut import __version__
@@ -39,3 +42,22 @@ def test_sync_needs_a_project(tmp_path) -> None:  # type: ignore[no-untyped-def]
     )
     assert result.exit_code == 1
     assert "No manifest found" in result.stdout
+
+
+@pytest.mark.ffmpeg
+def test_analyze_reports_a_missing_ffprobe_once(
+    synthetic_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import shutil as shutil_module
+
+    real_which = shutil_module.which
+    monkeypatch.setattr(
+        shutil_module, "which", lambda name: None if name == "ffprobe" else real_which(name)
+    )
+
+    result = runner.invoke(app, ["analyze", str(synthetic_dir), "--out", str(tmp_path / "out")])
+
+    assert result.exit_code == 1
+    assert result.stdout.count("Missing tool") == 1
+    assert "ffprobe" in result.stdout
+    assert "Traceback" not in result.stdout

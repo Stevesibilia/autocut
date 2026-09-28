@@ -1,0 +1,871 @@
+{
+  "analysis": {
+    "class_overrides": [],
+    "detector": "inmemory",
+    "fallback_fps": 25.0,
+    "head_trim_seconds": {
+      "actioncam": 1.0,
+      "drone": 1.0,
+      "generic": 0.5,
+      "phone": 0.3,
+      "reflex": 0.5
+    },
+    "high_fps_threshold": 100.0,
+    "hwaccel": "auto",
+    "min_scene_seconds": 1.0,
+    "sample_fps": 2.0,
+    "sample_long_side": 320,
+    "scene_threshold": 0.3,
+    "sharpness_center_crop": 0.6,
+    "sprite_max_frames": 60,
+    "sprites": false,
+    "stability_window": 5,
+    "tail_trim_seconds": {
+      "actioncam": 1.0,
+      "drone": 1.0,
+      "generic": 0.5,
+      "phone": 0.3,
+      "reflex": 0.5
+    },
+    "thumbnail_quality": 85,
+    "use_proxies": true,
+    "workers": null
+  },
+  "cache": {
+    "dir": null,
+    "memory_entries": 256,
+    "models_dir": null
+  },
+  "export": {
+    "codec": "libx264",
+    "crf": 18,
+    "fps": "auto",
+    "keep_rejects": false,
+    "lens_correction": {
+      "actioncam": false,
+      "drone": false,
+      "generic": false,
+      "phone": false,
+      "reflex": false
+    },
+    "lut": {
+      "actioncam": null,
+      "drone": null,
+      "generic": null,
+      "phone": null,
+      "reflex": null
+    },
+    "max_height": 2160,
+    "max_width": 3840,
+    "mode": "precise",
+    "pix_fmt": "yuv420p",
+    "remove_audio": {
+      "actioncam": true,
+      "drone": true,
+      "generic": true,
+      "phone": true,
+      "reflex": true
+    },
+    "slow_motion_auto": {
+      "actioncam": true,
+      "drone": false,
+      "generic": false,
+      "phone": false,
+      "reflex": false
+    },
+    "uniform_frame": false,
+    "vertical_strategy": "exclude",
+    "workers": null
+  },
+  "gui": {
+    "close_wait_ms": 5000,
+    "grid_thumbnail_px": 196,
+    "min_window_height": 680,
+    "min_window_width": 1100,
+    "montage_crf": 28,
+    "montage_height": 360,
+    "montage_preset": "ultrafast",
+    "panel_collapse_width": 1280,
+    "panel_min_width": 280,
+    "rail_collapsed_width": 56,
+    "reselect_worker_threshold": 300,
+    "slider_debounce_ms": 250,
+    "theme": "dark"
+  },
+  "places": {
+    "geocode": true,
+    "min_interval_s": 1.0,
+    "user_agent": null
+  },
+  "providers": {
+    "aesthetic": false,
+    "cloud": true,
+    "describe_scope": "candidates",
+    "embedding_batch_size": 16,
+    "embedding_model": "ViT-B-32/laion2b_s34b_b79k",
+    "faces": false,
+    "llm_model": "google/gemini-2.5-flash",
+    "local_embeddings": true,
+    "max_concurrency": 4,
+    "max_failures": 8,
+    "max_retries": 4,
+    "prompt_version": 1,
+    "vision_model": "google/gemini-2.5-flash"
+  },
+  "render": {
+    "audio_bitrate": "192k",
+    "enabled": false,
+    "fade_out_seconds": 1.5,
+    "filename": "montage.mp4"
+  },
+  "rules": {
+    "drone": {
+      "min_height_m": 5.0
+    },
+    "max_clipped_fraction": 0.05,
+    "min_motion": 0.015,
+    "min_stability": 0.71,
+    "shaky_min_motion": 0.04
+  },
+  "selection": {
+    "alternate_durations": true,
+    "cluster_threshold": 0.75,
+    "diversity_lambda": 0.6,
+    "duration_by_class": {
+      "actioncam": 2.0,
+      "drone": 4.0,
+      "generic": 3.0,
+      "phone": 2.5,
+      "reflex": 3.0
+    },
+    "duration_max_seconds": 6.0,
+    "duration_min_seconds": 1.5,
+    "hero_multiplier": 1.5,
+    "hero_share": 0.1,
+    "max_candidate_share": 0.5,
+    "max_clips": 40,
+    "max_clips_per_cluster": 2,
+    "max_clips_per_file": {
+      "actioncam": 3,
+      "drone": 1,
+      "generic": 1,
+      "phone": 1,
+      "reflex": 2
+    },
+    "max_clips_per_place": 3,
+    "max_share_per_tag": 0.5,
+    "min_segment_seconds": 1.5,
+    "min_share_per_class": {
+      "actioncam": 0.0,
+      "drone": 0.0,
+      "generic": 0.0,
+      "phone": 0.0,
+      "reflex": 0.0
+    },
+    "min_temporal_gap_seconds": 60.0,
+    "place_radius_m": 150.0,
+    "place_visit_gap_seconds": 7200.0,
+    "score_duration_range": [
+      0.8,
+      1.2
+    ],
+    "snap_max_score_loss": 0.05,
+    "snap_to_motion": true,
+    "snap_window_seconds": 0.5,
+    "target_duration_seconds": 3.0,
+    "target_total_seconds": null
+  },
+  "similarity": {
+    "hash_share": 0.5,
+    "histogram_bins": 8,
+    "motion": true,
+    "semantic_floor": 0.5,
+    "spatial": true,
+    "spatial_radius_m": 200.0,
+    "temporal": true,
+    "temporal_radius_s": 600.0,
+    "visual_fallback": true,
+    "visual_semantic": true,
+    "weights": {
+      "motion": 0.1,
+      "semantic": 0.5,
+      "spatial": 0.2,
+      "temporal": 0.2,
+      "visual": 0.5
+    }
+  },
+  "soundtrack": {
+    "allowed_sections": [
+      "intro",
+      "verse",
+      "verse 1",
+      "verse 2",
+      "verse 3",
+      "pre-chorus",
+      "chorus",
+      "bridge",
+      "solo",
+      "break",
+      "drop",
+      "build",
+      "transition",
+      "outro",
+      "end"
+    ],
+    "alternate_durations": true,
+    "beat_multiples": [
+      2,
+      4,
+      6,
+      8,
+      12,
+      16
+    ],
+    "bpm_tolerance": 3.0,
+    "calm_to_energetic": [
+      "still",
+      "solemn",
+      "drowsy",
+      "languid",
+      "unhurried",
+      "tender",
+      "gentle",
+      "hazy",
+      "dreamy",
+      "wistful",
+      "nostalgic",
+      "weightless",
+      "easy",
+      "easygoing",
+      "warm",
+      "homespun",
+      "domestic",
+      "companionable",
+      "wandering",
+      "open",
+      "hopeful",
+      "breezy",
+      "sunlit",
+      "dusty",
+      "carefree",
+      "cheerful",
+      "sunny",
+      "bright",
+      "playful",
+      "buoyant",
+      "rolling",
+      "glittering",
+      "joyful",
+      "elated",
+      "convivial",
+      "festive",
+      "bold",
+      "strutting",
+      "gritty",
+      "giddy",
+      "propulsive",
+      "restless",
+      "urgent",
+      "wide",
+      "vast"
+    ],
+    "default_profile": "upbeat folk",
+    "description_max_chars": 200,
+    "energy_bands": [
+      0.34,
+      0.67
+    ],
+    "genres": [
+      {
+        "bpm": [
+          120,
+          140
+        ],
+        "genre": "surf rock",
+        "instrument_alternates": [
+          "shimmering tremolo guitar"
+        ],
+        "instruments": [
+          "twangy reverb guitar",
+          "driving drums",
+          "warm bass"
+        ],
+        "mood": [
+          "sunny",
+          "carefree"
+        ],
+        "mood_alternates": [
+          "breezy",
+          "playful"
+        ],
+        "name": "surf rock",
+        "when": {
+          "class_min_share": {},
+          "energy": [
+            "mid",
+            "high"
+          ],
+          "region_any": [],
+          "tags_any": [
+            "underwater"
+          ],
+          "tags_dominant": [
+            "beach"
+          ],
+          "time_of_day": []
+        }
+      },
+      {
+        "bpm": [
+          150,
+          175
+        ],
+        "genre": "pop punk",
+        "instrument_alternates": [
+          "chugging guitar"
+        ],
+        "instruments": [
+          "crunchy guitar",
+          "fast drums",
+          "punchy bass"
+        ],
+        "mood": [
+          "restless",
+          "bright"
+        ],
+        "mood_alternates": [
+          "urgent",
+          "giddy"
+        ],
+        "name": "pop punk",
+        "when": {
+          "class_min_share": {
+            "actioncam": 0.6
+          },
+          "energy": [
+            "high"
+          ],
+          "region_any": [],
+          "tags_any": [],
+          "tags_dominant": [],
+          "time_of_day": []
+        }
+      },
+      {
+        "bpm": [
+          70,
+          90
+        ],
+        "genre": "reggae dub",
+        "instrument_alternates": [
+          "spring reverb guitar"
+        ],
+        "instruments": [
+          "skanking guitar",
+          "deep dub bass",
+          "loose drums"
+        ],
+        "mood": [
+          "hazy",
+          "unhurried"
+        ],
+        "mood_alternates": [
+          "drowsy",
+          "warm"
+        ],
+        "name": "reggae and dub",
+        "when": {
+          "class_min_share": {},
+          "energy": [
+            "low"
+          ],
+          "region_any": [],
+          "tags_any": [],
+          "tags_dominant": [
+            "beach"
+          ],
+          "time_of_day": []
+        }
+      },
+      {
+        "bpm": [
+          110,
+          125
+        ],
+        "genre": "funk disco",
+        "instrument_alternates": [
+          "funky clavinet"
+        ],
+        "instruments": [
+          "wah guitar",
+          "slap bass",
+          "tight drums"
+        ],
+        "mood": [
+          "joyful",
+          "strutting"
+        ],
+        "mood_alternates": [
+          "giddy",
+          "glittering"
+        ],
+        "name": "funk and disco",
+        "when": {
+          "class_min_share": {},
+          "energy": [
+            "high"
+          ],
+          "region_any": [],
+          "tags_any": [],
+          "tags_dominant": [
+            "people",
+            "food"
+          ],
+          "time_of_day": []
+        }
+      },
+      {
+        "bpm": [
+          95,
+          115
+        ],
+        "genre": "acoustic pop",
+        "instrument_alternates": [
+          "muted upright bass"
+        ],
+        "instruments": [
+          "warm ukulele",
+          "brushed drums",
+          "soft acoustic guitar"
+        ],
+        "mood": [
+          "tender",
+          "domestic"
+        ],
+        "mood_alternates": [
+          "gentle",
+          "nostalgic"
+        ],
+        "name": "acoustic and ukulele pop",
+        "when": {
+          "class_min_share": {},
+          "energy": [
+            "low",
+            "mid"
+          ],
+          "region_any": [],
+          "tags_any": [],
+          "tags_dominant": [
+            "people",
+            "food"
+          ],
+          "time_of_day": []
+        }
+      },
+      {
+        "bpm": [
+          100,
+          120
+        ],
+        "genre": "mediterranean folk",
+        "instrument_alternates": [
+          "bright mandolin"
+        ],
+        "instruments": [
+          "nylon string guitar",
+          "hand percussion",
+          "wheezing accordion"
+        ],
+        "mood": [
+          "sunlit",
+          "convivial"
+        ],
+        "mood_alternates": [
+          "languid",
+          "festive"
+        ],
+        "name": "italian and mediterranean folk",
+        "when": {
+          "class_min_share": {},
+          "energy": [],
+          "region_any": [
+            "sardegna",
+            "sardinia",
+            "italia",
+            "italy"
+          ],
+          "tags_any": [],
+          "tags_dominant": [
+            "city",
+            "street"
+          ],
+          "time_of_day": []
+        }
+      },
+      {
+        "bpm": [
+          95,
+          115
+        ],
+        "genre": "americana",
+        "instrument_alternates": [
+          "weeping pedal steel"
+        ],
+        "instruments": [
+          "slide guitar",
+          "loping drums",
+          "upright bass"
+        ],
+        "mood": [
+          "wide",
+          "wistful"
+        ],
+        "mood_alternates": [
+          "dusty",
+          "hopeful"
+        ],
+        "name": "americana",
+        "when": {
+          "class_min_share": {
+            "drone": 0.5
+          },
+          "energy": [
+            "mid"
+          ],
+          "region_any": [],
+          "tags_any": [],
+          "tags_dominant": [],
+          "time_of_day": []
+        }
+      },
+      {
+        "bpm": [
+          75,
+          95
+        ],
+        "genre": "cinematic post-rock",
+        "instrument_alternates": [
+          "bowed guitar"
+        ],
+        "instruments": [
+          "sweeping strings",
+          "soft piano",
+          "swelling guitar"
+        ],
+        "mood": [
+          "vast",
+          "still"
+        ],
+        "mood_alternates": [
+          "solemn",
+          "weightless"
+        ],
+        "name": "cinematic ambient and post-rock",
+        "when": {
+          "class_min_share": {
+            "drone": 0.5
+          },
+          "energy": [
+            "low"
+          ],
+          "region_any": [],
+          "tags_any": [],
+          "tags_dominant": [],
+          "time_of_day": []
+        }
+      },
+      {
+        "bpm": [
+          100,
+          120
+        ],
+        "genre": "country",
+        "instrument_alternates": [
+          "sawing fiddle"
+        ],
+        "instruments": [
+          "twangy guitar",
+          "shuffling drums",
+          "walking bass"
+        ],
+        "mood": [
+          "easygoing",
+          "open"
+        ],
+        "mood_alternates": [
+          "homespun",
+          "rolling"
+        ],
+        "name": "country",
+        "when": {
+          "class_min_share": {},
+          "energy": [
+            "mid"
+          ],
+          "region_any": [],
+          "tags_any": [],
+          "tags_dominant": [
+            "mountain",
+            "street"
+          ],
+          "time_of_day": []
+        }
+      },
+      {
+        "bpm": [
+          120,
+          145
+        ],
+        "genre": "rock",
+        "instrument_alternates": [
+          "overdriven guitar"
+        ],
+        "instruments": [
+          "distorted guitar",
+          "heavy drums",
+          "driving bass"
+        ],
+        "mood": [
+          "bold",
+          "propulsive"
+        ],
+        "mood_alternates": [
+          "gritty",
+          "elated"
+        ],
+        "name": "rock",
+        "when": {
+          "class_min_share": {},
+          "energy": [
+            "high"
+          ],
+          "region_any": [],
+          "tags_any": [],
+          "tags_dominant": [],
+          "time_of_day": []
+        }
+      },
+      {
+        "bpm": [
+          105,
+          125
+        ],
+        "genre": "indie pop",
+        "instrument_alternates": [
+          "twinkling glockenspiel"
+        ],
+        "instruments": [
+          "chiming guitar",
+          "crisp drums",
+          "round bass"
+        ],
+        "mood": [
+          "bright",
+          "wandering"
+        ],
+        "mood_alternates": [
+          "dreamy",
+          "buoyant"
+        ],
+        "name": "indie pop",
+        "when": {
+          "class_min_share": {},
+          "energy": [
+            "mid"
+          ],
+          "region_any": [],
+          "tags_any": [],
+          "tags_dominant": [],
+          "time_of_day": []
+        }
+      },
+      {
+        "bpm": [
+          100,
+          120
+        ],
+        "genre": "upbeat folk",
+        "instrument_alternates": [
+          "rolling banjo"
+        ],
+        "instruments": [
+          "strummed acoustic guitar",
+          "stomping percussion",
+          "warm bass"
+        ],
+        "mood": [
+          "cheerful",
+          "easy"
+        ],
+        "mood_alternates": [
+          "sunny",
+          "companionable"
+        ],
+        "name": "upbeat folk",
+        "when": {
+          "class_min_share": {},
+          "energy": [],
+          "region_any": [],
+          "tags_any": [],
+          "tags_dominant": [],
+          "time_of_day": []
+        }
+      }
+    ],
+    "intimate_to_cinematic": [
+      "domestic",
+      "homespun",
+      "companionable",
+      "tender",
+      "gentle",
+      "still",
+      "warm",
+      "easy",
+      "easygoing",
+      "playful",
+      "giddy",
+      "cheerful",
+      "carefree",
+      "gritty",
+      "strutting",
+      "convivial",
+      "festive",
+      "restless",
+      "urgent",
+      "propulsive",
+      "bright",
+      "buoyant",
+      "sunny",
+      "sunlit",
+      "dusty",
+      "breezy",
+      "rolling",
+      "glittering",
+      "joyful",
+      "elated",
+      "nostalgic",
+      "wistful",
+      "hazy",
+      "drowsy",
+      "languid",
+      "unhurried",
+      "dreamy",
+      "wandering",
+      "hopeful",
+      "open",
+      "solemn",
+      "weightless",
+      "bold",
+      "wide",
+      "vast"
+    ],
+    "refine": true,
+    "time_of_day": {
+      "daytime": [
+        9,
+        17
+      ],
+      "evening": [
+        17,
+        21
+      ],
+      "morning": [
+        5,
+        9
+      ]
+    },
+    "variants": 3
+  },
+  "tags": {
+    "enabled": true,
+    "groups": [
+      {
+        "labels": [
+          {
+            "label": "beach",
+            "prompt": null
+          },
+          {
+            "label": "mountain",
+            "prompt": null
+          },
+          {
+            "label": "city",
+            "prompt": null
+          },
+          {
+            "label": "street",
+            "prompt": null
+          },
+          {
+            "label": "indoor",
+            "prompt": null
+          },
+          {
+            "label": "food",
+            "prompt": null
+          },
+          {
+            "label": "people",
+            "prompt": null
+          }
+        ],
+        "name": "subject",
+        "null_prompt": "a photo",
+        "primary": true,
+        "prompt_template": "a photo of {label}"
+      },
+      {
+        "labels": [
+          {
+            "label": "aerial",
+            "prompt": "an aerial photo taken from a drone"
+          },
+          {
+            "label": "underwater",
+            "prompt": null
+          }
+        ],
+        "name": "view",
+        "null_prompt": "a photo taken at ground level",
+        "primary": false,
+        "prompt_template": "a photo of {label}"
+      },
+      {
+        "labels": [
+          {
+            "label": "sunset",
+            "prompt": null
+          }
+        ],
+        "name": "light",
+        "null_prompt": "a photo taken in ordinary daylight",
+        "primary": false,
+        "prompt_template": "a photo of {label}"
+      }
+    ],
+    "logit_scale": 10.0,
+    "max_per_segment": 3,
+    "threshold": 0.2
+  },
+  "timeouts": {
+    "audio_decode_s": 300.0,
+    "concat_s": 600.0,
+    "export_clip_s": 1800.0,
+    "ffprobe_s": 60.0,
+    "hwaccel_probe_s": 20.0,
+    "montage_part_s": 300.0,
+    "sample_read_s": 900.0,
+    "telemetry_extract_s": 60.0,
+    "version_check_s": 10.0
+  },
+  "weights": {
+    "aesthetic": 0.0,
+    "colorfulness": 0.5,
+    "exposure": 0.0,
+    "faces": 0.0,
+    "motion": 1.0,
+    "sharpness": 1.0,
+    "stability": 1.0
+  }
+}

@@ -47,9 +47,9 @@
 
 ### 6. Config defaults (decision 6) and docs, one commit
 
-- [ ] 6.1 Take the JSON snapshot of `AutocutConfig()` first, then create `config_defaults.py` and the default factories, and add the snapshot test.
-- [ ] 6.2 `SPEC.md`: the `[timeouts]` section and the new fields where configuration is described, and the pipeline sentence in §5. Add a `CHANGELOG.md` entry, and format the Markdown with `sjust format-md`.
-- [ ] 6.3 Commit: `refactor(core): move the default tag, genre and mood data out of config`.
+- [x] 6.1 Take the JSON snapshot of `AutocutConfig()` first, then create `config_defaults.py` and the default factories, and add the snapshot test.
+- [x] 6.2 `SPEC.md`: the `[timeouts]` section and the new fields where configuration is described, and the pipeline sentence in §5. Add a `CHANGELOG.md` entry, and format the Markdown with `sjust format-md`.
+- [x] 6.3 Commit: `refactor(core): move the default tag, genre and mood data out of config`.
 
 ### Part B gates and hand-back
 

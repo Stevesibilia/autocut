@@ -60,7 +60,7 @@ autocut/
 └── gui/    # PySide6 desktop app (Phase 2)
 ```
 
-`core/` never imports from `cli/` or `gui/` and never prints. It reports progress and events through callbacks or generators so both front ends can consume the same API. The GUI is a consumer of the core API, not a rewrite.
+`core/` never imports from `cli/` or `gui/` and never prints. It reports progress and events through callbacks or generators so both front ends can consume the same API. The GUI is a consumer of the core API, not a rewrite. `core/pipeline.py` runs ingest, analysis, embedding, tagging and description in the one order both front ends need, so the CLI's `analyze` command and the GUI's analysis stage cannot drift apart; a cancelled run stops there before embedding, tagging or describing, in both.
 
 **Phase 1, CLI.** Validates selection quality on real footage before any GUI work. Must be useful on its own.
 
@@ -89,7 +89,7 @@ Failures are bounded twice. A request retries on 429 and 5xx with backoff 1, 2, 
 ### 6.1 Core
 
 - **Python 3.12 or newer.** Development runs on 3.14 on the Linux host, wheels for all core dependencies exist. CI tests 3.12, 3.13 and 3.14.
-- **ffmpeg and ffprobe** as external binaries invoked through `subprocess`. No wrapper library. Frame sampling uses an ffmpeg pipe to raw RGB into NumPy, with hardware decoding chosen by AutoCut rather than by ffmpeg's own `-hwaccel auto` (see Hardware decode in §12). PyAV is not used. See ADR 2.
+- **ffmpeg and ffprobe** as external binaries invoked through `subprocess`. No wrapper library. Frame sampling uses an ffmpeg pipe to raw RGB into NumPy, with hardware decoding chosen by AutoCut rather than by ffmpeg's own `-hwaccel auto` (see Hardware decode in §12). PyAV is not used. See ADR 2. Every external call has its own timeout in the `[timeouts]` table of `autocut.toml` (`ffprobe_s`, `hwaccel_probe_s`, `sample_read_s`, `export_clip_s`, `montage_part_s`, `concat_s`, `audio_decode_s`, `telemetry_extract_s`, `version_check_s`), so a hung process fails the one file or clip it was working on rather than the run.
 - **NumPy and OpenCV (headless)** for frame metrics.
 - **PySceneDetect** for intra-file shot splitting, behind the optional `scenedetect` extra (see §7.2 and ADR 11).
 - **librosa** for beat tracking and BPM.
@@ -128,7 +128,7 @@ Recursive scan of the source folders.
   2. DJI sidecar `.SRT` with the same fields for models that write it.
   3. GoPro GPMF data stream, only when a GoPro appears.
      Unknown telemetry formats are ignored, the file falls back to image metrics.
-- **Source classification.** Each file gets a class `drone`, `actioncam`, `phone`, `reflex` or `generic`. The class is derived from signals: telemetry type found, make and model tags, fps, aspect ratio and rotation, and filename pattern as a weak hint. It is overridable per folder glob and per file in `autocut.toml`. See ADR 3.
+- **Source classification.** Each file gets a class `drone`, `actioncam`, `phone`, `reflex` or `generic`. The class is derived from signals: telemetry type found, make and model tags, fps, aspect ratio and rotation, and filename pattern as a weak hint. A frame rate at or above `analysis.high_fps_threshold` (100 by default) classifies an otherwise unrecognized file as actioncam, since that combination only comes from a camera built for slow motion. It is overridable per folder glob and per file in `autocut.toml`. See ADR 3.
 - **Chronological order.** Global sort on `creation_time`, fallback on mtime. Mixed sources produce one coherent timeline.
 
 Per-class analysis rules:
@@ -140,7 +140,7 @@ Per-class analysis rules:
 
 ### 7.2 Segmentation
 
-The in-memory detector splits files with several shots into separate candidates by default, reusing the frames already sampled for metrics. `analysis.detector = "pyscenedetect"` selects PySceneDetect's `ContentDetector` instead, decoding the file a second time for validation; it needs the optional `scenedetect` extra (`pip install 'autocut[scenedetect]'`) and fails with a message naming it when the extra is missing. Segments shorter than `selection.min_segment_seconds` (default 1.5) are dropped.
+The in-memory detector splits files with several shots into separate candidates by default, reusing the frames already sampled for metrics. `analysis.detector = "pyscenedetect"` selects PySceneDetect's `ContentDetector` instead, decoding the file a second time for validation; it needs the optional `scenedetect` extra (`pip install 'autocut[scenedetect]'`) and fails with a message naming it when the extra is missing. When `ffprobe` reports no frame rate for a file, PySceneDetect's minimum scene length falls back to `analysis.fallback_fps` (25). Segments shorter than `selection.min_segment_seconds` (default 1.5) are dropped.
 
 ### 7.3 Analysis and scoring
 
@@ -216,6 +216,8 @@ Similarity combines signals, each switchable:
 | Spatial          | GPS distance                                      | Shots from the same spot             |
 | Temporal         | Timestamp distance                                | Consecutive shots of the same moment |
 | Motion           | Motion profile similarity                         | Three identical left to right pans   |
+
+The visual fallback blends the two signals it names: `similarity.hash_share` (default 0.5) weights the perceptual hash and the rest goes to the color histogram, computed over `similarity.histogram_bins` (default 8) buckets per channel.
 
 Additional constraints: max clips per visual cluster (default 2 to 3), minimum temporal distance between consecutive clips in the final order, and balance across semantic categories when tags are available.
 
@@ -336,7 +338,7 @@ Transformations:
 
 **Cutting exactly.** Precise mode seeks on the input, which ffmpeg does accurately, and trims with a frame count rather than `-t`. A window rarely starts on a source frame boundary, and `-t` then measures against the `fps` filter's own grid and can stop a frame early. Fast mode keeps `-t`, because a stream copy has no filter grid to align to and its bounds are approximate by definition.
 
-**Resumable.** Every clip records a digest of everything its output depends on: the source, the window, the target frame rate and size, the mode, the codec and the filters. A clip whose file is on disk with a matching digest is skipped, so a re-export after a settings change re-encodes only what the change touched. Clips run in a process pool half the size of the core count, because libx264 is already threaded.
+**Resumable.** Every clip records a digest of everything its output depends on: the source, the window, the target frame rate and size, the mode, the codec and the filters. A clip whose file is on disk with a matching digest is skipped, so a re-export after a settings change re-encodes only what the change touched. Clips run in a process pool sized by `export.workers`, defaulting to half the analysis worker count (physical cores when neither is set), because libx264 is already threaded.
 
 A clip whose encode fails for any reason, including a timeout, leaves no file at its output path, so a later run cannot mistake it for a finished clip. An exception while exporting one clip is recorded as that clip's failure and never stops the others.
 

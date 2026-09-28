@@ -12,6 +12,14 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from autocut.core.config_defaults import (
+    DEFAULT_ALLOWED_SECTIONS,
+    DEFAULT_CALM_TO_ENERGETIC,
+    DEFAULT_GENRE_ROWS,
+    DEFAULT_INTIMATE_TO_CINEMATIC,
+    DEFAULT_TAG_GROUPS,
+)
+
 SourceClass = Literal["drone", "actioncam", "phone", "reflex", "generic"]
 VerticalStrategy = Literal["exclude", "blur_pad", "center_crop"]
 CutMode = Literal["precise", "fast"]
@@ -254,38 +262,6 @@ class TagGroup(_Strict):
     labels: list[TagLabel]
 
 
-DEFAULT_TAG_GROUPS: tuple[TagGroup, ...] = (
-    TagGroup(
-        name="subject",
-        null_prompt="a photo",
-        primary=True,
-        labels=[
-            TagLabel(label="beach"),
-            TagLabel(label="mountain"),
-            TagLabel(label="city"),
-            TagLabel(label="street"),
-            TagLabel(label="indoor"),
-            TagLabel(label="food"),
-            TagLabel(label="people"),
-        ],
-    ),
-    TagGroup(
-        name="view",
-        null_prompt="a photo taken at ground level",
-        labels=[
-            # "aerial" alone encodes closer to an antenna than to a view from the air.
-            TagLabel(label="aerial", prompt="an aerial photo taken from a drone"),
-            TagLabel(label="underwater"),
-        ],
-    ),
-    TagGroup(
-        name="light",
-        null_prompt="a photo taken in ordinary daylight",
-        labels=[TagLabel(label="sunset")],
-    ),
-)
-
-
 class TagsConfig(_Strict):
     """Zero-shot labels, their groups and how confident a tag has to be to stick."""
 
@@ -309,7 +285,9 @@ class TagsConfig(_Strict):
         description="Tags kept in total, across groups. The dominant tag is kept first "
         "and the rest fill by confidence.",
     )
-    groups: list[TagGroup] = Field(default_factory=lambda: list(DEFAULT_TAG_GROUPS))
+    groups: list[TagGroup] = Field(
+        default_factory=lambda: [TagGroup.model_validate(group) for group in DEFAULT_TAG_GROUPS]
+    )
 
     @property
     def primary_group(self) -> str | None:
@@ -413,155 +391,6 @@ class GenreRow(_Strict):
     )
 
 
-#: Ordered specific to general, first match wins, the default last. Seeded from the
-#: user's own list of genres. These are data: editing a row needs no code change, and
-#: the report says which row matched so a surprising choice can be traced to one line.
-DEFAULT_GENRE_ROWS: tuple[GenreRow, ...] = (
-    GenreRow(
-        name="surf rock",
-        genre="surf rock",
-        instruments=["twangy reverb guitar", "driving drums", "warm bass"],
-        bpm=(120, 140),
-        mood=["sunny", "carefree"],
-        mood_alternates=["breezy", "playful"],
-        instrument_alternates=["shimmering tremolo guitar"],
-        when=GenreWhen(tags_dominant=["beach"], tags_any=["underwater"], energy=["mid", "high"]),
-    ),
-    GenreRow(
-        name="pop punk",
-        genre="pop punk",
-        instruments=["crunchy guitar", "fast drums", "punchy bass"],
-        bpm=(150, 175),
-        mood=["restless", "bright"],
-        mood_alternates=["urgent", "giddy"],
-        instrument_alternates=["chugging guitar"],
-        when=GenreWhen(class_min_share={"actioncam": 0.6}, energy=["high"]),
-    ),
-    GenreRow(
-        name="reggae and dub",
-        genre="reggae dub",
-        instruments=["skanking guitar", "deep dub bass", "loose drums"],
-        bpm=(70, 90),
-        mood=["hazy", "unhurried"],
-        mood_alternates=["drowsy", "warm"],
-        instrument_alternates=["spring reverb guitar"],
-        when=GenreWhen(tags_dominant=["beach"], energy=["low"]),
-    ),
-    GenreRow(
-        name="funk and disco",
-        genre="funk disco",
-        instruments=["wah guitar", "slap bass", "tight drums"],
-        bpm=(110, 125),
-        mood=["joyful", "strutting"],
-        mood_alternates=["giddy", "glittering"],
-        instrument_alternates=["funky clavinet"],
-        when=GenreWhen(tags_dominant=["people", "food"], energy=["high"]),
-    ),
-    GenreRow(
-        name="acoustic and ukulele pop",
-        genre="acoustic pop",
-        instruments=["warm ukulele", "brushed drums", "soft acoustic guitar"],
-        bpm=(95, 115),
-        mood=["tender", "domestic"],
-        mood_alternates=["gentle", "nostalgic"],
-        instrument_alternates=["muted upright bass"],
-        when=GenreWhen(tags_dominant=["people", "food"], energy=["low", "mid"]),
-    ),
-    GenreRow(
-        name="italian and mediterranean folk",
-        genre="mediterranean folk",
-        instruments=["nylon string guitar", "hand percussion", "wheezing accordion"],
-        bpm=(100, 120),
-        mood=["sunlit", "convivial"],
-        mood_alternates=["languid", "festive"],
-        instrument_alternates=["bright mandolin"],
-        when=GenreWhen(
-            tags_dominant=["city", "street"],
-            region_any=["sardegna", "sardinia", "italia", "italy"],
-        ),
-    ),
-    GenreRow(
-        name="americana",
-        genre="americana",
-        instruments=["slide guitar", "loping drums", "upright bass"],
-        bpm=(95, 115),
-        mood=["wide", "wistful"],
-        mood_alternates=["dusty", "hopeful"],
-        instrument_alternates=["weeping pedal steel"],
-        when=GenreWhen(class_min_share={"drone": 0.5}, energy=["mid"]),
-    ),
-    GenreRow(
-        name="cinematic ambient and post-rock",
-        genre="cinematic post-rock",
-        instruments=["sweeping strings", "soft piano", "swelling guitar"],
-        bpm=(75, 95),
-        mood=["vast", "still"],
-        mood_alternates=["solemn", "weightless"],
-        instrument_alternates=["bowed guitar"],
-        when=GenreWhen(class_min_share={"drone": 0.5}, energy=["low"]),
-    ),
-    GenreRow(
-        name="country",
-        genre="country",
-        instruments=["twangy guitar", "shuffling drums", "walking bass"],
-        bpm=(100, 120),
-        mood=["easygoing", "open"],
-        mood_alternates=["homespun", "rolling"],
-        instrument_alternates=["sawing fiddle"],
-        when=GenreWhen(tags_dominant=["mountain", "street"], energy=["mid"]),
-    ),
-    GenreRow(
-        name="rock",
-        genre="rock",
-        instruments=["distorted guitar", "heavy drums", "driving bass"],
-        bpm=(120, 145),
-        mood=["bold", "propulsive"],
-        mood_alternates=["gritty", "elated"],
-        instrument_alternates=["overdriven guitar"],
-        when=GenreWhen(energy=["high"]),
-    ),
-    GenreRow(
-        name="indie pop",
-        genre="indie pop",
-        instruments=["chiming guitar", "crisp drums", "round bass"],
-        bpm=(105, 125),
-        mood=["bright", "wandering"],
-        mood_alternates=["dreamy", "buoyant"],
-        instrument_alternates=["twinkling glockenspiel"],
-        when=GenreWhen(energy=["mid"]),
-    ),
-    GenreRow(
-        name="upbeat folk",
-        genre="upbeat folk",
-        instruments=["strummed acoustic guitar", "stomping percussion", "warm bass"],
-        bpm=(100, 120),
-        mood=["cheerful", "easy"],
-        mood_alternates=["sunny", "companionable"],
-        instrument_alternates=["rolling banjo"],
-    ),
-)
-
-#: The section words Suno accepts. In configuration because the rules are Suno's and
-#: they change without asking us.
-DEFAULT_ALLOWED_SECTIONS: tuple[str, ...] = (
-    "intro",
-    "verse",
-    "verse 1",
-    "verse 2",
-    "verse 3",
-    "pre-chorus",
-    "chorus",
-    "bridge",
-    "solo",
-    "break",
-    "drop",
-    "build",
-    "transition",
-    "outro",
-    "end",
-)
-
-
 class TimeOfDayBands(_Strict):
     """Hour ranges, local time, half open. Anything outside them is night."""
 
@@ -599,7 +428,9 @@ class SoundtrackConfig(_Strict):
         description="The row used when no row's conditions match. Named rather than "
         "positional so reordering the table cannot change the fallback by accident.",
     )
-    genres: list[GenreRow] = Field(default_factory=lambda: list(DEFAULT_GENRE_ROWS))
+    genres: list[GenreRow] = Field(
+        default_factory=lambda: [GenreRow.model_validate(row) for row in DEFAULT_GENRE_ROWS]
+    )
     calm_to_energetic: list[str] = Field(
         default_factory=lambda: list(DEFAULT_CALM_TO_ENERGETIC),
         description="Mood words in order from calm to energetic, used by the GUI's mood "
@@ -611,109 +442,6 @@ class SoundtrackConfig(_Strict):
         description="The same words in order from intimate to cinematic, meaning how "
         "much room the music implies.",
     )
-
-
-#: Mood words the shipped rows use, ordered from calm to energetic. A word absent from
-#: this list sits in the middle: the two axes are a way of picking between the words a
-#: row already offers, not a claim to understand any word in English.
-DEFAULT_CALM_TO_ENERGETIC: tuple[str, ...] = (
-    "still",
-    "solemn",
-    "drowsy",
-    "languid",
-    "unhurried",
-    "tender",
-    "gentle",
-    "hazy",
-    "dreamy",
-    "wistful",
-    "nostalgic",
-    "weightless",
-    "easy",
-    "easygoing",
-    "warm",
-    "homespun",
-    "domestic",
-    "companionable",
-    "wandering",
-    "open",
-    "hopeful",
-    "breezy",
-    "sunlit",
-    "dusty",
-    "carefree",
-    "cheerful",
-    "sunny",
-    "bright",
-    "playful",
-    "buoyant",
-    "rolling",
-    "glittering",
-    "joyful",
-    "elated",
-    "convivial",
-    "festive",
-    "bold",
-    "strutting",
-    "gritty",
-    "giddy",
-    "propulsive",
-    "restless",
-    "urgent",
-    # "wide" and "vast" say how much room, not how much energy; they sit at the calm
-    # end because the rows that use them are the slow ones.
-    "wide",
-    "vast",
-)
-
-#: The same words ordered from intimate to cinematic: how much room the music implies.
-DEFAULT_INTIMATE_TO_CINEMATIC: tuple[str, ...] = (
-    "domestic",
-    "homespun",
-    "companionable",
-    "tender",
-    "gentle",
-    "still",
-    "warm",
-    "easy",
-    "easygoing",
-    "playful",
-    "giddy",
-    "cheerful",
-    "carefree",
-    "gritty",
-    "strutting",
-    "convivial",
-    "festive",
-    "restless",
-    "urgent",
-    "propulsive",
-    "bright",
-    "buoyant",
-    "sunny",
-    "sunlit",
-    "dusty",
-    "breezy",
-    "rolling",
-    "glittering",
-    "joyful",
-    "elated",
-    "nostalgic",
-    "wistful",
-    "hazy",
-    "drowsy",
-    "languid",
-    "unhurried",
-    "dreamy",
-    "wandering",
-    "hopeful",
-    "open",
-    "solemn",
-    "weightless",
-    "bold",
-    "wide",
-    "vast",
-)
 
 
 class PlacesConfig(_Strict):

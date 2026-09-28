@@ -3,9 +3,7 @@
 ## Purpose
 
 Segmentation splits each file into shot segments and trims the unusable head and tail of each file so that later stages treat each shot as one candidate.
-
 ## Requirements
-
 ### Requirement: Shot detection
 
 The system SHALL split a file into segments at content changes detected on the sampled frames or on a dedicated detector pass, so that a file with several distinct shots yields several segments. A file with one continuous shot MUST yield exactly one segment.
@@ -61,3 +59,18 @@ Segments shorter than `selection.min_segment_seconds` after trimming SHALL be re
 
 - **WHEN** a segment lasts 1.0 seconds after trimming and the minimum is 1.5
 - **THEN** the segment outcome is `rejected` with reason `too_short`
+
+### Requirement: Validation detector is optional
+
+The PySceneDetect shot detector, selected with `analysis.detector = "pyscenedetect"`, SHALL require the optional `scenedetect` extra. The default installation SHALL NOT include PySceneDetect. When that detector is selected without the extra, analysis SHALL fail with a message that names the extra and how to install it.
+
+#### Scenario: Extra missing
+
+- **WHEN** `analysis.detector` is `"pyscenedetect"` and PySceneDetect is not installed
+- **THEN** shot detection fails with a message naming the `scenedetect` extra
+
+#### Scenario: Default detector
+
+- **WHEN** `analysis.detector` is left at its default
+- **THEN** analysis runs without PySceneDetect installed
+

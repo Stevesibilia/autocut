@@ -3,9 +3,7 @@
 ## Purpose
 
 Footage ingest turns one or more source folders into a manifest of probed, ordered video files with their proxies and cache keys, ready for analysis.
-
 ## Requirements
-
 ### Requirement: Recursive scan of accepted video files
 
 The system SHALL scan every given source folder recursively and collect files whose extension, compared case-insensitively, is one of `.mp4`, `.mov`, `.mkv`, `.avi`, `.m4v`, `.insv`. Files with extension `.lrv` or `.lrf` MUST NOT be collected as sources. Hidden files and folders (name starting with `.`) MUST be skipped. Partial downloads (extension `.part`) MUST be skipped.
@@ -108,3 +106,22 @@ The `autocut analyze` command SHALL write `manifest.json` in the output folder w
 
 - **WHEN** analysis is interrupted after ingest completed
 - **THEN** `manifest.json` exists with every file and the segments completed so far
+
+### Requirement: Tool preflight
+
+Before starting any worker, ingest SHALL check that `ffprobe` and `ffmpeg` are on PATH, and export SHALL check that `ffmpeg` is. A missing tool SHALL fail the command once with a message naming it and suggesting `autocut doctor`, not once per file. The command line SHALL report it in one line with exit status 1.
+
+#### Scenario: ffprobe missing
+
+- **WHEN** `autocut analyze` runs on a folder with video files and `ffprobe` is not on PATH
+- **THEN** the command prints one line naming `ffprobe`, exits with status 1, and prints no traceback
+
+### Requirement: Failure isolation during ingest
+
+An exception raised while ingesting one file SHALL be recorded as that file's error and SHALL NOT stop the ingest of the other files.
+
+#### Scenario: One worker raises
+
+- **WHEN** ingesting three files and the worker for one raises an unexpected exception
+- **THEN** that file is in the result with an error and the other two are ingested
+

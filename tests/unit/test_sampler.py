@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -11,8 +13,10 @@ from autocut.core.config import AutocutConfig
 from autocut.core.hwaccel import SOFTWARE, Hwaccel
 from autocut.core.probe import ProbeResult, probe_file
 from autocut.core.sampler import (
+    STDERR_TAIL_BYTES,
     build_sample_command,
     build_single_frame_command,
+    read_frames,
     sample_frames,
     sample_size,
 )
@@ -196,3 +200,41 @@ def test_a_file_that_decodes_nothing_at_all_reports_it(monkeypatch: pytest.Monke
 
     assert sampled.count == 0
     assert any("no frames decoded" in warning for warning in sampled.warnings)
+
+
+def test_read_frames_drains_stderr_so_a_noisy_decoder_does_not_deadlock() -> None:
+    """A child that fills the stderr pipe before writing stdout must not hang (decision 1)."""
+    script = (
+        "import sys\n"
+        "sys.stderr.buffer.write(b'e' * (1024 * 1024))\n"
+        "sys.stderr.buffer.flush()\n"
+        "sys.stdout.buffer.write(b'f' * 20)\n"
+        "sys.stdout.buffer.flush()\n"
+    )
+    started = time.monotonic()
+    frames, code, stderr = read_frames([sys.executable, "-c", script], frame_bytes=10)
+    elapsed = time.monotonic() - started
+
+    assert frames == [b"f" * 10, b"f" * 10]
+    assert code == 0
+    assert stderr.count("e") == STDERR_TAIL_BYTES
+    assert elapsed < 10.0
+
+
+def test_read_frames_reports_a_non_zero_exit_and_its_stderr_tail() -> None:
+    script = "import sys\nsys.stderr.buffer.write(b'boom')\nsys.exit(3)\n"
+    frames, code, stderr = read_frames([sys.executable, "-c", script], frame_bytes=10)
+
+    assert frames == []
+    assert code == 3
+    assert stderr == "boom"
+
+
+def test_read_frames_keeps_at_most_the_last_64_kib_of_stderr() -> None:
+    script = (
+        "import sys\nsys.stderr.buffer.write(b'a' * 70000)\nsys.stderr.buffer.write(b'z' * 100)\n"
+    )
+    _, _, stderr = read_frames([sys.executable, "-c", script], frame_bytes=10)
+
+    assert len(stderr.encode("utf-8")) <= STDERR_TAIL_BYTES
+    assert stderr.endswith("z" * 100)

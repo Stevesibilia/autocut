@@ -45,6 +45,7 @@ from autocut.core.naming import (
     clip_name,
     stale_outputs,
 )
+from autocut.core.probe import require_tools
 from autocut.core.select import absolute_time
 
 FFMPEG_TIMEOUT_S = 1800.0
@@ -135,6 +136,8 @@ def export_one(plan: ExportPlan, segment_id: str, digest: str) -> ClipResult:
     except FileNotFoundError:
         return ClipResult(segment_id, plan.output, digest, error="ffmpeg not found on PATH")
     except subprocess.SubprocessError as exc:
+        # A timeout, among other things, can leave a partial file at the output path.
+        plan.output.unlink(missing_ok=True)
         return ClipResult(segment_id, plan.output, digest, error=str(exc))
 
     if completed.returncode != 0 or not plan.output.exists():
@@ -353,15 +356,20 @@ def _run(
     if not pending:
         progress(ProgressEvent(stage="export", current=total, total=total, message="all skipped"))
         return
+    require_tools("ffmpeg")
 
     done = result.skipped
     workers = max(1, (config.analysis.workers or physical_cores()) // 2)
     if workers == 1 or len(pending) == 1:
         for job in pending:
             done += 1
-            _finish(
-                job, export_one(job.plan, job.segment.id, job.digest), result, progress, done, total
-            )
+            try:
+                clip = export_one(job.plan, job.segment.id, job.digest)
+            except Exception as exc:  # noqa: BLE001 - becomes this clip's error, see decision 2
+                clip = ClipResult(
+                    job.segment.id, job.plan.output, job.digest, error=f"worker failed: {exc}"
+                )
+            _finish(job, clip, result, progress, done, total)
         return
 
     context = multiprocessing.get_context("spawn")
@@ -372,7 +380,13 @@ def _run(
         for future in as_completed(futures):
             job = futures[future]
             done += 1
-            _finish(job, future.result(), result, progress, done, total)
+            try:
+                clip = future.result()
+            except Exception as exc:  # noqa: BLE001 - see decision 2
+                clip = ClipResult(
+                    job.segment.id, job.plan.output, job.digest, error=f"worker failed: {exc}"
+                )
+            _finish(job, clip, result, progress, done, total)
 
 
 def _finish(

@@ -14,9 +14,10 @@ dimensions and the frames come out upright.
 from __future__ import annotations
 
 import subprocess
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import IO, Literal
 
 import numpy as np
 
@@ -28,6 +29,10 @@ FrameSource = Literal["proxy", "original"]
 
 # ffmpeg exits 0 but writes nothing for a file it cannot decode; guard the read anyway.
 READ_TIMEOUT_S = 900.0
+
+# Keep only the tail of stderr for the error message; a noisy decoder can write
+# far more than anyone would want to read.
+STDERR_TAIL_BYTES = 65536
 
 
 @dataclass(slots=True)
@@ -122,16 +127,42 @@ def build_single_frame_command(path: Path, width: int, height: int) -> list[str]
     ]
 
 
+def _drain_stderr(pipe: IO[bytes], tail: bytearray, lock: threading.Lock) -> None:
+    """Read ``pipe`` to EOF, keeping only the last ``STDERR_TAIL_BYTES`` bytes of it."""
+    while True:
+        chunk = pipe.read(4096)
+        if not chunk:
+            break
+        with lock:
+            tail.extend(chunk)
+            if len(tail) > STDERR_TAIL_BYTES:
+                del tail[: len(tail) - STDERR_TAIL_BYTES]
+
+
 def read_frames(command: list[str], frame_bytes: int) -> tuple[list[bytes], int, str]:
-    """Run ``command`` and read whole frames from its stdout. Returns frames, code, stderr."""
+    """Run ``command`` and read whole frames from its stdout. Returns frames, code, stderr.
+
+    ffmpeg's stderr is drained on a background thread while stdout is read, so a
+    decoder that writes a lot of error output before or between frames cannot fill
+    the stderr pipe and deadlock the stdout read (decision 1, issue #78).
+    """
     try:
         process = subprocess.Popen(
             command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL
         )
     except FileNotFoundError:
         return [], 127, "ffmpeg not found on PATH"
-    frames: list[bytes] = []
     assert process.stdout is not None
+    assert process.stderr is not None
+
+    stderr_tail = bytearray()
+    stderr_lock = threading.Lock()
+    stderr_thread = threading.Thread(
+        target=_drain_stderr, args=(process.stderr, stderr_tail, stderr_lock), daemon=True
+    )
+    stderr_thread.start()
+
+    frames: list[bytes] = []
     try:
         while True:
             chunk = process.stdout.read(frame_bytes)
@@ -139,12 +170,18 @@ def read_frames(command: list[str], frame_bytes: int) -> tuple[list[bytes], int,
                 break
             frames.append(chunk)
         process.stdout.close()
-        _, stderr = process.communicate(timeout=READ_TIMEOUT_S)
+        process.wait(timeout=READ_TIMEOUT_S)
     except subprocess.TimeoutExpired:
         process.kill()
-        process.communicate()
+        process.wait()
+        stderr_thread.join(timeout=5.0)
+        with stderr_lock:
+            tail = bytes(stderr_tail)
         return frames, 1, "ffmpeg timed out"
-    return frames, process.returncode, stderr.decode("utf-8", errors="replace")
+    stderr_thread.join(timeout=5.0)
+    with stderr_lock:
+        tail = bytes(stderr_tail)
+    return frames, process.returncode, tail.decode("utf-8", errors="replace")
 
 
 def sample_frames(

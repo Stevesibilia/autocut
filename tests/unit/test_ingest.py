@@ -166,6 +166,35 @@ def test_ingest_of_an_empty_folder_returns_nothing(tmp_path: Path) -> None:
     assert ingest([tmp_path], AutocutConfig()) == []
 
 
+@pytest.mark.ffmpeg
+def test_one_worker_failing_does_not_stop_the_others(
+    synthetic_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("a.mp4", "b.mp4", "c.mp4"):
+        (tmp_path / name).write_bytes((synthetic_dir / "static.mp4").read_bytes())
+    config = AutocutConfig()
+    config.analysis.workers = 1
+
+    import autocut.core.ingest as ingest_module
+
+    real_ingest_file = ingest_module.ingest_file
+
+    def flaky(scanned: object, cfg: object) -> object:
+        if scanned.path.name == "b.mp4":  # type: ignore[attr-defined]
+            raise RuntimeError("boom")
+        return real_ingest_file(scanned, cfg)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(ingest_module, "ingest_file", flaky)
+    files = ingest([tmp_path], config)
+
+    by_name = {f.path.name: f for f in files}
+    assert set(by_name) == {"a.mp4", "b.mp4", "c.mp4"}
+    assert by_name["b.mp4"].error is not None
+    assert by_name["b.mp4"].error.startswith("worker failed:")
+    assert by_name["a.mp4"].error is None
+    assert by_name["c.mp4"].error is None
+
+
 def test_module_is_importable_under_spawn() -> None:
     """Pool workers must be picklable module level callables (macOS uses spawn)."""
     from autocut.core.ingest import ingest_file

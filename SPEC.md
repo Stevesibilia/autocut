@@ -174,6 +174,8 @@ Thresholds are defaults taken from the measured distribution of the Sardinia set
 
 Analysis also writes one thumbnail per segment and, when `analysis.sprites = true`, a 320 px sprite strip for GUI scrubbing.
 
+An exception while analyzing one file is recorded as that file's error and never stops the analysis of the others. Ctrl-C stops the run like a cancellation: files finished before it keep their segments, and the command line saves the manifest and exits with status 130.
+
 ### 7.4 Best window and selection
 
 For each surviving segment, a sliding window search finds the sub-window of that clip's target duration with the highest mean score. The manifest stores the segment bounds and the best window center, not a fixed final duration, so that beat sync can later grow or shrink the window around the center within the segment. See ADR 5.
@@ -336,6 +338,8 @@ Transformations:
 
 **Resumable.** Every clip records a digest of everything its output depends on: the source, the window, the target frame rate and size, the mode, the codec and the filters. A clip whose file is on disk with a matching digest is skipped, so a re-export after a settings change re-encodes only what the change touched. Clips run in a process pool half the size of the core count, because libx264 is already threaded.
 
+A clip whose encode fails for any reason, including a timeout, leaves no file at its output path, so a later run cannot mistake it for a finished clip. An exception while exporting one clip is recorded as that clip's failure and never stops the others.
+
 **The final render (optional).** `autocut render <project>` joins the exported clips in edit order and mixes the synced track over them, writing `montage.mp4` beside `_selects/`. It exists because an edit whose clips, order and lengths are all decided needs nothing from an editor: the clips are already uniform, so the join is a stream copy plus one audio encode and costs seconds rather than a re-encode.
 
 - Nothing is re-encoded except the track. The export it runs puts every clip on one common frame, so the clips match by construction; the uniformity check that follows is a safety net rather than a step the user is expected to satisfy. Fast mode is refused before anything is exported, because a stream copy carries each source as it is and no planner can make those uniform.
@@ -440,6 +444,8 @@ Commands are separate and re-runnable, reading and writing the same manifest. Tu
 `autocut sync` without `--bpm` measures the real BPM and compares it to the one proposed by `soundtrack`, warning on mismatch. `--bpm` wins when given.
 
 `autocut run` chains the first pass. Configuration comes from `autocut.toml` with command line overrides. All CLI output is in English.
+
+An unknown configuration key, a value outside its allowed range, an explicit `--config` path that does not exist, and an unreadable or invalid manifest are each reported in one line and exit status 1, never a traceback.
 
 ## 11. GUI
 

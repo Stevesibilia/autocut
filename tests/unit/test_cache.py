@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
@@ -232,3 +233,116 @@ def test_cache_prune_command(tmp_path: Path) -> None:
 def test_cache_help(command: list[str]) -> None:
     result = runner.invoke(app, command)
     assert result.exit_code == 0
+
+
+# --- hardening (decision 5, issue #78) ---------------------------------------
+
+
+def test_a_truncated_arrays_file_reads_as_none(tmp_path: Path) -> None:
+    config = config_in(tmp_path)
+    write_entry(sample_entry(), config)
+    arrays_path = entry_path("abc123", config)
+    data = arrays_path.read_bytes()
+    arrays_path.write_bytes(data[: len(data) // 2])
+
+    assert read_entry("abc123", config) is None
+
+
+def test_mismatched_write_tokens_read_as_none(tmp_path: Path) -> None:
+    config = config_in(tmp_path)
+    write_entry(sample_entry(), config)
+    meta_path = entry_path("abc123", config).with_suffix(".json")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["write_token"] = "not-the-same-token"
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    assert read_entry("abc123", config) is None
+
+
+def test_a_token_present_in_only_one_file_reads_as_none(tmp_path: Path) -> None:
+    config = config_in(tmp_path)
+    write_entry(sample_entry(), config)
+    meta_path = entry_path("abc123", config).with_suffix(".json")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    del meta["write_token"]
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    assert read_entry("abc123", config) is None
+
+
+def test_an_entry_with_no_token_in_either_file_still_reads(tmp_path: Path) -> None:
+    """Entries written before write tokens existed must stay valid."""
+    config = config_in(tmp_path)
+    entry = sample_entry()
+    write_entry(entry, config)
+    arrays_path = entry_path("abc123", config)
+    meta_path = arrays_path.with_suffix(".json")
+
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    del meta["write_token"]
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    with np.load(arrays_path) as payload:
+        arrays = {name: payload[name] for name in payload.files if name != "write_token"}
+    np.savez_compressed(arrays_path, **arrays)  # type: ignore[arg-type]
+
+    loaded = read_entry("abc123", config)
+    assert loaded is not None
+    assert loaded.shot_bounds == entry.shot_bounds
+
+
+def test_a_mismatched_file_key_reads_as_none(tmp_path: Path) -> None:
+    config = config_in(tmp_path)
+    write_entry(sample_entry(), config)
+    meta_path = entry_path("abc123", config).with_suffix(".json")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["file_key"] = "someone-elses-key"
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    assert read_entry("abc123", config) is None
+
+
+def test_prune_removes_orphaned_metadata_and_temp_files(tmp_path: Path) -> None:
+    config = config_in(tmp_path)
+    write_entry(sample_entry("new"), config)
+    directory = cache_dir(config)
+
+    orphan_json = directory / "orphan_2-0_320.json"
+    orphan_json.write_text("{}", encoding="utf-8")
+    orphan_tmp = directory / "orphan_2-0_320.12345.npz.tmp"
+    orphan_tmp.write_bytes(b"partial")
+    stale = time.time() - 40 * 86400
+    os.utime(orphan_json, (stale, stale))
+    os.utime(orphan_tmp, (stale, stale))
+
+    assert prune(config, older_than_days=30) == 0
+    assert not orphan_json.exists()
+    assert not orphan_tmp.exists()
+    assert read_entry("new", config) is not None
+
+
+def test_prune_count_is_only_npz_entries(tmp_path: Path) -> None:
+    config = config_in(tmp_path)
+    write_entry(sample_entry("old"), config)
+    directory = cache_dir(config)
+    old_json = entry_path("old", config).with_suffix(".json")
+    stale = time.time() - 40 * 86400
+    os.utime(entry_path("old", config), (stale, stale))
+    os.utime(old_json, (stale, stale))
+
+    extra_tmp = directory / "leftover.99999.json.tmp"
+    extra_tmp.write_text("{}", encoding="utf-8")
+    os.utime(extra_tmp, (stale, stale))
+
+    assert prune(config, older_than_days=30) == 1
+    assert not extra_tmp.exists()
+
+
+def test_a_write_then_read_round_trips_with_no_tmp_left(tmp_path: Path) -> None:
+    config = config_in(tmp_path)
+    entry = sample_entry()
+    write_entry(entry, config)
+
+    loaded = read_entry("abc123", config)
+    assert loaded is not None
+    assert loaded.shot_bounds == entry.shot_bounds
+    assert list(cache_dir(config).glob("*.tmp")) == []

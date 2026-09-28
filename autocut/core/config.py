@@ -10,7 +10,7 @@ import tomllib
 from pathlib import Path
 from typing import Generic, Literal, TypeVar
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SourceClass = Literal["drone", "actioncam", "phone", "reflex", "generic"]
 VerticalStrategy = Literal["exclude", "blur_pad", "center_crop"]
@@ -21,7 +21,13 @@ SOURCE_CLASSES: tuple[SourceClass, ...] = ("drone", "actioncam", "phone", "refle
 T = TypeVar("T")
 
 
-class PerClass(BaseModel, Generic[T]):
+class _Strict(BaseModel):
+    """Base for every configuration model: an unknown key is a mistake, not a typo to ignore."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PerClass(_Strict, Generic[T]):
     """A value that differs per source class."""
 
     drone: T
@@ -34,15 +40,15 @@ class PerClass(BaseModel, Generic[T]):
         return getattr(self, source_class)  # type: ignore[no-any-return]
 
 
-class ClassOverride(BaseModel):
+class ClassOverride(_Strict):
     """Manual source class assignment for files matching a glob."""
 
     glob: str
     source_class: SourceClass
 
 
-class AnalysisConfig(BaseModel):
-    sample_fps: float = 2.0
+class AnalysisConfig(_Strict):
+    sample_fps: float = Field(default=2.0, gt=0)
     sample_long_side: int = 320
     use_proxies: bool = True
     hwaccel: Literal["auto", "off", "vaapi", "videotoolbox"] = Field(
@@ -54,9 +60,9 @@ class AnalysisConfig(BaseModel):
             'it has to be asked for by name. "off" forces software.'
         ),
     )
-    workers: int | None = Field(default=None, description="Defaults to physical cores.")
+    workers: int | None = Field(default=None, ge=1, description="Defaults to physical cores.")
     sprites: bool = False
-    sprite_max_frames: int = 60
+    sprite_max_frames: int = Field(default=60, ge=1)
     thumbnail_quality: int = 85
     detector: Literal["inmemory", "pyscenedetect"] = "inmemory"
     scene_threshold: float = Field(
@@ -78,7 +84,7 @@ class AnalysisConfig(BaseModel):
     class_overrides: list[ClassOverride] = Field(default_factory=list)
 
 
-class ScoringWeights(BaseModel):
+class ScoringWeights(_Strict):
     sharpness: float = 1.0
     # Zero by default: on well exposed SDR footage clipping is effectively zero on
     # every segment, so ranking on it sorts noise. It stays a rejection rule.
@@ -90,11 +96,11 @@ class ScoringWeights(BaseModel):
     faces: float = 0.0
 
 
-class DroneRules(BaseModel):
+class DroneRules(_Strict):
     min_height_m: float = 5.0
 
 
-class RejectionRules(BaseModel):
+class RejectionRules(_Strict):
     """Thresholds set from the measured distribution on the Sardinia set.
 
     Each description says what share of the 77 pooled Sardinia segments falls below the
@@ -120,7 +126,7 @@ class RejectionRules(BaseModel):
     max_clipped_fraction: float = 0.05
 
 
-class SelectionConfig(BaseModel):
+class SelectionConfig(_Strict):
     min_segment_seconds: float = 1.5
     target_duration_seconds: float = 3.0
     max_clips: int = 40
@@ -202,7 +208,7 @@ class SelectionConfig(BaseModel):
     )
 
 
-class TagLabel(BaseModel):
+class TagLabel(_Strict):
     """One zero-shot label and, when the group template reads badly, its own prompt."""
 
     label: str
@@ -213,7 +219,7 @@ class TagLabel(BaseModel):
     )
 
 
-class TagGroup(BaseModel):
+class TagGroup(_Strict):
     """Labels that are alternatives to each other, scored by one softmax.
 
     Groups exist because a drone shot over a beach is a beach and is aerial, and one
@@ -270,7 +276,7 @@ DEFAULT_TAG_GROUPS: tuple[TagGroup, ...] = (
 )
 
 
-class TagsConfig(BaseModel):
+class TagsConfig(_Strict):
     """Zero-shot labels, their groups and how confident a tag has to be to stick."""
 
     enabled: bool = True
@@ -304,7 +310,7 @@ class TagsConfig(BaseModel):
         return None
 
 
-class SimilarityWeights(BaseModel):
+class SimilarityWeights(_Strict):
     """Relative weight of each similarity signal. Placeholders until tuned on footage."""
 
     visual: float = 0.5
@@ -317,7 +323,7 @@ class SimilarityWeights(BaseModel):
     motion: float = 0.1
 
 
-class SimilarityConfig(BaseModel):
+class SimilarityConfig(_Strict):
     visual_semantic: bool = True
     visual_fallback: bool = True
     spatial: bool = True
@@ -342,7 +348,7 @@ EnergyBand = Literal["low", "mid", "high"]
 TimeOfDay = Literal["morning", "daytime", "evening", "night"]
 
 
-class GenreWhen(BaseModel):
+class GenreWhen(_Strict):
     """What has to be true of an edit for a genre row to apply.
 
     Every field is optional and an absent field is not a condition. A row with an empty
@@ -367,7 +373,7 @@ class GenreWhen(BaseModel):
     )
 
 
-class GenreRow(BaseModel):
+class GenreRow(_Strict):
     """One row of the genre table: when it applies and what it asks the model for."""
 
     name: str
@@ -536,7 +542,7 @@ DEFAULT_ALLOWED_SECTIONS: tuple[str, ...] = (
 )
 
 
-class TimeOfDayBands(BaseModel):
+class TimeOfDayBands(_Strict):
     """Hour ranges, local time, half open. Anything outside them is night."""
 
     morning: tuple[int, int] = (5, 9)
@@ -544,7 +550,7 @@ class TimeOfDayBands(BaseModel):
     evening: tuple[int, int] = (17, 21)
 
 
-class SoundtrackConfig(BaseModel):
+class SoundtrackConfig(_Strict):
     variants: int = Field(default=3, ge=1, le=5)
     bpm_tolerance: float = 3.0
     beat_multiples: list[int] = Field(
@@ -690,7 +696,7 @@ DEFAULT_INTIMATE_TO_CINEMATIC: tuple[str, ...] = (
 )
 
 
-class PlacesConfig(BaseModel):
+class PlacesConfig(_Strict):
     geocode: bool = Field(
         default=True,
         description="Reverse geocode place centroids through Nominatim, once each and "
@@ -706,7 +712,7 @@ class PlacesConfig(BaseModel):
     )
 
 
-class ExportConfig(BaseModel):
+class ExportConfig(_Strict):
     mode: CutMode = "precise"
     codec: Literal["libx264", "libx265", "h264_videotoolbox", "h264_vaapi"] = "libx264"
     crf: int = 18
@@ -755,7 +761,7 @@ class ExportConfig(BaseModel):
     )
 
 
-class RenderConfig(BaseModel):
+class RenderConfig(_Strict):
     """The optional finished file: the exported clips joined with the track.
 
     Off by default. SPEC.md section 2 keeps editing out of AutoCut, and this is the one
@@ -791,7 +797,7 @@ class RenderConfig(BaseModel):
 DescribeScope = Literal["candidates", "selected"]
 
 
-class ProvidersConfig(BaseModel):
+class ProvidersConfig(_Strict):
     cloud: bool = True
     vision_model: str = "google/gemini-2.5-flash"
     llm_model: str = "google/gemini-2.5-flash"
@@ -846,7 +852,7 @@ class ProvidersConfig(BaseModel):
     faces: bool = False
 
 
-class GuiConfig(BaseModel):
+class GuiConfig(_Strict):
     """Settings the window needs and the command line has no use for.
 
     In the core's configuration rather than in the GUI package because every tunable
@@ -938,7 +944,7 @@ class GuiConfig(BaseModel):
     )
 
 
-class CacheConfig(BaseModel):
+class CacheConfig(_Strict):
     dir: Path | None = Field(default=None, description="Defaults to the platform cache dir.")
     models_dir: Path | None = Field(
         default=None,
@@ -949,7 +955,7 @@ class CacheConfig(BaseModel):
     )
 
 
-class AutocutConfig(BaseModel):
+class AutocutConfig(_Strict):
     """Root configuration model."""
 
     analysis: AnalysisConfig = AnalysisConfig()

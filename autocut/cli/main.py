@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import json
 import sys
+import tomllib
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
+import pydantic
 import typer
 from rich.console import Console
 from rich.progress import (
@@ -48,7 +50,8 @@ from autocut.core.events import ProgressEvent
 from autocut.core.export import export_clips
 from autocut.core.ffmpeg_cmd import ExportOverrides
 from autocut.core.ingest import ingest
-from autocut.core.manifest import Manifest, ManifestVersionError
+from autocut.core.manifest import Manifest
+from autocut.core.probe import ToolMissingError
 from autocut.core.providers import clear_key, cloud_enabled, find_key, set_key
 from autocut.core.providers.openrouter import OpenRouterProvider
 from autocut.core.render import RenderResult, render_edit
@@ -83,8 +86,20 @@ def _load_config(path: Path | None, no_cloud: bool = False) -> AutocutConfig:
     The flag is applied here rather than at each call site so it means the same thing
     everywhere: this run reaches no provider. On a command that makes no provider call
     it still has an effect worth having, since ``doctor`` then reports the run as it is.
+
+    An explicit ``--config`` path that does not exist is refused: a typo should not
+    silently fall back to defaults. No ``--config`` and no ``autocut.toml`` in the
+    working directory is not an error, and keeps loading the defaults as before.
     """
-    config = AutocutConfig.load(path or Path("autocut.toml"))
+    resolved = path or Path("autocut.toml")
+    if path is not None and not resolved.exists():
+        console.print(f"[red]Configuration not found[/red]: {resolved}")
+        raise typer.Exit(code=1)
+    try:
+        config = AutocutConfig.load(resolved)
+    except (OSError, tomllib.TOMLDecodeError, pydantic.ValidationError) as error:
+        console.print(f"[red]Cannot read the configuration[/red] {resolved}: {_one_line(error)}")
+        raise typer.Exit(code=1) from None
     if no_cloud:
         config.providers.cloud = False
     return config
@@ -139,7 +154,11 @@ def analyze(
             name = event.path.name if event.path else ""
             progress.update(task, completed=event.current, total=event.total, description=name)
 
-        files = ingest(list(sources), cfg, on_event)
+        try:
+            files = ingest(list(sources), cfg, on_event)
+        except ToolMissingError as error:
+            console.print(f"[red]Missing tool[/red]: {error}")
+            raise typer.Exit(code=1) from None
 
     if not files:
         console.print("[red]No video files found[/red] in the given source folders.")
@@ -213,12 +232,26 @@ def analyze(
 
 
 def _load_manifest(path: Path) -> Manifest:
-    """Load a manifest, reporting a refused newer schema as one line instead of a traceback."""
+    """Load a manifest, reporting an unreadable file as one line instead of a traceback.
+
+    ``ManifestVersionError``, ``json.JSONDecodeError`` and ``pydantic.ValidationError``
+    are all ``ValueError``, so one guard covers a refused newer schema, invalid JSON and
+    a manifest that fails validation alike.
+    """
     try:
         return Manifest.load(path)
-    except ManifestVersionError as error:
-        console.print(f"[red]Cannot open the project[/red]: {error}")
+    except (OSError, ValueError) as error:
+        console.print(f"[red]Cannot open the project[/red]: {_one_line(error)}")
         raise typer.Exit(code=1) from None
+
+
+def _one_line(error: Exception) -> str:
+    """The first line of an error's message, so a multi-line pydantic report stays one line."""
+    text = str(error).strip()
+    first = text.splitlines()[0] if text else ""
+    if isinstance(error, pydantic.ValidationError):
+        return f"{first} ({error.error_count()} error{'s' if error.error_count() != 1 else ''})"
+    return first
 
 
 def _open_manifest(out: Path, sources: list[Path], cfg: AutocutConfig) -> Manifest:
@@ -877,7 +910,11 @@ def export(
             name = event.path.name if event.path else ""
             progress.update(task, completed=event.current, total=event.total, description=name)
 
-        result = export_clips(manifest, cfg, on_event, overrides)
+        try:
+            result = export_clips(manifest, cfg, on_event, overrides)
+        except ToolMissingError as tool_error:
+            console.print(f"[red]Missing tool[/red]: {tool_error}")
+            raise typer.Exit(code=1) from None
 
     manifest.updated_at = datetime.now(UTC)
     manifest.save(project / "manifest.json")

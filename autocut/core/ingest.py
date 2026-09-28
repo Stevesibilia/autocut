@@ -23,7 +23,7 @@ from autocut.core.classify import classify
 from autocut.core.config import AutocutConfig
 from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
 from autocut.core.manifest import SourceFile, TelemetryKind
-from autocut.core.probe import probe_file
+from autocut.core.probe import probe_file, require_tools
 from autocut.core.telemetry import TelemetrySeries, detect_telemetry
 
 ACCEPTED_EXTENSIONS = frozenset({".mp4", ".mov", ".mkv", ".avi", ".m4v", ".insv"})
@@ -180,12 +180,16 @@ def ingest(
     progress(ProgressEvent(stage="scan", current=total, total=total))
     if not scanned:
         return []
+    require_tools("ffprobe", "ffmpeg")
 
     workers = max(1, config.analysis.workers or physical_cores())
     results: dict[Path, SourceFile] = {}
     if workers == 1 or total == 1:
         for index, item in enumerate(scanned, start=1):
-            results[item.path] = ingest_file(item, config)
+            try:
+                results[item.path] = ingest_file(item, config)
+            except Exception as exc:  # noqa: BLE001 - becomes this file's error, see decision 2
+                results[item.path] = _failed_source(item, exc)
             progress(ProgressEvent(stage="probe", current=index, total=total, path=item.path))
     else:
         context = multiprocessing.get_context("spawn")
@@ -193,10 +197,21 @@ def ingest(
             futures = {pool.submit(ingest_file, item, config): item for item in scanned}
             for index, future in enumerate(as_completed(futures), start=1):
                 item = futures[future]
-                results[item.path] = future.result()
+                try:
+                    results[item.path] = future.result()
+                except Exception as exc:  # noqa: BLE001 - see decision 2
+                    results[item.path] = _failed_source(item, exc)
                 progress(ProgressEvent(stage="probe", current=index, total=total, path=item.path))
 
     return sorted(results.values(), key=_chronological_key)
+
+
+def _failed_source(item: ScannedFile, exc: Exception) -> SourceFile:
+    return SourceFile(
+        id=cache_key(item.path) or f"path:{item.path}",
+        path=item.path,
+        error=f"worker failed: {exc}",
+    )
 
 
 def _chronological_key(source: SourceFile) -> tuple[datetime, str]:

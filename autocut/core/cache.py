@@ -19,8 +19,10 @@ decode and stay valid, so a model change must not throw them away.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -130,6 +132,8 @@ def read_entry(file_key: str, config: AutocutConfig, sprites: bool = True) -> Ca
             arrays = {name: payload[name] for name in ARRAY_NAMES if name in payload}
             thumbs = payload.get("thumb_frames")
             embeddings = payload.get("embeddings")
+            npz_token_array = payload.get("write_token")
+            npz_token = str(npz_token_array.item()) if npz_token_array is not None else None
             strips = (
                 [
                     payload[name]
@@ -141,9 +145,16 @@ def read_entry(file_key: str, config: AutocutConfig, sprites: bool = True) -> Ca
                 if sprites
                 else []
             )
-    except (OSError, ValueError, KeyError, json.JSONDecodeError):
+    except Exception:  # noqa: BLE001 - any unreadable entry is a miss by contract, see decision 5
         return None
     if meta.get("analysis_schema_version") != ANALYSIS_SCHEMA_VERSION:
+        return None
+    if meta.get("file_key") != file_key:
+        return None
+    json_token = meta.get("write_token")
+    if (npz_token is None) != (json_token is None):
+        return None
+    if npz_token is not None and json_token is not None and npz_token != json_token:
         return None
     embedding_model = meta.get("embedding_model")
     if embedding_model != config.providers.embedding_model:
@@ -164,10 +175,18 @@ def read_entry(file_key: str, config: AutocutConfig, sprites: bool = True) -> Ca
 
 
 def write_entry(entry: CacheEntry, config: AutocutConfig) -> Path:
-    """Write an entry atomically and return the arrays path."""
+    """Write an entry atomically and return the arrays path.
+
+    The arrays file and the metadata file are written under one shared write token
+    (decision 5), so a reader that sees them written by two different calls, such as
+    two processes racing on the same key, can tell and treat the entry as a miss
+    instead of pairing new arrays with old metadata or the reverse.
+    """
     arrays_path = entry_path(entry.file_key, config)
     meta_path = arrays_path.with_suffix(".json")
+    token = uuid.uuid4().hex
     payload: dict[str, np.ndarray] = dict(entry.arrays)
+    payload["write_token"] = np.array(token)
     if entry.thumb_frames is not None:
         payload["thumb_frames"] = entry.thumb_frames
     if entry.embeddings is not None:
@@ -175,8 +194,9 @@ def write_entry(entry: CacheEntry, config: AutocutConfig) -> Path:
     for index, sprite in enumerate(entry.sprites):
         payload[f"sprite_{index}"] = sprite
 
-    tmp_arrays = arrays_path.with_suffix(".npz.tmp")
-    tmp_meta = meta_path.with_suffix(".json.tmp")
+    # PID qualified, so two writers on the same key never share a temporary file.
+    tmp_arrays = arrays_path.with_name(f"{arrays_path.stem}.{os.getpid()}.npz.tmp")
+    tmp_meta = meta_path.with_name(f"{meta_path.stem}.{os.getpid()}.json.tmp")
     with tmp_arrays.open("wb") as handle:
         # The stub types the second positional parameter as "allow_pickle", so the
         # keyword-array form has to be spelled out for the type checker.
@@ -194,6 +214,7 @@ def write_entry(entry: CacheEntry, config: AutocutConfig) -> Path:
                 "telemetry": entry.telemetry,
                 "probe": entry.probe,
                 "warnings": entry.warnings,
+                "write_token": token,
             },
             indent=2,
         ),
@@ -227,7 +248,12 @@ def cache_stats(config: AutocutConfig) -> CacheStats:
 
 
 def prune(config: AutocutConfig, older_than_days: float) -> int:
-    """Delete entries not modified for ``older_than_days``. Returns the count removed."""
+    """Delete entries not modified for ``older_than_days``. Returns the count removed.
+
+    Also sweeps orphaned metadata files (an interrupted write, or a since-deleted
+    arrays file) and leftover ``.tmp`` files, when they are old enough too. Neither
+    counts toward the returned total, which stays the number of entries removed.
+    """
     directory = cache_dir(config)
     cutoff = time.time() - older_than_days * 86400
     removed = 0
@@ -237,6 +263,20 @@ def prune(config: AutocutConfig, older_than_days: float) -> int:
         arrays_path.unlink(missing_ok=True)
         arrays_path.with_suffix(".json").unlink(missing_ok=True)
         removed += 1
+
+    remaining_stems = {path.stem for path in directory.glob("*.npz")}
+    for meta_path in sorted(directory.glob("*.json")):
+        if meta_path.stem in remaining_stems:
+            continue
+        if meta_path.stat().st_mtime >= cutoff:
+            continue
+        meta_path.unlink(missing_ok=True)
+
+    for tmp_path in sorted(directory.glob("*.tmp")):
+        if tmp_path.stat().st_mtime >= cutoff:
+            continue
+        tmp_path.unlink(missing_ok=True)
+
     return removed
 
 

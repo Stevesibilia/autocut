@@ -492,8 +492,11 @@ Levers, by impact:
 
   Hardware decode is a lever only where it measures as one. On the AMD iGPU it is not: sampling one 4K clip at 2 fps measured 3.9 s in software against 9.0 s through VAAPI, and 5.7 s with a full GPU filter chain. At this sample rate most of the work is skipping frames rather than decoding them, and every decoded surface still crosses back to system memory, so VAAPI has to be asked for by name. The macOS figure is the one that matters for the 100 GB target and is still to be measured on the M4.
 
-- **Parallel files** with `ProcessPoolExecutor` sized on physical cores.
+- **Parallel files**, sized on physical cores: analysis uses a `ProcessPoolExecutor`, because decoding, shot detection and the metrics are CPU bound; ingest and export use a `ThreadPoolExecutor`, because their workers mostly wait on a subprocess (ffprobe, a subtitle extract, ffmpeg) and gain nothing from a separate interpreter that would only re-import numpy, cv2 and pydantic per worker.
 - **Global cache.**
+- **One probe per file** (issue #82). Analysis takes dimensions, rotation, duration, frame rate and streams from the probe ingest already ran, through `probe_from_source`, instead of running `ffprobe` on the file a second time.
+- **One copy of the sampled frames** (issue #82). `read_frames` decodes straight into one growing array instead of a list of byte chunks later joined and reshaped, and motion and content differences are computed between consecutive frames rather than by stacking every frame as float64 at once. Together these hold one copy of a file's sampled frames in memory instead of about seventeen, bounding a long 4K file's analysis worker to a small constant over the size of its sampled frames rather than tens of gigabytes.
+- **A selection entry cache** (issue #82). Re-selection reads every candidate's analysis cache entry and recomputes its visual hashes on every run, which is what the review sliders trigger on every move. `read_entry_cached` keeps up to `cache.memory_entries` recently read entries in memory, read-only, keyed on each file's `stat` so a rewritten or deleted entry is read again; `CacheEntry.derived` memoises the perceptual hash and color histogram per entry so repeated re-selection over an unchanged project computes them once.
 
 ## 13. Packaging and distribution
 

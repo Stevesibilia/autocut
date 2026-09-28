@@ -8,6 +8,7 @@ All notable changes to this project are documented in this file. The format foll
 
 - Python floor raised to 3.12, every dependency floor raised to the newest release at least 5 days old, and a generated `constraints.txt` now pins every transitive version for the venv, Docker images and CI (ADR 11).
 - `scenedetect` moves from a core dependency to the optional `scenedetect` extra: the default install carries a single `cv2` distribution, `opencv-python-headless` (ADR 11).
+- Analysis reuses the probe ingest already ran instead of a second `ffprobe`; ingest and export run their subprocess-bound workers on threads instead of a process per file; sampled frames decode into one growing array and motion and content differences are computed pairwise, holding one copy of a file's sampled frames instead of about seventeen; and selection keeps recently read cache entries in memory, read-only, with their visual hashes memoised, sized by the new `cache.memory_entries` (issue #82).
 
 ### Removed
 

@@ -81,7 +81,13 @@ def detect_shots(
 
 def detect_shots_pyscenedetect(path: Path, threshold: float, min_len_frames: int) -> list[Bounds]:
     """Shot bounds from PySceneDetect, decoding the file itself. Validation path only."""
-    from scenedetect import ContentDetector, detect  # noqa: PLC0415
+    try:
+        from scenedetect import ContentDetector, detect  # noqa: PLC0415
+    except ImportError as exc:
+        raise RuntimeError(
+            'analysis.detector = "pyscenedetect" needs the scenedetect extra: '
+            "pip install 'autocut[scenedetect]'"
+        ) from exc
 
     scenes = detect(
         str(path),

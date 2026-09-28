@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -10,7 +11,12 @@ import pytest
 from autocut.core.config import AutocutConfig
 from autocut.core.probe import probe_file
 from autocut.core.sampler import sample_frames
-from autocut.core.segment import apply_trims, detect_shots, split_on_altitude
+from autocut.core.segment import (
+    apply_trims,
+    detect_shots,
+    detect_shots_pyscenedetect,
+    split_on_altitude,
+)
 
 
 def frames_from(values: list[int], size: int = 32) -> np.ndarray:
@@ -68,6 +74,12 @@ def test_middle_spans_are_untouched() -> None:
     config = AutocutConfig()
     trimmed = apply_trims([(0.0, 5.0), (5.0, 10.0), (10.0, 20.0)], 20.0, "drone", config)
     assert trimmed == [(1.0, 5.0), (5.0, 10.0), (10.0, 19.0)]
+
+
+def test_pyscenedetect_without_the_extra_names_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "scenedetect", None)
+    with pytest.raises(RuntimeError, match="scenedetect"):
+        detect_shots_pyscenedetect(Path("unused.mp4"), 0.30, 30)
 
 
 @pytest.mark.ffmpeg

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import Any
 
 from PySide6.QtCore import (
     QAbstractListModel,
@@ -55,7 +55,7 @@ class SegmentRole:
 
 
 #: Qt hands a view's model either kind of index, and an override has to accept both.
-AnyIndex: TypeAlias = QModelIndex | QPersistentModelIndex
+type AnyIndex = QModelIndex | QPersistentModelIndex
 
 #: Qt calls ``rowCount`` with no argument to mean the root, and the default has to be
 #: an index object. One instance, because an invalid index carries no state.

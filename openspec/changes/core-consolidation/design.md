@@ -67,6 +67,16 @@ Rejected: changing to the last stderr line. Nothing showed the first line to be 
 
 Module constants go away. Where a function has no config in reach (`decode_audio`, the dji adapter, `hwaccel.select`), its `timeout_s` keyword defaults to a module-level `_TIMEOUTS = TimeoutsConfig()`, the pattern `metrics.py` already uses with `_DEFAULTS`, and callers that have a config pass `config.timeouts.<name>`. `HASH_BITS = 64` and the colorfulness constant `0.3` stay: the first is fixed by the 8x8 hash structure, the second is part of the Hasler-Süsstrunk formula. Add a one-line comment saying so at each. Document every new field in `autocut.example.toml`.
 
+Amended at review of part A:
+
+- `classify` takes a keyword `high_fps_threshold` rather than a whole config.
+- `color_histogram` takes `bins`, and the select helpers that call it gained a `config` parameter.
+- `montage.concat_montage` and `render.check_parts_uniform` take a `timeout_s`.
+- `export_one` receives `config.timeouts.export_clip_s` from `_run`, and the ffprobe helpers receive `config.timeouts.ffprobe_s` from `render_edit` and `build_montage`. These were first left on their module defaults and threaded at review, because a field that config cannot change misleads.
+- `export_one` now removes the output file when ffmpeg is missing as well as on a timeout, because `ToolRun` reports both as `error`.
+- The doctor tests patch `proc.subprocess.run`, since the call moved.
+- The GUI's `decode_audio` call stays on the module default until part B.
+
 **3. Small cleanups.** Remove the `config` parameter from `ingest.scan` and update its callers.
 
 ### Part B

@@ -266,6 +266,51 @@ def test_restart_goes_back_to_the_first_clip(player: MontagePlayer, qtbot: Any) 
     assert wait_for(qtbot, lambda: player.position_s() < 1.0)
 
 
+def test_stop_is_queued_and_lands_on_the_next_turn(
+    player: MontagePlayer, qtbot: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The native stop never runs under the GIL (gui-worker-offload decision 7)."""
+    from autocut.gui.widgets.media import spin_event_loop
+
+    sink = QVideoSink()
+    player.set_video_output(sink)
+    assert player.play()
+    native = player._player
+    assert native is not None
+    assert wait_for(
+        qtbot, lambda: native.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+    )
+    direct: list[int] = []
+    monkeypatch.setattr(native, "stop", lambda: direct.append(1))
+
+    player.stop()
+
+    assert direct == []
+    assert native.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+    spin_event_loop()
+    assert native.playbackState() == QMediaPlayer.PlaybackState.StoppedState
+
+
+def test_play_straight_after_stop_is_not_undone(player: MontagePlayer, qtbot: Any) -> None:
+    """Stop and Play in one turn: the queued stop runs first, not on the new playback."""
+    from autocut.gui.widgets.media import spin_event_loop
+
+    sink = QVideoSink()
+    player.set_video_output(sink)
+    assert player.play()
+    native = player._player
+    assert native is not None
+    assert wait_for(
+        qtbot, lambda: native.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+    )
+
+    player.stop()
+    assert player.play()
+    spin_event_loop()
+
+    assert native.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+
+
 def test_the_player_starts_muted_and_the_toggle_works(player: MontagePlayer) -> None:
     """Every clip is silent in the export; the montage's sound is the track's."""
     assert player._audio is not None

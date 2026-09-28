@@ -39,6 +39,7 @@ from autocut.core.manifest import Segment
 from autocut.gui import theme
 from autocut.gui.models import clock_label
 from autocut.gui.state import ProjectState
+from autocut.gui.widgets.media import NativeStop
 from autocut.gui.widgets.scrubber import StripCache
 from autocut.gui.widgets.video import checked_video_output
 
@@ -278,6 +279,7 @@ class PreviewPanel(QWidget):
         layout.addWidget(self.note)
 
         self._player: QMediaPlayer | None = None
+        self._stopper = NativeStop(self)
         #: What the player renders into, kept so `play` can reattach after a `stop`.
         self._output: Any | None = None
         self._audio: Any | None = None
@@ -443,6 +445,8 @@ class PreviewPanel(QWidget):
         if not path.exists():
             self.note.setText(f"{path} is not where the manifest says it is.")
             return False
+        # A stop still queued from this turn would otherwise land on the new playback.
+        self._stopper.settle()
         player = self._build_player(checked_video_output(video_output, "PreviewPanel.play"))
         if player is None:
             return False
@@ -478,16 +482,19 @@ class PreviewPanel(QWidget):
     def stop(self) -> None:
         """Back to the strip at the in point, ready to play the clip again.
 
-        Paused before it is stopped, and the output detached after. On macOS with the
+        Paused, the output detached, and the stop itself queued. On macOS with the
         ffmpeg backend `stop()` alone left the last frame on the native layer, so the
-        user pressed Stop, the button worked, and nothing on screen changed.
+        user pressed Stop, the button worked, and nothing on screen changed. The stop
+        runs from the event loop rather than here, because a direct one could freeze
+        the window for good (`widgets.media` says how); the player is paused and
+        detached until then.
         """
         # First line in the slot: a report that says "nothing happened on Stop" has to
         # be able to distinguish a slot that never ran from a layer that would not go.
         logger.info("stop pressed for %s, player %s", self._segment_id, self._player is not None)
         if self._player is not None:
             self._player.pause()
-            self._player.stop()
+            self._stopper.request(self._player)
             self._player.setVideoOutput(None)  # type: ignore[arg-type]
         self.playing_segment_id = ""
         self.show_strip()
@@ -536,7 +543,11 @@ class PreviewPanel(QWidget):
         logger.debug("media status %s for %s", status, self._segment_id)
 
         if status in self._ready_states():
-            self._start_playing()
+            # Only for a Play that is waiting on the load. A stop drops the media back
+            # to LoadedMedia too, and it now arrives after `stop` has cleared the clip,
+            # so without this the queued stop would start the clip again.
+            if self.playing_segment_id:
+                self._start_playing()
         elif status == QMediaPlayer.MediaStatus.EndOfMedia:
             # The file ran out before the out point, which happens when a segment's
             # bounds came from a manifest written against a longer file. Saying so
@@ -610,7 +621,7 @@ class PreviewPanel(QWidget):
     def _abandon_playback(self) -> None:
         """Give up on the video: strip in front, output detached, buttons consistent."""
         if self._player is not None:
-            self._player.stop()
+            self._stopper.request(self._player)
             self._player.setVideoOutput(None)  # type: ignore[arg-type]
         self.show_strip()
         self.playing_segment_id = ""

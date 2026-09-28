@@ -24,6 +24,10 @@ All notable changes to this project are documented in this file. The format foll
 - `autocut.toml` now rejects an unknown key and an out-of-range value at any level. An explicit `--config` path that does not exist, an unreadable or invalid configuration file, and an unreadable or invalid manifest each fail with one line and exit status 1 instead of a traceback.
 - A failed or timed-out export could leave a partial clip at the output path, where the next run would mistake it for a finished one. The clip is now removed on any encode failure.
 - Loading a manifest that needs a migration now copies the original file to `manifest.v<N>.json.bak` before the first migration step runs.
+- The window no longer freezes while the Soundtrack screen refines the prompt with a hosted model or measures a track: the request and the beat tracking run on the worker thread, and the screen updates when they finish. Generating without the cloud stays immediate. A genre or BPM change made while a generation runs is applied once afterwards instead of reporting that a stage is still running.
+- The export summary uses a folder size measured by the export worker, so finishing an export no longer walks the selects folder on the UI thread.
+- Closing the window during a stage no longer blocks for up to 70 seconds or saves the manifest while the worker is still writing it. The stage is cancelled, the window stays open with a message, and it closes by itself once the current file is done. `ProjectState.close_project` now returns whether it closed, and gives up without saving when the stage does not stop within `gui.close_wait_ms` (5000).
+- Finished worker threads are deleted instead of staying parented to the project state for the rest of the session.
 
 ## [0.5.0] - 2026-09-28
 

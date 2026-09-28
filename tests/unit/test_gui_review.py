@@ -839,6 +839,7 @@ def test_play_all_renders_once_and_plays(real_state: ProjectState, qtbot: Any) -
     with qtbot.waitSignal(real_state.stage_finished, timeout=180_000) as blocker:
         assert screen.play_all()
 
+    assert real_state.wait_for_stage(30_000)
     assert blocker.args == ["montage"]
     assert screen.stack.currentWidget() is screen.montage
     assert len(screen.montage.parts) == 3
@@ -876,6 +877,7 @@ def test_rejecting_while_playing_hits_the_clip_on_screen(
     qtbot.addWidget(screen)
     with qtbot.waitSignal(real_state.stage_finished, timeout=180_000):
         screen.play_all()
+    assert real_state.wait_for_stage(30_000)
     playing = screen.montage.parts[1].segment_id
     # The grid cursor is somewhere else on purpose.
     screen.grid.select_segment(screen.montage.parts[0].segment_id)
@@ -901,6 +903,7 @@ def test_a_decision_makes_the_montage_stale(real_state: ProjectState, qtbot: Any
     qtbot.addWidget(screen)
     with qtbot.waitSignal(real_state.stage_finished, timeout=180_000):
         screen.play_all()
+    assert real_state.wait_for_stage(30_000)
     assert real_state.montage_is_current(None)
 
     screen.grid.select_segment(screen.montage.parts[0].segment_id)
@@ -916,6 +919,7 @@ def test_play_all_again_after_a_decision_rebuilds(real_state: ProjectState, qtbo
     qtbot.addWidget(screen)
     with qtbot.waitSignal(real_state.stage_finished, timeout=180_000):
         screen.play_all()
+    assert real_state.wait_for_stage(30_000)
     first = Path(real_state.manifest.preview.path)  # type: ignore[arg-type]
     # The montage is on screen, so a decision applies to the clip playing, which is
     # the first one: that is the behaviour this screen is built around.

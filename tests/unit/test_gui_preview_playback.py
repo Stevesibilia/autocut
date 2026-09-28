@@ -501,18 +501,30 @@ def test_the_video_page_is_realised_before_the_source_is_set(
     assert order[:2] == ["show video", "set source"], order
 
 
-def test_stop_pauses_before_it_stops(panel: PreviewPanel, qtbot: Any) -> None:
-    """`stop()` alone left the last frame on the native layer on macOS."""
-    del qtbot
-    assert panel.play()
-    assert panel._player is not None
+def test_stop_pauses_detaches_and_queues_the_native_stop(panel: PreviewPanel, qtbot: Any) -> None:
+    """`stop()` alone left the last frame on the native layer on macOS, and a direct
+    native stop can deadlock against the audio renderer (gui-worker-offload decision 7).
+    """
+    from autocut.gui.widgets.media import spin_event_loop
+
+    sink = QVideoSink()
+    assert panel.play(video_output=sink)
+    player = panel._player
+    assert player is not None
+    assert wait_for(
+        qtbot, lambda: player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+    )
     calls: list[str] = []
-    panel._player.pause = lambda: calls.append("pause")  # type: ignore[method-assign]
-    panel._player.stop = lambda: calls.append("stop")  # type: ignore[method-assign]
+    pause = player.pause
+    player.pause = lambda: (calls.append("pause"), pause())  # type: ignore[method-assign]
+    player.stop = lambda: calls.append("direct stop")  # type: ignore[method-assign]
 
     panel.stop()
 
-    assert calls == ["pause", "stop"]
+    assert calls == ["pause"]
+    assert player.videoOutput() is None
+    spin_event_loop()
+    assert player.playbackState() == QMediaPlayer.PlaybackState.StoppedState
 
 
 def test_the_playback_sequence_is_logged_for_a_mac_terminal(

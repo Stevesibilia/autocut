@@ -116,12 +116,16 @@ def stop_media_players() -> Iterator[None]:
     application = QApplication.instance()
     if application is None:
         return
+    from autocut.gui.widgets.media import spin_event_loop
     from autocut.gui.widgets.montage import MontagePlayer
     from autocut.gui.widgets.preview import PreviewPanel
 
     for widget in application.allWidgets():
         if isinstance(widget, PreviewPanel | MontagePlayer):
             widget.stop()
+    # The stops are queued (widgets.media), so they have not happened yet. One turn of
+    # the loop runs them, with the GIL released, before the widgets are collected.
+    spin_event_loop()
 
 
 @pytest.fixture(autouse=True)

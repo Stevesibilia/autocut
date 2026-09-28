@@ -40,6 +40,16 @@ def screen(qtbot: Any, tmp_path: Path) -> SoundtrackScreen:
     return widget
 
 
+def load(screen: SoundtrackScreen, qtbot: Any, path: Path) -> bool:
+    """Load a track on the worker and wait until the screen shows it, or why not."""
+    with qtbot.waitSignal(screen.track_loaded, timeout=30_000) as blocker:
+        assert screen.load_track(path)
+    # The signal comes from the completion handler while the thread may still be
+    # winding down, and the next stage is refused until it has.
+    assert screen._state.wait_for_stage(10_000)
+    return bool(blocker.args[0])
+
+
 # --- the prompt blocks --------------------------------------------------------
 
 
@@ -312,12 +322,12 @@ def test_the_refinement_note_says_why_it_is_off(screen: SoundtrackScreen) -> Non
 
 @pytest.mark.ffmpeg
 def test_loading_the_click_fixture_measures_and_draws_it(
-    screen: SoundtrackScreen, synthetic_dir: Path
+    screen: SoundtrackScreen, synthetic_dir: Path, qtbot: Any
 ) -> None:
     manifest = screen._state.manifest
     assert manifest is not None
 
-    assert screen.load_track(synthetic_dir / CLICK)
+    assert load(screen, qtbot, synthetic_dir / CLICK)
 
     assert "measured 120 bpm" in screen.track_label.text()
     assert screen.waveform.beat_count > 20
@@ -328,14 +338,14 @@ def test_loading_the_click_fixture_measures_and_draws_it(
 
 @pytest.mark.ffmpeg
 def test_the_comparison_warns_and_offers_the_proposed_bpm(
-    screen: SoundtrackScreen, synthetic_dir: Path
+    screen: SoundtrackScreen, synthetic_dir: Path, qtbot: Any
 ) -> None:
     """The drifted scenario: both numbers shown, and the override field offers the fix."""
     manifest = screen._state.manifest
     assert manifest is not None
     manifest.soundtrack.proposed_bpm = 126.0
 
-    screen.load_track(synthetic_dir / CLICK)
+    load(screen, qtbot, synthetic_dir / CLICK)
 
     assert manifest.soundtrack.comparison == "drifted"
     assert "126" in screen.comparison_label.text()
@@ -344,13 +354,13 @@ def test_the_comparison_warns_and_offers_the_proposed_bpm(
 
 @pytest.mark.ffmpeg
 def test_a_half_tempo_reading_pre_fills_the_override(
-    screen: SoundtrackScreen, synthetic_dir: Path
+    screen: SoundtrackScreen, synthetic_dir: Path, qtbot: Any
 ) -> None:
     manifest = screen._state.manifest
     assert manifest is not None
     manifest.soundtrack.proposed_bpm = 240.0
 
-    screen.load_track(synthetic_dir / CLICK)
+    load(screen, qtbot, synthetic_dir / CLICK)
 
     assert manifest.soundtrack.comparison == "half"
     assert screen.override_field.value() == pytest.approx(240.0)
@@ -359,9 +369,9 @@ def test_a_half_tempo_reading_pre_fills_the_override(
 
 @pytest.mark.ffmpeg
 def test_the_override_is_what_apply_would_use(
-    screen: SoundtrackScreen, synthetic_dir: Path
+    screen: SoundtrackScreen, synthetic_dir: Path, qtbot: Any
 ) -> None:
-    screen.load_track(synthetic_dir / CLICK)
+    load(screen, qtbot, synthetic_dir / CLICK)
 
     screen.override_field.setValue(100.0)
 
@@ -371,11 +381,11 @@ def test_the_override_is_what_apply_would_use(
 
 @pytest.mark.ffmpeg
 def test_the_preview_shows_the_distribution_without_syncing(
-    screen: SoundtrackScreen, synthetic_dir: Path
+    screen: SoundtrackScreen, synthetic_dir: Path, qtbot: Any
 ) -> None:
     manifest = screen._state.manifest
     assert manifest is not None
-    screen.load_track(synthetic_dir / CLICK)
+    load(screen, qtbot, synthetic_dir / CLICK)
 
     text = screen.distribution_label.text()
 
@@ -393,7 +403,7 @@ def test_apply_sync_sets_the_final_bounds_and_the_beat_map(
     state = screen._state
     manifest = state.manifest
     assert manifest is not None
-    screen.load_track(synthetic_dir / CLICK)
+    load(screen, qtbot, synthetic_dir / CLICK)
     synced: list[int] = []
     screen.synced.connect(lambda: synced.append(1))
 
@@ -417,7 +427,7 @@ def test_apply_records_the_override(
     state = screen._state
     manifest = state.manifest
     assert manifest is not None
-    screen.load_track(synthetic_dir / CLICK)
+    load(screen, qtbot, synthetic_dir / CLICK)
     screen.override_field.setValue(124.0)
 
     with qtbot.waitSignal(state.stage_finished, timeout=30_000):
@@ -430,14 +440,144 @@ def test_apply_records_the_override(
 
 
 @pytest.mark.ffmpeg
-def test_a_track_that_will_not_decode_says_so(screen: SoundtrackScreen, tmp_path: Path) -> None:
+def test_a_track_that_will_not_decode_says_so(
+    screen: SoundtrackScreen, tmp_path: Path, qtbot: Any
+) -> None:
+    """The reason goes in the track label: an undecodable file is not a failed stage."""
     broken = tmp_path / "broken.wav"
     broken.write_bytes(b"not audio")
+    errors: list[str] = []
+    screen._state.error.connect(errors.append)
 
-    assert screen.load_track(broken) is False
+    assert load(screen, qtbot, broken) is False
 
     assert "could not decode" in screen.track_label.text()
     assert not screen.apply_button.isEnabled()
+    assert errors == []
+
+
+def test_loading_a_track_runs_on_the_worker(
+    screen: SoundtrackScreen, tmp_path: Path, qtbot: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Beat tracking a song takes seconds, which the window must not spend frozen."""
+    import threading
+
+    from autocut.core.beatsync import Track
+    from autocut.gui.screens import soundtrack as module
+
+    gate = threading.Event()
+    threads: list[threading.Thread] = []
+
+    def decode(_path: Path) -> np.ndarray:
+        threads.append(threading.current_thread())
+        assert gate.wait(10.0)
+        return np.zeros(22_050, dtype=np.float32)
+
+    monkeypatch.setattr(module, "decode_audio", decode)
+    monkeypatch.setattr(
+        module, "measure_track", lambda _samples: Track(bpm=120.0, beats_s=[0.5], duration_s=1.0)
+    )
+    audio = tmp_path / "song.wav"
+    audio.write_bytes(b"pretend")
+    state = screen._state
+
+    with qtbot.waitSignal(screen.track_loaded, timeout=10_000) as blocker:
+        assert screen.load_track(audio)
+        assert state.is_running
+        assert not screen.load_button.isEnabled()
+        gate.set()
+
+    assert blocker.args == [True]
+    assert threads and threads[0] is not threading.main_thread()
+    assert state.manifest is not None
+    assert state.manifest.soundtrack.audio_path == audio
+    assert "measured 120 bpm" in screen.track_label.text()
+    assert state.wait_for_stage(10_000)
+
+
+class BlockingProvider:
+    """A hosted text model that answers each call when the test says so, and fails."""
+
+    model = "fake/blocking"
+
+    def __init__(self) -> None:
+        import threading
+
+        self.gates = [threading.Event() for _ in range(3)]
+        self.calls = 0
+
+    def complete_text(self, system: str, user: str) -> object:
+        from autocut.core.providers import ProviderError
+
+        gate = self.gates[self.calls]
+        self.calls += 1
+        assert gate.wait(10.0)
+        return ProviderError(message="offline in the test")
+
+
+def unprompted(qtbot: Any, tmp_path: Path) -> SoundtrackScreen:
+    state = reviewable(tmp_path, tmp_path / "edit")
+    widget = SoundtrackScreen(state)
+    qtbot.addWidget(widget)
+    return widget
+
+
+def test_generating_with_a_hosted_model_runs_on_the_worker(
+    qtbot: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scenario from the spec: the request is made off the UI thread."""
+    screen = unprompted(qtbot, tmp_path)
+    provider = BlockingProvider()
+    monkeypatch.setattr(screen, "_provider", lambda: provider)
+    state = screen._state
+
+    assert screen.generate() is True
+
+    assert state.is_running
+    assert screen.variant_box.count() == 0
+    with qtbot.waitSignal(state.stage_finished, timeout=10_000) as blocker:
+        provider.gates[0].set()
+    assert blocker.args == ["soundtrack"]
+    assert state.wait_for_stage(10_000)
+
+    assert provider.calls == 1
+    assert screen.variant_box.count() > 0
+    assert state.manifest is not None
+    assert state.manifest.soundtrack.refinement == "failed"
+    assert "Refinement failed" in screen.refine_note.text()
+
+
+def test_genre_changes_during_a_generation_regenerate_once(
+    qtbot: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two turns of the genre box while the model answers: one more run, no error."""
+    screen = unprompted(qtbot, tmp_path)
+    assert screen.generate()  # local: the variants the genre box needs to regenerate
+    provider = BlockingProvider()
+    monkeypatch.setattr(screen, "_provider", lambda: provider)
+    state = screen._state
+    errors: list[str] = []
+    state.error.connect(errors.append)
+    runs: list[str] = []
+    state.stage_started.connect(runs.append)
+
+    assert screen.generate()
+    screen.genre_box.setCurrentIndex(screen.genre_box.findData("reggae and dub"))
+    screen.bpm_field.setValue(124)
+    screen.bpm_field.editingFinished.emit()
+
+    # The first run ends and starts the second, which waits on its own gate.
+    with qtbot.waitSignal(state.stage_started, timeout=10_000):
+        provider.gates[0].set()
+    with qtbot.waitSignal(state.stage_ended, timeout=10_000):
+        provider.gates[1].set()
+
+    assert runs == ["soundtrack", "soundtrack"]
+    assert provider.calls == 2
+    assert errors == []
+    assert state.manifest is not None
+    assert state.manifest.soundtrack.matched_row == "reggae and dub"
+    assert state.manifest.soundtrack.proposed_bpm == 124
 
 
 def test_nothing_is_editable_while_a_stage_runs(screen: SoundtrackScreen, qtbot: Any) -> None:
@@ -488,7 +628,7 @@ def test_play_with_track_renders_the_montage_with_audio(
     screen = SoundtrackScreen(state)
     qtbot.addWidget(screen)
     assert screen.generate()
-    assert screen.load_track(synthetic_dir / CLICK)
+    assert load(screen, qtbot, synthetic_dir / CLICK)
 
     with qtbot.waitSignal(state.stage_finished, timeout=60_000):
         assert screen.apply_sync()
@@ -533,7 +673,7 @@ def test_a_sync_that_fails_leaves_play_with_track_off(
     screen = SoundtrackScreen(state)
     qtbot.addWidget(screen)
     assert screen.generate()
-    assert screen.load_track(synthetic_dir / CLICK)
+    assert load(screen, qtbot, synthetic_dir / CLICK)
     assert not screen.play_with_track_button.isEnabled()
 
     def explode(*args: object, **kwargs: object) -> None:
@@ -571,7 +711,7 @@ def test_a_cancelled_sync_leaves_play_with_track_off(
     screen = SoundtrackScreen(state)
     qtbot.addWidget(screen)
     assert screen.generate()
-    assert screen.load_track(synthetic_dir / CLICK)
+    assert load(screen, qtbot, synthetic_dir / CLICK)
 
     state.cancel()  # cleared by run_stage, so the sync still finishes
     with qtbot.waitSignal(state.stage_finished, timeout=30_000):
@@ -616,7 +756,7 @@ def test_a_second_play_with_track_renders_nothing(
     screen = SoundtrackScreen(state)
     qtbot.addWidget(screen)
     assert screen.generate()
-    screen.load_track(synthetic_dir / CLICK)
+    load(screen, qtbot, synthetic_dir / CLICK)
     with qtbot.waitSignal(state.stage_finished, timeout=60_000):
         screen.apply_sync()
     state.wait_for_stage(10_000)
@@ -665,7 +805,7 @@ def test_apply_sync_moves_the_bounds_and_the_fingerprint(
     qtbot.addWidget(screen)
     assert screen.generate()
     track = synthetic_dir / CLICK
-    assert screen.load_track(track)
+    assert load(screen, qtbot, track)
     manifest = state.manifest
     assert manifest is not None
     before_fingerprint = montage_fingerprint(manifest, state.config, track)
@@ -710,7 +850,7 @@ def test_a_newly_loaded_track_is_not_a_synced_one(
     screen = SoundtrackScreen(state)
     qtbot.addWidget(screen)
     assert screen.generate()
-    assert screen.load_track(synthetic_dir / CLICK)
+    assert load(screen, qtbot, synthetic_dir / CLICK)
     with qtbot.waitSignal(state.stage_finished, timeout=60_000):
         assert screen.apply_sync()
     assert state.wait_for_stage(10_000)
@@ -738,7 +878,7 @@ def test_a_newly_loaded_track_is_not_a_synced_one(
         ],
         check=True,
     )
-    assert screen.load_track(other)
+    assert load(screen, qtbot, other)
 
     # Still carrying beats, and no longer synced: the track under them is not this one.
     assert not screen._synced_with_a_track()
@@ -756,7 +896,7 @@ def test_a_changed_tempo_is_not_a_synced_one(
     screen = SoundtrackScreen(state)
     qtbot.addWidget(screen)
     assert screen.generate()
-    assert screen.load_track(synthetic_dir / CLICK)
+    assert load(screen, qtbot, synthetic_dir / CLICK)
     with qtbot.waitSignal(state.stage_finished, timeout=60_000):
         assert screen.apply_sync()
     assert state.wait_for_stage(10_000)

@@ -251,6 +251,7 @@ def test_a_second_export_skips_everything(real_clips: ExportScreen, qtbot: Any) 
     state = screen._state
     with qtbot.waitSignal(state.stage_finished, timeout=180_000):
         screen.run()
+    assert state.wait_for_stage(30_000)
     first_outcome = state.last_result
     assert isinstance(first_outcome, ExportOutcome)
     first = first_outcome.export
@@ -483,6 +484,38 @@ def test_the_summary_names_the_selects_folder(screen: ExportScreen) -> None:
     assert "25 fps, 1 slowed down, 2 resampled" in text
     assert f"3 stale files moved to {STALE_DIR}" in text
     assert SELECTS_DIR in text
+
+
+def test_the_folder_is_measured_on_the_worker(
+    screen: ExportScreen, qtbot: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scenario from the spec: the summary has the size, the UI thread never walked."""
+    import threading
+
+    from autocut.gui.screens import export as module
+
+    threads: list[threading.Thread] = []
+
+    def measure(_path: Path) -> int:
+        threads.append(threading.current_thread())
+        return 5_000_000
+
+    selects = screen.selects_dir()
+    monkeypatch.setattr(module, "folder_size", measure)
+    monkeypatch.setattr(
+        module,
+        "export_clips",
+        lambda *_args: ExportResult(target_fps=25.0, exported=2, selects_dir=selects),
+    )
+    state = screen._state
+
+    with qtbot.waitSignal(state.stage_finished, timeout=10_000):
+        assert screen.run()
+    assert state.wait_for_stage(10_000)
+
+    assert threads
+    assert all(thread is not threading.main_thread() for thread in threads)
+    assert "5 MB" in screen.summary.text()
 
 
 # --- the render ---------------------------------------------------------------

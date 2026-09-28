@@ -185,17 +185,46 @@ def test_closing_saves_the_project(window: MainWindow, tmp_path: Path) -> None:
     assert not window.state.is_open
 
 
-def test_closing_cancels_a_running_stage(window: MainWindow, tmp_path: Path, qtbot: Any) -> None:
-    """A thread left running behind a closed window is a hang on quit."""
+def test_closing_during_a_stage_waits_for_it_without_blocking(
+    window: MainWindow, tmp_path: Path, qtbot: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The close is deferred until the worker stops, and nothing is saved under it.
+
+    A thread left running behind a closed window aborts the process on quit, and a save
+    while the worker writes the manifest corrupts it. So the window stays open with a
+    message, and closes itself once the stage has ended.
+    """
     import threading
+
+    from autocut.core.manifest import Manifest
 
     out = tmp_path / "edit"
     window.state.new_project([tmp_path], out)
-    gate = threading.Event()
     state: ProjectState = window.state
-    assert state.run_stage("analysis", lambda _progress: gate.wait(5.0))
+    saves: list[bool] = []
+    original = Manifest.save
 
-    gate.set()
-    window.closeEvent(QCloseEvent())
+    def counted(self: Manifest, path: Path) -> None:
+        saves.append(gate.is_set())
+        original(self, path)
 
+    monkeypatch.setattr(Manifest, "save", counted)
+    window.show()
+    gate = threading.Event()
+    assert state.run_stage("export", lambda _progress: gate.wait(10.0))
+
+    assert window.close() is False
+
+    assert window.isVisible()
+    assert state.is_open
+    assert "Stopping export" in window._status.text()
+    assert saves == []
+
+    with qtbot.waitSignal(state.stage_ended, timeout=10_000):
+        gate.set()
+
+    assert not window.isVisible()
+    assert not state.is_open
     assert not state.is_running
+    # One save as the stage ended, one as the project closed; none while it ran.
+    assert saves == [True, True]

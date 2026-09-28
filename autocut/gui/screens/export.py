@@ -81,6 +81,9 @@ class ExportOutcome:
 
     export: ExportResult
     render: RenderResult | None = None
+    selects_bytes: int = 0
+    """The size of the selects folder, measured on the worker: walking a folder of
+    clips is disk time the UI thread must not spend."""
 
 
 def folder_size(path: Path) -> int:
@@ -553,6 +556,9 @@ class ExportScreen(QWidget):
                 # The export has just run, so the render finds its clips current and
                 # only joins them.
                 outcome.render = render_edit(manifest, config, track=track, progress=progress)
+            outcome.selects_bytes = folder_size(
+                outcome.export.selects_dir or Path(manifest.output_dir) / SELECTS_DIR
+            )
             return outcome
 
         return state.run_stage("export", work)
@@ -579,7 +585,9 @@ class ExportScreen(QWidget):
         if isinstance(outcome, ExportOutcome):
             self._result = outcome.export
             self._render = outcome.render
-            self.summary.setText(self.describe(outcome.export, outcome.render))
+            self.summary.setText(
+                self.describe(outcome.export, outcome.render, selects_bytes=outcome.selects_bytes)
+            )
             self.problems.setText(self.describe_problems(outcome.export, outcome.render))
             self.bar.setValue(self.bar.maximum())
             self.current_label.setText("Finished")
@@ -592,13 +600,25 @@ class ExportScreen(QWidget):
         if name == "export":
             self.current_label.setText("Cancelled. The clips already written are in the folder.")
 
-    def describe(self, result: ExportResult, render: RenderResult | None = None) -> str:
-        """The run in the numbers a person checks before opening CapCut."""
+    def describe(
+        self,
+        result: ExportResult,
+        render: RenderResult | None = None,
+        *,
+        selects_bytes: int | None = None,
+    ) -> str:
+        """The run in the numbers a person checks before opening CapCut.
+
+        ``selects_bytes`` is the size the export worker measured. Without it the folder
+        is walked here, which is only for a caller that has no stage behind it.
+        """
         manifest = self._state.manifest
         selects = result.selects_dir or (
             Path(manifest.output_dir) / SELECTS_DIR if manifest is not None else None
         )
-        size_mb = folder_size(selects) / 1e6 if selects is not None else 0.0
+        if selects_bytes is None:
+            selects_bytes = folder_size(selects) if selects is not None else 0
+        size_mb = selects_bytes / 1e6
         duration = 0.0
         if manifest is not None:
             duration = sum(

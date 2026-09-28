@@ -14,7 +14,6 @@ debounced save, so a crash costs at most one debounce interval of review work.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -22,19 +21,13 @@ from typing import Any
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QGuiApplication, QUndoCommand, QUndoStack
 
-from autocut.core.analyze import analyze_files
 from autocut.core.config import AutocutConfig
-from autocut.core.describe import DescribeResult, describe_project
-from autocut.core.embeddings import EmbedResult, embed_project
-from autocut.core.events import ProgressCallback, ProgressEvent
-from autocut.core.ingest import ingest
+from autocut.core.events import ProgressCallback
 from autocut.core.manifest import Manifest, Segment, UserDecision
 from autocut.core.montage import MontageResult, build_montage, is_current
-from autocut.core.providers import cloud_enabled, find_key
-from autocut.core.providers.openrouter import OpenRouterProvider
+from autocut.core.pipeline import AnalysisOutcome, analyze_project, ingest_into
 from autocut.core.score import rescore
 from autocut.core.select import SelectionOverrides, SelectionResult, select_clips
-from autocut.core.tags import TagResult, tag_project
 from autocut.gui.workers import CancelFlag, CoreWorker
 
 MANIFEST_NAME = "manifest.json"
@@ -43,19 +36,6 @@ CONFIG_NAME = "autocut.toml"
 #: Long enough that dragging a slider is one save and not fifty, short enough that a
 #: crash costs a moment of review rather than a session of it.
 AUTOSAVE_DEBOUNCE_MS = 1500
-
-
-@dataclass(slots=True)
-class AnalysisOutcome:
-    """What one full analysis run did, for the screen to summarize."""
-
-    files: int = 0
-    unreadable: int = 0
-    segments: int = 0
-    cached_files: int = 0
-    embed: EmbedResult | None = None
-    tag: TagResult | None = None
-    describe: DescribeResult | None = None
 
 
 class DecisionCommand(QUndoCommand):
@@ -421,7 +401,8 @@ class ProjectState(QObject):
 
         One worker run rather than five, because the user asked for an analyzed project
         and the stages have no decision between them. The stage names in the progress
-        events are what the screen turns into steps.
+        events are what the screen turns into steps. The same pipeline the CLI's
+        ``analyze`` command runs, so the two front ends cannot drift.
         """
         manifest = self.manifest
         if manifest is None:
@@ -429,43 +410,10 @@ class ProjectState(QObject):
         config = self.config
 
         def work(progress: ProgressCallback) -> AnalysisOutcome:
-            outcome = AnalysisOutcome()
-            files = ingest(list(manifest.sources), config, progress)
-            manifest.files = {source.id: source for source in files}
-            outcome.files = len(files)
-            outcome.unreadable = sum(1 for source in files if source.error)
-
-            cached = 0
-
-            def on_analysis(event: ProgressEvent) -> None:
-                nonlocal cached
-                if event.extra.get("cached"):
-                    cached += 1
-                progress(event)
-
-            analyze_files(manifest, config, on_analysis)
-            outcome.cached_files = cached
-            outcome.segments = len(manifest.segments)
-            outcome.embed = embed_project(manifest, config, progress)
-            manifest.analysis.embedding_model = outcome.embed.model
-            manifest.analysis.embedding_device = outcome.embed.device
-            outcome.tag = tag_project(manifest, config)
-            outcome.describe = self._describe(manifest, config, progress)
-            return outcome
+            ingest_into(manifest, config, progress)
+            return analyze_project(manifest, config, progress)
 
         return self.run_stage("analysis", work)
-
-    def _describe(
-        self, manifest: Manifest, config: AutocutConfig, progress: ProgressCallback
-    ) -> DescribeResult:
-        """The cloud pass, or the reason there was none. Never raises for a missing key."""
-        enabled, reason = cloud_enabled(config)
-        if not enabled:
-            return DescribeResult(scope=config.providers.describe_scope, skipped_reason=reason)
-        key = find_key()
-        assert key is not None  # cloud_enabled already established there is one
-        with OpenRouterProvider(key, config) as provider:
-            return describe_project(manifest, config, provider, progress)
 
     # --- review decisions ---------------------------------------------------
 

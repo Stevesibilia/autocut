@@ -11,12 +11,13 @@ pytest.importorskip("PySide6")
 
 from autocut.core.events import ProgressEvent  # noqa: E402
 from autocut.core.manifest import Manifest  # noqa: E402
+from autocut.core.pipeline import AnalysisOutcome  # noqa: E402
 from autocut.gui.screens.analysis import (  # noqa: E402
     AnalysisScreen,
     estimate_remaining,
     format_seconds,
 )
-from autocut.gui.state import AnalysisOutcome, ProjectState  # noqa: E402
+from autocut.gui.state import ProjectState  # noqa: E402
 from tests.unit.test_gui_state import a_manifest  # noqa: E402
 
 pytestmark = pytest.mark.gui

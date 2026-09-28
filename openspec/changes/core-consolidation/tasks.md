@@ -31,13 +31,13 @@
 
 ### 4. Pipeline (decision 4), one commit
 
-- [ ] 4.1 `autocut/core/pipeline.py`. The CLI `analyze`, `embed` and `describe` and the GUI `run_analysis` use it, and `AnalysisOutcome` moves.
-- [ ] 4.2 Tests:
+- [x] 4.1 `autocut/core/pipeline.py`. The CLI `analyze`, `embed` and `describe` and the GUI `run_analysis` use it, and `AnalysisOutcome` moves.
+- [x] 4.2 Tests:
   - `analyze_project` records the three cloud fields with a fake provider;
   - `AnalysisCancelled` from `analyze_files` propagates and embed is not called;
   - the GUI run records `cloud_model` (fake provider, cloud on);
   - `autocut analyze` output on the synthetic fixtures has the same lines as before (compare against a capture taken before the change, ignoring timings).
-- [ ] 4.3 Commit: `refactor(core): share one analysis pipeline between the cli and the gui`.
+- [x] 4.3 Commit: `refactor(core): share one analysis pipeline between the cli and the gui`.
 
 ### 5. CLI split (decision 5), one commit
 

@@ -11,6 +11,7 @@ import json
 import sys
 import tomllib
 from collections import Counter
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -28,7 +29,7 @@ from rich.progress import (
 )
 
 from autocut import __version__
-from autocut.core.analyze import AnalysisCancelled, analyze_files
+from autocut.core.analyze import AnalysisCancelled
 from autocut.core.beatsync import (
     AudioUnavailableError,
     QuantizeResult,
@@ -43,14 +44,20 @@ from autocut.core.beatsync import (
 )
 from autocut.core.cache import cache_stats, prune
 from autocut.core.config import AutocutConfig
-from autocut.core.describe import DescribeResult, describe_project
+from autocut.core.describe import DescribeResult
 from autocut.core.doctor import inspect_environment
-from autocut.core.embeddings import EmbedResult, embed_project
-from autocut.core.events import ProgressEvent
+from autocut.core.embeddings import EmbedResult
+from autocut.core.events import ProgressCallback, ProgressEvent
 from autocut.core.export import export_clips
 from autocut.core.ffmpeg_cmd import ExportOverrides
-from autocut.core.ingest import ingest
 from autocut.core.manifest import Manifest
+from autocut.core.pipeline import (
+    AnalysisOutcome,
+    analyze_project,
+    ingest_into,
+    run_describe,
+    run_embed,
+)
 from autocut.core.proc import ToolMissingError
 from autocut.core.providers import clear_key, cloud_enabled, find_key, set_key
 from autocut.core.providers.openrouter import OpenRouterProvider
@@ -138,35 +145,27 @@ def analyze(
     if workers is not None:
         cfg.analysis.workers = workers
 
-    with Progress(
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeElapsedColumn(),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Probing", total=None)
+    manifest_path = out / "manifest.json"
+    manifest = _open_manifest(out, sources, cfg)
+    on_event, close_bars = _stage_progress()
 
-        def on_event(event: ProgressEvent) -> None:
-            if event.stage == "scan":
-                progress.update(task, total=event.total or None)
-                return
-            name = event.path.name if event.path else ""
-            progress.update(task, completed=event.current, total=event.total, description=name)
-
-        try:
-            files = ingest(list(sources), cfg, on_event)
-        except ToolMissingError as error:
-            console.print(f"[red]Missing tool[/red]: {error}")
-            raise typer.Exit(code=1) from None
+    try:
+        files = ingest_into(manifest, cfg, on_event)
+    except ToolMissingError as error:
+        close_bars()
+        console.print(f"[red]Missing tool[/red]: {error}")
+        raise typer.Exit(code=1) from None
 
     if not files:
+        close_bars()
         console.print("[red]No video files found[/red] in the given source folders.")
         raise typer.Exit(code=1)
 
-    manifest_path = out / "manifest.json"
-    manifest = _open_manifest(out, sources, cfg)
-    manifest.files = {source.id: source for source in files}
+    # Closed here, not just at the end: the probe bar is done and "Probed N files"
+    # belongs under it, the way each stage's own bar used to close before the next
+    # printed a line.
+    close_bars()
+
     manifest.updated_at = datetime.now(UTC)
     # Saved once here so an interrupted analysis still leaves a usable file list.
     manifest.save(manifest_path)
@@ -176,35 +175,15 @@ def analyze(
     for source in failed:
         console.print(f"[yellow]unreadable[/yellow] {source.path}: {source.error}")
 
-    cached = 0
+    outcome: AnalysisOutcome | None = None
     interrupted = False
-    with Progress(
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TimeElapsedColumn(),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Analyzing", total=len(files) - len(failed))
+    try:
+        outcome = analyze_project(manifest, cfg, on_event, no_cloud=no_cloud)
+    except AnalysisCancelled:
+        interrupted = True
+    finally:
+        close_bars()
 
-        def on_analysis(event: ProgressEvent) -> None:
-            nonlocal cached
-            if event.extra.get("cached"):
-                cached += 1
-            name = event.path.name if event.path else ""
-            suffix = " (cached)" if event.extra.get("cached") else ""
-            progress.update(
-                task, completed=event.current, total=event.total, description=f"{name}{suffix}"
-            )
-
-        try:
-            analyze_files(manifest, cfg, on_analysis)
-        except AnalysisCancelled:
-            interrupted = True
-
-    embedded = _run_embed(manifest, cfg)
-    tagged = _run_tag(manifest, cfg)
-    described = _run_describe(manifest, cfg, no_cloud)
     manifest.updated_at = datetime.now(UTC)
     manifest.save(manifest_path)
 
@@ -214,21 +193,79 @@ def analyze(
         console.print(f"[yellow]{warning}[/yellow]")
 
     rejected = Counter(s.reason for s in manifest.segments.values() if s.reason)
+    cached = manifest.analysis.files_from_cache
     console.print(
         f"Analyzed [bold]{len(manifest.segments)}[/bold] segments "
         f"({cached} files from cache), {sum(rejected.values())} rejected"
     )
     for reason, count in sorted(rejected.items()):
         console.print(f"  {reason}: {count}")
-    _print_embed(embedded)
-    _print_tag(tagged)
-    _print_describe(described)
+    if outcome is not None:
+        assert outcome.embed is not None
+        assert outcome.tag is not None
+        assert outcome.describe is not None
+        _print_embed(outcome.embed)
+        _print_tag(outcome.tag)
+        _print_describe(outcome.describe)
     console.print(f"Report written to {report_path}")
     if interrupted:
         console.print(
             "[yellow]Analysis was cancelled[/yellow]; the manifest holds partial results."
         )
         raise typer.Exit(code=130)
+
+
+_STAGE_LABELS = {
+    "probe": "Probing",
+    "analyze": "Analyzing",
+    "embed": "Embedding",
+    "describe": "Describing",
+}
+
+
+def _stage_progress() -> tuple[ProgressCallback, Callable[[], None]]:
+    """One callback that opens a fresh Rich bar for each stage in turn.
+
+    ``scan`` shares the "Probing" bar with the ``probe`` events that follow it, since a
+    run gets exactly one scan event before its probe events. Each later stage change
+    closes the previous bar and opens its own, so the terminal shows one bar at a time,
+    as it always has, across a call that now spans ingest and the whole analysis.
+    """
+    stage: str | None = None
+    bar: Progress | None = None
+    task: TaskID | None = None
+
+    def close() -> None:
+        nonlocal stage, bar, task
+        if bar is not None:
+            bar.stop()
+        stage = bar = task = None
+
+    def on_event(event: ProgressEvent) -> None:
+        nonlocal stage, bar, task
+        this_stage = "probe" if event.stage == "scan" else event.stage
+        if this_stage != stage:
+            close()
+            bar = Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeElapsedColumn(),
+                console=console,
+            )
+            bar.start()
+            total = None if event.stage == "scan" else event.total
+            task = bar.add_task(_STAGE_LABELS.get(this_stage, this_stage.title()), total=total)
+            stage = this_stage
+        assert bar is not None and task is not None
+        if event.stage == "scan":
+            bar.update(task, total=event.total or None)
+            return
+        name = event.path.name if event.path else (event.message or "")
+        suffix = " (cached)" if event.extra.get("cached") else ""
+        bar.update(task, completed=event.current, total=event.total, description=f"{name}{suffix}")
+
+    return on_event, close
 
 
 def _load_manifest(path: Path) -> Manifest:
@@ -309,13 +346,10 @@ def _run_embed(manifest: Manifest, cfg: AutocutConfig) -> EmbedResult:
         bar.update(task, completed=event.current, total=event.total)
 
     try:
-        result = embed_project(manifest, cfg, on_event)
+        return run_embed(manifest, cfg, on_event)
     finally:
         if bar is not None:
             bar.stop()
-    manifest.analysis.embedding_model = result.model
-    manifest.analysis.embedding_device = result.device
-    return result
 
 
 def _print_embed(result: EmbedResult) -> None:
@@ -388,37 +422,27 @@ def tag(
 def _run_describe(manifest: Manifest, cfg: AutocutConfig, no_cloud: bool) -> DescribeResult:
     """Describe the project through the configured provider, or say why it did not.
 
-    Cloud needs three things to agree and this is where the answer is recorded on the
-    run, so a manifest says whether a hosted model saw the footage and what it cost.
+    The bar is built only when cloud is enabled, so a run with no key or the flag off
+    prints one line and no empty bar. The enabled check is repeated inside
+    ``run_describe``, which is where the three cloud fields actually get recorded.
     """
-    enabled, reason = cloud_enabled(cfg, no_cloud)
+    enabled, _reason = cloud_enabled(cfg, no_cloud)
     if not enabled:
-        result = DescribeResult(scope=cfg.providers.describe_scope, skipped_reason=reason)
-    else:
-        key = find_key()
-        # cloud_enabled already established there is one; this keeps the type honest.
-        assert key is not None
-        with (
-            OpenRouterProvider(key, cfg) as provider,
-            Progress(
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TaskProgressColumn(),
-                TimeElapsedColumn(),
-                console=console,
-            ) as bar,
-        ):
-            task = bar.add_task("Describing", total=None)
+        return run_describe(manifest, cfg, no_cloud=no_cloud)
 
-            def on_event(event: ProgressEvent) -> None:
-                bar.update(task, completed=event.current, total=event.total)
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as bar:
+        task = bar.add_task("Describing", total=None)
 
-            result = describe_project(manifest, cfg, provider, on_event)
+        def on_event(event: ProgressEvent) -> None:
+            bar.update(task, completed=event.current, total=event.total)
 
-    manifest.analysis.cloud_model = "none" if result.skipped else result.model
-    manifest.analysis.cloud_requests = result.requests
-    manifest.analysis.cloud_cost_usd = result.cost_usd
-    return result
+        return run_describe(manifest, cfg, on_event, no_cloud=no_cloud)
 
 
 def _print_describe(result: DescribeResult) -> None:

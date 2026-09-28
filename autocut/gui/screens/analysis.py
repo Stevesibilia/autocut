@@ -26,8 +26,9 @@ from PySide6.QtWidgets import (
 
 from autocut.core.cache import cache_stats, prune
 from autocut.core.events import ProgressEvent
+from autocut.core.pipeline import AnalysisOutcome
 from autocut.gui import theme
-from autocut.gui.state import AnalysisOutcome, ProjectState
+from autocut.gui.state import ProjectState
 from autocut.gui.widgets.empty import EmptyState
 from autocut.gui.widgets.stages import StageList
 

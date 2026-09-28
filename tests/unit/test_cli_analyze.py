@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
+import keyring
 import pytest
 from typer.testing import CliRunner
 
 from autocut.cli.main import app
 from autocut.core.manifest import MANIFEST_SCHEMA_VERSION, Manifest
+from autocut.core.providers import KEY_ENV_VAR
 
 runner = CliRunner()
 
@@ -36,6 +39,59 @@ def config_file(tmp_path: Path) -> Path:
     toml = tmp_path / "autocut.toml"
     toml.write_text(f'[cache]\ndir = "{tmp_path / "cache"}"\n', encoding="utf-8")
     return toml
+
+
+_ELAPSED = re.compile(r"\d+:\d{2}(:\d{2})?")
+
+#: Captured on main before core-consolidation part B, through the same CliRunner and
+#: the same autouse fixtures (NO_COLOR/TERM/COLUMNS pinned, the ai extra patched off),
+#: with a fresh cache directory and --workers 1 so the file that lands last in each bar
+#: is deterministic. Elapsed time is replaced with "T" before comparing.
+_GOLDEN_ANALYZE_OUTPUT = """\
+with_audio.mp4 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% T
+Probed 13 files into {out}/manifest.json
+drone_embedded_srt.mp4 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% T
+Analyzed 17 segments (0 files from cache), 8 rejected
+  clipped: 2
+  low_altitude: 1
+  no_motion: 2
+  shaky: 2
+  too_short: 1
+Embeddings skipped: the ai extra is switched off for this test
+Tagging skipped: no segment has an embedding, run autocut embed first
+Descriptions skipped: no key: neither OPENROUTER_API_KEY nor a keychain entry
+Report written to {out}/report.html
+"""
+
+
+@pytest.mark.ffmpeg
+def test_analyze_output_is_unchanged_by_the_pipeline_refactor(
+    synthetic_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """core-consolidation part B moved this command onto the shared pipeline; the
+    lines it prints must be the ones the CLI always printed, timings aside."""
+    monkeypatch.delenv(KEY_ENV_VAR, raising=False)
+    monkeypatch.setattr(keyring, "get_password", lambda service, username: None)
+    out = tmp_path / "edit"
+
+    result = runner.invoke(
+        app,
+        [
+            "analyze",
+            str(synthetic_dir),
+            "--out",
+            str(out),
+            "--workers",
+            "1",
+            "--config",
+            str(config_file(tmp_path)),
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    actual = _ELAPSED.sub("T", result.stdout)
+    expected = _GOLDEN_ANALYZE_OUTPUT.format(out=out)
+    assert actual == expected
 
 
 @pytest.mark.ffmpeg

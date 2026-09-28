@@ -22,7 +22,7 @@ Rejected: a total deadline on the read loop. Decode time grows with clip length 
 - ingest: `SourceFile(id=f"path:{item.path}", path=item.path, error=f"worker failed: {exc}")`, the same fallback id `ingest_file` already uses when `cache_key` returns nothing;
 - export: `ClipResult(job.segment.id, job.plan.output, job.digest, error=f"worker failed: {exc}")`.
 
-Apply the same guard to the sequential branches (`workers == 1`), so both paths behave alike. `KeyboardInterrupt` is not an `Exception` and is handled by decision 3. Once the pool is broken, every remaining future raises `BrokenProcessPool` and each file gets its own error; that is the intended outcome.
+Apply the same guard to the sequential branches (`workers == 1`), so both paths behave alike. Amended at review: `ingest`'s pool branch has no spawn-visible test, because no real input makes `ingest_file` raise (`probe_file` reports errors in its result, and `cache_key` and `find_proxy` swallow `OSError`). It uses the same guard as the other two modules and was checked by reading. The analyze and export pool branches are tested with real collisions, a directory where the cache file goes and a file where the output folder goes. `KeyboardInterrupt` is not an `Exception` and is handled by decision 3. Once the pool is broken, every remaining future raises `BrokenProcessPool` and each file gets its own error; that is the intended outcome.
 
 **3. Ctrl-C is a cancellation.** In `analyze_files`, catch `KeyboardInterrupt` around both loops. On it, set `cancelled = AnalysisCancelled("interrupted")`, cancel the remaining futures, and leave the loop at once. Results that arrive afterwards are not collected: those files are analysed again on the next run. The existing code after the loop then builds segments, records `completed=False` and re-raises the `AnalysisCancelled`, which the CLI already turns into a partial save and exit code 130. For the pool branch, pass `initializer=_ignore_sigint` to the `ProcessPoolExecutor`, where `_ignore_sigint()` calls `signal.signal(signal.SIGINT, signal.SIG_IGN)`. Workers then do not print a traceback of their own; their ffmpeg children still get the terminal's SIGINT and exit, so the pool shuts down quickly. Ingest and export are left as they are: an interrupted ingest has nothing worth saving, and export is resumable by design.
 
@@ -31,6 +31,7 @@ Apply the same guard to the sequential branches (`workers == 1`), so both paths 
 ```python
 class ToolMissingError(RuntimeError):
     """A required external binary is not on PATH."""
+
 
 def require_tools(*names: str) -> None:
     missing = [name for name in names if shutil.which(name) is None]
@@ -51,7 +52,7 @@ Call `require_tools("ffprobe", "ffmpeg")` in `ingest()` after the scan and only 
 In `cli/main.py`, `_load_config` raises a clean error when `path` was given explicitly and does not exist (`[red]Configuration not found[/red]: {path}`, exit 1), and catches `(OSError, tomllib.TOMLDecodeError, pydantic.ValidationError)` around the load (`[red]Cannot read the configuration[/red] {path}: {error}`, exit 1). `autocut.example.toml` MUST still load: a test asserts it.
 Rejected: `extra="forbid"` on the manifest, for the reason given in the manifest-version-guard design (decision 3).
 
-**7. Manifest errors are one line, and migrations keep a backup.** `_load_manifest` catches `(OSError, ValueError)` instead of `ManifestVersionError` alone; `ManifestVersionError`, `json.JSONDecodeError` and `pydantic.ValidationError` are all `ValueError`. Same message prefix, exit 1. For a `ValidationError`, print only the first line of the error plus the error count, so the output stays one line.
+**7. Manifest errors are one line, and migrations keep a backup.** `_load_manifest` catches `(OSError, ValueError)` instead of `ManifestVersionError` alone; `ManifestVersionError`, `json.JSONDecodeError` and `pydantic.ValidationError` are all `ValueError`. Same message prefix, exit 1. For a `ValidationError`, print only the first line of the error plus the error count, so the output stays one line. Amended at review: the configuration errors go through the same helper (`_one_line` in `cli/main.py`), so both kinds of file report one line.
 In `_migrate` (`manifest.py:37`), right before the first step runs, copy the file with `shutil.copy2(path, backup)` where `backup = path.with_name(f"{path.stem}.v{version}.json.bak")`, unless that backup already exists. `Manifest.load` stays otherwise read-only.
 
 **8. No partial clip.** In `export_one`, the `except subprocess.SubprocessError` branch unlinks `plan.output` (`missing_ok=True`) before returning, like the non-zero-exit branch already does.

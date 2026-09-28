@@ -444,7 +444,7 @@ def build_montage(
         return result
 
     result.path = output
-    result.duration_s = probe_duration(output)
+    result.duration_s = probe_duration(output, timeout_s=config.timeouts.ffprobe_s)
     result.has_audio = track is not None
     result.index_path = write_index(manifest, parts, output)
     _forget_unused_parts(manifest, parts)

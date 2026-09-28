@@ -220,7 +220,7 @@ def probe_streams(path: Path, *, timeout_s: float = _TIMEOUTS.ffprobe_s) -> Stre
     return info
 
 
-def check_parts_uniform(paths: list[Path]) -> PartsCheck:
+def check_parts_uniform(paths: list[Path], *, timeout_s: float = _TIMEOUTS.ffprobe_s) -> PartsCheck:
     """Whether these files can be joined by stream copy, and what they are.
 
     A fast mode export stream copies from the sources, so a folder can hold a 4K 30 fps
@@ -232,7 +232,7 @@ def check_parts_uniform(paths: list[Path]) -> PartsCheck:
         if not Path(path).exists():
             check.error = f"{Path(path).name} is missing from the export"
             return check
-        check.clips.append(probe_streams(Path(path)))
+        check.clips.append(probe_streams(Path(path), timeout_s=timeout_s))
 
     if not check.clips:
         check.error = "there are no exported clips to join"
@@ -357,7 +357,7 @@ def render_edit(
         return result
 
     progress(ProgressEvent(stage="render", current=1, total=3, message="checking the clips"))
-    check = check_parts_uniform(paths)
+    check = check_parts_uniform(paths, timeout_s=config.timeouts.ffprobe_s)
     if not check.uniform:
         result.errors.append(("render", check.error or "the clips cannot be joined"))
         return result
@@ -369,7 +369,7 @@ def render_edit(
         return result
 
     result.path = output
-    result.duration_s = probe_duration(output)
+    result.duration_s = probe_duration(output, timeout_s=config.timeouts.ffprobe_s)
     result.size_bytes = output.stat().st_size
     result.clips = len(paths)
     result.has_audio = chosen is not None or check.has_audio

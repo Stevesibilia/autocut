@@ -346,11 +346,12 @@ def _run(
 
     done = result.skipped
     workers = config.export.workers or max(1, (config.analysis.workers or physical_cores()) // 2)
+    timeout_s = config.timeouts.export_clip_s
     if workers == 1 or len(pending) == 1:
         for job in pending:
             done += 1
             try:
-                clip = export_one(job.plan, job.segment.id, job.digest)
+                clip = export_one(job.plan, job.segment.id, job.digest, timeout_s=timeout_s)
             except Exception as exc:  # noqa: BLE001 - becomes this clip's error, see decision 2
                 clip = ClipResult(
                     job.segment.id, job.plan.output, job.digest, error=f"worker failed: {exc}"
@@ -360,7 +361,8 @@ def _run(
 
     with ThreadPoolExecutor(max_workers=min(workers, len(pending))) as pool:
         futures: dict[Future[ClipResult], _Job] = {
-            pool.submit(export_one, job.plan, job.segment.id, job.digest): job for job in pending
+            pool.submit(export_one, job.plan, job.segment.id, job.digest, timeout_s=timeout_s): job
+            for job in pending
         }
         for future in as_completed(futures):
             job = futures[future]

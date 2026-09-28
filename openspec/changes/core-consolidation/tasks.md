@@ -41,9 +41,9 @@
 
 ### 5. CLI split (decision 5), one commit
 
-- [ ] 5.1 Record the help snapshots first, then split `autocut/cli/main.py` and repoint the conftest monkeypatch.
-- [ ] 5.2 The help snapshot test, and every existing CLI test green.
-- [ ] 5.3 Commit: `refactor(cli): split the command line into one module per command group`.
+- [x] 5.1 Record the help snapshots first, then split `autocut/cli/main.py` and repoint the conftest monkeypatch.
+- [x] 5.2 The help snapshot test, and every existing CLI test green.
+- [x] 5.3 Commit: `refactor(cli): split the command line into one module per command group`.
 
 ### 6. Config defaults (decision 6) and docs, one commit
 

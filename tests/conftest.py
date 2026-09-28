@@ -146,9 +146,9 @@ def plain_cli_output(monkeypatch: pytest.MonkeyPatch) -> None:
     # was before this fixture ran. Replace it with one built under the pinned settings.
     from rich.console import Console
 
-    from autocut.cli import main
+    from autocut.cli import output
 
-    monkeypatch.setattr(main, "console", Console())
+    monkeypatch.setattr(output, "console", Console())
 
 
 @pytest.fixture(scope="session")

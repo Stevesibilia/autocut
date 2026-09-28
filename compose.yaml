@@ -1,5 +1,7 @@
 services:
   dev:
+    # Named so an image built by docker/bake-action in CI is the one compose runs.
+    image: autocut-dev
     build:
       context: .
       dockerfile: Dockerfile.dev
@@ -17,6 +19,8 @@ services:
   # the checkpoint is downloaded once rather than on every run. No /dev/dri: this
   # target runs torch on the CPU and never asks for the GPU.
   dev-ai:
+    # Named so an image built by docker/bake-action in CI is the one compose runs.
+    image: autocut-dev-ai
     build:
       context: .
       dockerfile: Dockerfile.dev
@@ -33,6 +37,8 @@ services:
   # into the container and no X socket is needed. No /dev/dri either: Qt renders
   # into memory here and the tests never decode video.
   dev-gui:
+    # Named so an image built by docker/bake-action in CI is the one compose runs.
+    image: autocut-dev-gui
     build:
       context: .
       dockerfile: Dockerfile.dev

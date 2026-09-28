@@ -63,8 +63,10 @@ lock:
 	$(VENV)/bin/uv pip compile pyproject.toml --universal --python-version 3.12 \
 	  --extra dev --extra gui --extra dev-gui --extra build --extra scenedetect \
 	  --exclude-newer "$$($(PY) -c 'import datetime as d; print((d.datetime.now(d.UTC) - d.timedelta(days=5)).strftime("%Y-%m-%dT%H:%M:%SZ"))')" \
-	  --no-emit-package autocut -o constraints.txt
+	  --no-emit-package autocut --no-header -o constraints.txt
 ```
+
+Amended at review: `--no-header` was added because the uv header records the `--exclude-newer` timestamp, which moves on every run, so two runs over an unchanged resolution differed in that one line.
 
 If `--no-emit-package autocut` is not needed or not accepted, drop it and say so. `--exclude-newer` enforces the 5-day rule mechanically. The `ai` extra is left out on purpose: torch comes from the CPU index in Docker and from PyPI on macOS, which one universal file cannot express. Its versions are pinned in `pyproject.toml` and `Dockerfile.dev`. Commit the generated `constraints.txt`.
 Every install goes through it: `make venv` becomes `$(PY) -m pip install -c constraints.txt -e ".[dev,gui,dev-gui]"`, the Dockerfile's `pip install` lines add `-c constraints.txt` (copy the file into the image next to `pyproject.toml`), and CI's install step does the same.
@@ -80,7 +82,7 @@ Rejected: `uv.lock` with `uv sync`. It would move the whole project to uv's work
 - After installing ffmpeg: a step `ffmpeg -hide_banner -version | head -1`.
 - Tests: on the 3.12 leg only, `pytest -q --cov=autocut.core --cov=autocut.cli --cov-report=term --cov-fail-under=<N>`, where N is the whole-number coverage you measure locally for the same scope, minus 2. Record the measured value in the hand-back. The other legs run `pytest -q`. The scope excludes `autocut/gui` because this job installs no Qt.
 - New job `audit` on `ubuntu-latest`: checkout, setup-python 3.12, `pip install -c constraints.txt -e ".[dev,scenedetect]" pip-audit`, `pip-audit --skip-editable`. It fails the run on a known vulnerability. That is the point: a finding is then a deliberate, visible decision.
-- The `ai` and `gui` jobs build through `docker/setup-buildx-action@v4` and `docker/bake-action@v7` with `files: compose.yaml`, `targets: dev-ai` (or `dev-gui`), `load: true`, and `set: |` `*.cache-from=type=gha,scope=<target>` / `*.cache-to=type=gha,mode=max,scope=<target>`. They then run `docker compose run --rm ...` as today. The image bake loads must carry the name compose expects, so compose does not rebuild it. Verify this on the pull request's first CI run: the "Build" step of a second run must report cached layers. If bake and compose disagree on the image name, set `image:` on the service in `compose.yaml`.
+- The `ai` and `gui` jobs build through `docker/setup-buildx-action@v4` and `docker/bake-action@v7` with `files: compose.yaml`, `targets: dev-ai` (or `dev-gui`), `load: true`, and `set: |` `*.cache-from=type=gha,scope=<target>` / `*.cache-to=type=gha,mode=max,scope=<target>`. They then run `docker compose run --rm ...` as today. The image bake loads must carry the name compose expects, so compose does not rebuild it. Verify this on the pull request's first CI run: the "Build" step of a second run must report cached layers. If bake and compose disagree on the image name, set `image:` on the service in `compose.yaml`. Amended at review: they do disagree. The implementer found that bake tags a compose target with no `image:` as `autocut-<service>`, while compose tags it with the directory name (`autocut-79-dev`). So every service now carries `image: autocut-<service>`.
 
 **6. Docker.** Keep `python:3.12-slim`, because the image tests the floor, and pin it by digest (`python:3.12-slim@sha256:<digest>`). Read the digest with `docker buildx imagetools inspect python:3.12-slim`. The `ai` stage installs `torch==2.14.0+cpu` and `torchvision==0.29.0+cpu`.
 

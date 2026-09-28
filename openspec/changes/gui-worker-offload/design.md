@@ -32,6 +32,8 @@ Reason: the cancel flag is only checked between files, so a long encode can run 
 
 **6. Docs.** `SPEC.md` §11 GUI: one sentence that network calls, audio analysis and folder walks never run on the UI thread, and that closing during a stage waits for the current file without freezing the window. `CHANGELOG.md` `### Fixed` lines.
 
+**7. Media players stop from the event loop.** Found in review under Docker: `QMediaPlayer.stop()` called from Python holds the GIL while the FFmpeg backend tears down its audio renderer. That renderer's `~QObject` holds Qt's signal-slot mutex and asks Shiboken for the GIL (`disconnectNotify` override lookup), while the UI thread in `stop()` waits for the same mutex, and the window freezes. `MontagePlayer` and `PreviewPanel` therefore queue their native teardown calls (`QMetaObject.invokeMethod(..., QueuedConnection)`), so they run from the event loop with the GIL released, and the test teardown spins one event-loop turn after queuing. Rejected: a tests-only queued stop (it hides a product freeze) and leaving it upstream (a flaky gui job).
+
 ## Not touched
 
 - Core modules other than the one `GuiConfig` field in `autocut/core/config.py`. The #78 branch changes the core, and this change must merge independently of it. `config.py` will conflict trivially with #78's base-class change; whichever merges second takes both.

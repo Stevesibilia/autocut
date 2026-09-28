@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from autocut.core.manifest import Manifest
 from autocut.core.montage import Part, clip_at, read_index
 from autocut.gui import theme
+from autocut.gui.widgets.media import NativeStop
 from autocut.gui.widgets.video import checked_video_output
 
 if TYPE_CHECKING:  # pragma: no cover - for the annotations only
@@ -212,6 +213,7 @@ class MontagePlayer(QWidget):
         self._labels: dict[str, str] = {}
         self._player: QMediaPlayer | None = None
         self._audio: Any | None = None
+        self._stopper = NativeStop(self)
         self._current_order = 0
 
         self.placeholder = QLabel("Press Play all to build and watch the edit.")
@@ -336,6 +338,7 @@ class MontagePlayer(QWidget):
         player = self._build_player(None)
         if player is None:
             return False
+        self._stopper.settle()
         self.sound_box.setChecked(sound)
         player.setSource(QUrl.fromLocalFile(str(montage)))
         self._set_enabled(True)
@@ -423,6 +426,7 @@ class MontagePlayer(QWidget):
             return False
         if self.video is not None:
             self.stack.setCurrentWidget(self.video)
+        self._stopper.settle()
         player.play()
         return True
 
@@ -441,12 +445,17 @@ class MontagePlayer(QWidget):
             self.play()
 
     def stop(self) -> None:
+        """Stop from the event loop: the player is still going when this returns.
+
+        A direct `stop()` could freeze the window for good (`widgets.media` says how).
+        """
         if self._player is not None:
-            self._player.stop()
+            self._stopper.request(self._player)
 
     def restart(self) -> None:
         """Back to the first clip, playing. The transport's own Play resumes in place."""
         if self._player is not None:
+            self._stopper.settle()
             self._player.setPosition(0)
             self._current_order = 0
             self.play()
@@ -466,6 +475,7 @@ class MontagePlayer(QWidget):
             return False
         # A hair inside the clip rather than exactly on its edge: seeking to the
         # boundary can land on the last frame of the clip before it.
+        self._stopper.settle()
         self._player.setPosition(int(part.start_s * 1000) + 1)
         self._announce(part)
         self.boundary_clicked.emit(part.segment_id)

@@ -103,7 +103,9 @@ def analyze_file(
         },
         shot_bounds=bounds,
         telemetry=_telemetry_payload(probe, source),
-        probe=probe.model_dump(mode="json"),
+        # Only what ingest recorded: a field it never probed (has_audio, the tags) is left
+        # out rather than stored as a default that reads like a measurement.
+        probe=probe.model_dump(mode="json", exclude_unset=True),
         thumb_frames=_thumb_frames(sampled.frames, sampled.timestamps, bounds),
         sprites=_sprites(sampled.frames, sampled.timestamps, bounds, config),
         warnings=sampled.warnings,

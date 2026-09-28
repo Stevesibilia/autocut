@@ -1,8 +1,10 @@
 name: Release
 
+# On demand only until milestone M6: `make dmg` is a placeholder that exits 1, so a
+# tag trigger would only ever produce a failed run. Tags come back with the
+# PyInstaller bundle (ADR 7).
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
 
 jobs:
   dmg:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
-from typing import Generic, Literal, TypeVar
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -18,8 +18,6 @@ CutMode = Literal["precise", "fast"]
 
 SOURCE_CLASSES: tuple[SourceClass, ...] = ("drone", "actioncam", "phone", "reflex", "generic")
 
-T = TypeVar("T")
-
 
 class _Strict(BaseModel):
     """Base for every configuration model: an unknown key is a mistake, not a typo to ignore."""
@@ -27,7 +25,7 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class PerClass(_Strict, Generic[T]):
+class PerClass[T](_Strict):
     """A value that differs per source class."""
 
     drone: T

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.25"]
+requires = ["hatchling>=1.32"]
 build-backend = "hatchling.build"
 
 [project]
@@ -7,53 +7,57 @@ name = "autocut"
 version = "0.5.0"
 description = "Select, trim, order and normalize vacation footage clips for CapCut."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "Proprietary" }
 authors = [{ name = "Stefano Sibilia" }]
 dependencies = [
-  "numpy>=1.26",
-  "opencv-python-headless>=4.9",
-  "scenedetect>=0.6.4",
-  "librosa>=0.10",
-  "pydantic>=2.7",
-  "pydantic-settings>=2.3",
-  "typer>=0.12",
-  "rich>=13.7",
-  "httpx>=0.27",
-  "keyring>=25",
-  "platformdirs>=4.2",
-  "pillow>=10.3",
-  "jinja2>=3.1",
+  "numpy>=2.4",
+  "opencv-python-headless>=5.0",
+  "librosa>=1.0",
+  "pydantic>=2.13",
+  "pydantic-settings>=2.15",
+  "typer>=0.27",
+  "rich>=15.0",
+  "httpx>=0.28",
+  "keyring>=25.7",
+  "platformdirs>=4.11",
+  "pillow>=12.0",
+  "jinja2>=3.1.6",
 ]
 
 [project.optional-dependencies]
 # torch and torchvision move in lockstep: every torchvision release pins one exact
-# torch version, so the two upper bounds have to be raised together. torch 2.13.0 and
-# torchvision 0.28.0 (both 2026-07-08) publish wheels for cp311 through cp314 on
-# manylinux_2_28_x86_64 and macosx_14_0_arm64, which are the two platforms this project
-# targets. torch 2.14.0 exists but is one day old, which the dependency safety rule in
-# AGENTS.md rules out. open_clip_torch is a pure Python wheel and pulls torchvision and
-# timm itself; it is pinned here so the lockstep is visible in one place.
+# torch version, so the two upper bounds have to be raised together. torch 2.14.0 and
+# torchvision 0.29.0 (both 2026-09-02) publish wheels for cp312 through cp314 on
+# manylinux_2_28_x86_64 and macosx_14_0_arm64, which are the platforms this project
+# targets now that the floor is 3.12. open_clip_torch is a pure Python wheel and pulls
+# torchvision and timm itself; it is pinned here so the lockstep is visible in one place.
 ai = [
-  "torch>=2.13,<2.14",
-  "torchvision>=0.28,<0.29",
+  "torch>=2.14,<2.15",
+  "torchvision>=0.29,<0.30",
   "open_clip_torch>=3.3,<3.4",
 ]
 # PySide6 is a meta package pinning shiboken6, PySide6-Essentials and PySide6-Addons
 # to its own exact version. 6.11.2 (2026-08-18) publishes cp310-abi3 wheels for
-# manylinux_2_34_x86_64 and macosx_13_0_universal2 and declares >=3.10,<3.15, so all
-# four of the Python versions this project supports get a wheel on both platforms
-# this project targets. The abi3 tag means one wheel serves every interpreter, so the
-# bound is on the Qt version rather than on the interpreter.
+# manylinux_2_34_x86_64 and macosx_13_0_universal2 and declares >=3.10,<3.15, so every
+# Python version this project supports gets a wheel on both platforms it targets. The
+# abi3 tag means one wheel serves every interpreter, so the bound is on the Qt version
+# rather than on the interpreter.
 gui = [
   "PySide6>=6.11.2,<6.12",
 ]
 dev = [
-  "pytest>=8.2",
-  "pytest-cov>=5.0",
-  "ruff>=0.5",
-  "mypy>=1.10",
-  "types-Pillow",
+  "pytest>=9.1",
+  "pytest-cov>=7.1",
+  "ruff>=0.16",
+  "mypy>=2.3",
+  "uv>=0.12",
+]
+# The validation shot detector only. Pulls opencv-python next to the core's
+# opencv-python-headless, so it stays out of the default install and out of the
+# PyInstaller bundle. See ADR 11.
+scenedetect = [
+  "scenedetect>=0.7.1",
 ]
 # pytest-qt is not in "dev" because it refuses to load without a Qt binding: it fails
 # the whole collection, not just the tests that need it, so a "dev" environment
@@ -63,7 +67,7 @@ dev-gui = [
   "pytest-qt>=4.5",
 ]
 build = [
-  "pyinstaller>=6.9",
+  "pyinstaller>=6.22",
 ]
 
 [project.scripts]
@@ -95,16 +99,14 @@ include = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "N"]
 
 [tool.mypy]
-# Type checking targets 3.12 while the runtime floor stays 3.11: the numpy stubs
-# use PEP 695 "type" statements, which mypy only parses at 3.12 and above. Code
-# that is not valid on 3.11 is still caught by ruff (target-version py311) and by
-# the 3.11 test job in CI.
+# Type checking targets 3.12, matching the runtime floor: the numpy stubs use PEP 695
+# "type" statements, which mypy only parses at 3.12 and above.
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]

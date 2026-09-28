@@ -88,10 +88,10 @@ Failures are bounded twice. A request retries on 429 and 5xx with backoff 1, 2, 
 
 ### 6.1 Core
 
-- **Python 3.11 or newer.** Development runs on 3.14 on the Linux host, wheels for all core dependencies exist. CI tests 3.11, 3.12 and 3.14.
+- **Python 3.12 or newer.** Development runs on 3.14 on the Linux host, wheels for all core dependencies exist. CI tests 3.12, 3.13 and 3.14.
 - **ffmpeg and ffprobe** as external binaries invoked through `subprocess`. No wrapper library. Frame sampling uses an ffmpeg pipe to raw RGB into NumPy, with hardware decoding chosen by AutoCut rather than by ffmpeg's own `-hwaccel auto` (see Hardware decode in §12). PyAV is not used. See ADR 2.
 - **NumPy and OpenCV (headless)** for frame metrics.
-- **PySceneDetect** for intra-file shot splitting.
+- **PySceneDetect** for intra-file shot splitting, behind the optional `scenedetect` extra (see §7.2 and ADR 11).
 - **librosa** for beat tracking and BPM.
 - **Pydantic** for config and manifest schemas.
 - **Typer and Rich** for the CLI.
@@ -140,7 +140,7 @@ Per-class analysis rules:
 
 ### 7.2 Segmentation
 
-PySceneDetect `ContentDetector` splits files with several shots into separate candidates. Segments shorter than `selection.min_segment_seconds` (default 1.5) are dropped.
+The in-memory detector splits files with several shots into separate candidates by default, reusing the frames already sampled for metrics. `analysis.detector = "pyscenedetect"` selects PySceneDetect's `ContentDetector` instead, decoding the file a second time for validation; it needs the optional `scenedetect` extra (`pip install 'autocut[scenedetect]'`) and fails with a message naming it when the extra is missing. Segments shorter than `selection.min_segment_seconds` (default 1.5) are dropped.
 
 ### 7.3 Analysis and scoring
 

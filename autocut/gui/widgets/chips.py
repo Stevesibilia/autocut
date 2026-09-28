@@ -14,7 +14,7 @@ drives a box directly keeps working.
 
 from __future__ import annotations
 
-from typing import TypeAlias, TypeVar
+from typing import TypeVar
 
 from PySide6.QtWidgets import (
     QComboBox,
@@ -132,7 +132,7 @@ class RangeChip(QToolButton):
 
 
 #: Either kind of pill. Both answer `refresh` and `active`, which is all the row wants.
-Chip: TypeAlias = FilterChip | RangeChip
+type Chip = FilterChip | RangeChip
 ChipT = TypeVar("ChipT", FilterChip, RangeChip)
 
 

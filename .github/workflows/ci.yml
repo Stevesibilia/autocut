@@ -1,9 +1,9 @@
 name: CI
 
-# Minutes are billed on this private repository, so the workflow runs the least that
-# still proves a change. Documentation only changes run nothing, a pull request runs
-# one interpreter, the Docker jobs run only when the files they cover change, and the
-# full matrix runs on demand. Pushes to main are not tested
+# The repository is public and Actions minutes are free, so a pull request runs the
+# oldest and newest supported interpreters and the full matrix runs on demand. The
+# Docker jobs still run only when the files they cover change, because a full Docker
+# build costs wall clock even when it costs no money. Pushes to main are not tested
 # again: every merge comes from a pull request whose head already passed.
 on:
   pull_request:
@@ -13,6 +13,9 @@ on:
       - "openspec/**"
       - ".gitignore"
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -27,7 +30,7 @@ jobs:
       gui: ${{ steps.filter.outputs.gui }}
       ai: ${{ steps.filter.outputs.ai }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: filter
@@ -40,7 +43,7 @@ jobs:
           fi
           changed="$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")"
           printf '%s\n' "$changed"
-          shared='^(pyproject\.toml|Dockerfile\.dev|compose\.yaml|\.github/workflows/ci\.yml|tests/conftest\.py|scripts/make_fixtures\.py)$'
+          shared='^(pyproject\.toml|constraints\.txt|Dockerfile\.dev|compose\.yaml|\.github/workflows/ci\.yml|tests/conftest\.py|scripts/make_fixtures\.py)$'
           if printf '%s\n' "$changed" | grep -Eq "$shared|^autocut/gui/|^tests/unit/test_gui_|^tests/unit/test_cli_gui"; then
             echo "gui=true" >> "$GITHUB_OUTPUT"
           else
@@ -57,18 +60,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # One interpreter per pull request; the oldest and newest join on a manual run.
-        python: ${{ fromJSON(github.event_name == 'pull_request' && '["3.12"]' || '["3.11", "3.12", "3.14"]') }}
+        # The oldest and newest interpreter join on a pull request; the full matrix
+        # joins on a manual run.
+        python: ${{ fromJSON(github.event_name == 'pull_request' && '["3.12", "3.14"]' || '["3.12", "3.13", "3.14"]') }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
           cache: pip
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: ffmpeg version
+        run: ffmpeg -hide_banner -version | head -1
       - name: Install project
-        run: pip install -e ".[dev]"
+        run: pip install -c constraints.txt -e ".[dev]"
       - name: Lint
         run: ruff check . && ruff format --check .
       # This job installs no Qt, so the GUI package's base classes would be Any and
@@ -79,7 +85,26 @@ jobs:
       - name: Fixtures
         run: python scripts/make_fixtures.py
       - name: Tests
+        if: matrix.python != '3.12'
         run: pytest -q
+      - name: Tests with coverage
+        if: matrix.python == '3.12'
+        run: pytest -q --cov=autocut.core --cov=autocut.cli --cov-report=term --cov-fail-under=83
+
+  # Fails the run on a known vulnerability in a resolved dependency, so a finding is a
+  # deliberate, visible decision rather than something that quietly ships.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: pip install -c constraints.txt -e ".[dev,scenedetect]" pip-audit
+      - name: Audit
+        run: pip-audit --skip-editable
 
   # The embedding tests need torch, which the matrix job deliberately does not
   # install: the ai extra is optional and the default job stays light. This job
@@ -89,9 +114,17 @@ jobs:
     if: needs.changes.outputs.ai == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
       - name: Build the ai image
-        run: docker compose build dev-ai
+        uses: docker/bake-action@v7
+        with:
+          files: compose.yaml
+          targets: dev-ai
+          load: true
+          set: |
+            *.cache-from=type=gha,scope=dev-ai
+            *.cache-to=type=gha,mode=max,scope=dev-ai
       - name: Fixtures and ai tests
         run: docker compose run --rm dev-ai sh -c "python scripts/make_fixtures.py && pytest -q -m ai"
 
@@ -103,9 +136,17 @@ jobs:
     if: needs.changes.outputs.gui == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
       - name: Build the gui image
-        run: docker compose build dev-gui
+        uses: docker/bake-action@v7
+        with:
+          files: compose.yaml
+          targets: dev-gui
+          load: true
+          set: |
+            *.cache-from=type=gha,scope=dev-gui
+            *.cache-to=type=gha,mode=max,scope=dev-gui
       - name: Type check the GUI package
         run: docker compose run --rm dev-gui sh -c "mypy autocut"
       - name: Fixtures and gui tests

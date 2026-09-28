@@ -5,23 +5,39 @@ name: Release
 # PyInstaller bundle (ADR 7).
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to create, e.g. v0.6.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
 
 jobs:
   dmg:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install ffmpeg
         run: brew install ffmpeg
-      - name: Install project with GUI, AI and build extras
-        run: pip install -e ".[gui,ai,build]"
+      - name: Install project with GUI, AI, build and dev extras
+        run: pip install -c constraints.txt -e ".[gui,ai,build,dev,dev-gui]"
+      - name: Lint
+        run: ruff check . && mypy autocut
+      - name: Fixtures
+        run: python scripts/make_fixtures.py
+      - name: Tests
+        run: pytest -q
       - name: Build app bundle
         run: make dmg
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ inputs.tag }}
+          target_commitish: ${{ github.sha }}
           files: dist/*.dmg
           body: |
             Unsigned build. On first launch, right-click the app and choose Open,

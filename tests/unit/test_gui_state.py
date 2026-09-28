@@ -337,11 +337,29 @@ def test_stage_ended_comes_after_the_worker_is_gone(
     state.stage_finished.connect(lambda name: seen.append(("finished", state.is_open, name)))
     state.stage_ended.connect(lambda name: seen.append(("ended", state.is_running, name)))
 
+    from PySide6.QtCore import Qt
+
+    workers: list[Any] = []
+
+    def hold_the_exit(_name: str) -> None:
+        # Runs on the worker thread, inside its finished signal: the thread has said it
+        # is done and has not exited yet, which is the window the join has to cover.
+        worker = state._worker
+        assert worker is not None
+        workers.append(worker)
+        worker.finished.connect(lambda: time.sleep(0.3), Qt.ConnectionType.DirectConnection)
+
+    state.stage_started.connect(hold_the_exit)
+    exited: list[bool] = []
+    state.stage_ended.connect(lambda _name: exited.append(workers[0].wait(0)))
+
     with qtbot.waitSignal(state.stage_ended, timeout=5000):
         assert state.run_stage("analysis", lambda _progress: None)
 
     assert seen == [("finished", True, "analysis"), ("ended", False, "analysis")]
     assert state.running_stage is None
+    # Joined, not only finished: the delete that follows must not wait on the thread.
+    assert exited == [True]
 
 
 def test_finished_workers_are_released(state: ProjectState, tmp_path: Path, qtbot: Any) -> None:

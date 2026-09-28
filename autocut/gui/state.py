@@ -402,6 +402,11 @@ class ProjectState(QObject):
         # stay parented to the state for the rest of the session.
         if self._worker is worker:
             self._worker = None
+        # ``finished`` is emitted from inside the thread, before it has exited. Joined
+        # here, where the wait releases the GIL and lasts only the thread's own wind
+        # down: otherwise the deferred delete can run inside a native call that holds
+        # the GIL, and ~QThread then waits for a thread that needs the GIL to exit.
+        worker.wait()
         self.stage_ended.emit(worker.name)
         worker.deleteLater()
 

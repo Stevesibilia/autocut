@@ -207,6 +207,57 @@ def test_a_stage_reports_progress_and_finishes(
     assert (out / "manifest.json").exists()
 
 
+class _FakeVisionProvider:
+    """Never actually asked: the segment below has no thumbnail and no cache entry, so
+    ``describe_project`` records the model and skips straight past it without a
+    request. See ``tests/unit/test_pipeline.py`` for the same shape at the core level.
+    """
+
+    model = "fake/vision"
+
+    def __enter__(self) -> _FakeVisionProvider:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def describe_frame(self, jpeg: bytes, labels: list[str], correction: str | None = None) -> None:
+        raise AssertionError("no thumbnail exists for this segment; it should not be asked")
+
+
+def test_run_analysis_records_the_cloud_fields(
+    state: ProjectState, tmp_path: Path, qtbot: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """core-consolidation part B: the GUI now records what the CLI always has."""
+    from autocut.core import pipeline
+    from autocut.core.providers import KEY_ENV_VAR
+
+    out = tmp_path / "edit"
+    state.new_project([tmp_path], out)
+    state.config.cache.dir = tmp_path / "cache"
+    assert state.manifest is not None
+    state.manifest.segments["aaa:0"] = Segment(
+        id="aaa:0",
+        file_id="aaa",
+        start_s=0.0,
+        end_s=1.0,
+        metrics=Metrics(
+            sharpness=100.0, exposure_clipped=0.0, motion=0.3, stability=0.9, colorfulness=0.2
+        ),
+    )
+    monkeypatch.delenv(KEY_ENV_VAR, raising=False)
+    monkeypatch.setenv(KEY_ENV_VAR, "sk-or-v1-test")
+    monkeypatch.setattr(pipeline, "OpenRouterProvider", lambda key, config: _FakeVisionProvider())
+
+    with qtbot.waitSignal(state.stage_finished, timeout=5000):
+        assert state.run_analysis()
+
+    assert state.wait_for_stage(10_000)
+    assert state.manifest.analysis.cloud_model == "fake/vision"
+    assert state.manifest.analysis.cloud_requests == 0
+    assert state.manifest.analysis.cloud_cost_usd == 0.0
+
+
 def test_a_second_stage_is_refused_while_one_runs(
     state: ProjectState, tmp_path: Path, qtbot: Any
 ) -> None:

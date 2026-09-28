@@ -1,8 +1,20 @@
+import json
 from pathlib import Path
 
 import pytest
 
 from autocut.core.config import SOURCE_CLASSES, AutocutConfig
+
+_CONFIG_SNAPSHOT = Path(__file__).parent.parent / "fixtures" / "autocut_config_snapshot.json"
+
+
+def test_defaults_match_the_snapshot_taken_before_the_defaults_moved() -> None:
+    """core-consolidation task 6 moved the tag, genre and mood data out of config.py
+    into plain data in config_defaults.py. This is what proves the move changed no
+    default: a difference here is fixed in the data, never in the snapshot (design
+    Risks)."""
+    snapshot = json.loads(_CONFIG_SNAPSHOT.read_text(encoding="utf-8"))
+    assert AutocutConfig().model_dump(mode="json") == snapshot
 
 
 def test_defaults_load_without_file() -> None:

@@ -31,28 +31,28 @@
 
 ### 4. Pipeline (decision 4), one commit
 
-- [ ] 4.1 `autocut/core/pipeline.py`. The CLI `analyze`, `embed` and `describe` and the GUI `run_analysis` use it, and `AnalysisOutcome` moves.
-- [ ] 4.2 Tests:
+- [x] 4.1 `autocut/core/pipeline.py`. The CLI `analyze`, `embed` and `describe` and the GUI `run_analysis` use it, and `AnalysisOutcome` moves.
+- [x] 4.2 Tests:
   - `analyze_project` records the three cloud fields with a fake provider;
   - `AnalysisCancelled` from `analyze_files` propagates and embed is not called;
   - the GUI run records `cloud_model` (fake provider, cloud on);
   - `autocut analyze` output on the synthetic fixtures has the same lines as before (compare against a capture taken before the change, ignoring timings).
-- [ ] 4.3 Commit: `refactor(core): share one analysis pipeline between the cli and the gui`.
+- [x] 4.3 Commit: `refactor(core): share one analysis pipeline between the cli and the gui`.
 
 ### 5. CLI split (decision 5), one commit
 
-- [ ] 5.1 Record the help snapshots first, then split `autocut/cli/main.py` and repoint the conftest monkeypatch.
-- [ ] 5.2 The help snapshot test, and every existing CLI test green.
-- [ ] 5.3 Commit: `refactor(cli): split the command line into one module per command group`.
+- [x] 5.1 Record the help snapshots first, then split `autocut/cli/main.py` and repoint the conftest monkeypatch.
+- [x] 5.2 The help snapshot test, and every existing CLI test green.
+- [x] 5.3 Commit: `refactor(cli): split the command line into one module per command group`.
 
 ### 6. Config defaults (decision 6) and docs, one commit
 
-- [ ] 6.1 Take the JSON snapshot of `AutocutConfig()` first, then create `config_defaults.py` and the default factories, and add the snapshot test.
-- [ ] 6.2 `SPEC.md`: the `[timeouts]` section and the new fields where configuration is described, and the pipeline sentence in §5. Add a `CHANGELOG.md` entry, and format the Markdown with `sjust format-md`.
-- [ ] 6.3 Commit: `refactor(core): move the default tag, genre and mood data out of config`.
+- [x] 6.1 Take the JSON snapshot of `AutocutConfig()` first, then create `config_defaults.py` and the default factories, and add the snapshot test.
+- [x] 6.2 `SPEC.md`: the `[timeouts]` section and the new fields where configuration is described, and the pipeline sentence in §5. Add a `CHANGELOG.md` entry, and format the Markdown with `sjust format-md`.
+- [x] 6.3 Commit: `refactor(core): move the default tag, genre and mood data out of config`.
 
 ### Part B gates and hand-back
 
-- [ ] B.1 `make lint`, `openspec validate core-consolidation --strict`, `make test` and `make docker-test-gui` through the test runner.
-- [ ] B.2 Real run: `autocut analyze`, `autocut select` and `autocut export` on the synthetic fixtures, plus `autocut gui` opened on that project with an analysis run started from the window. Describe what you saw.
-- [ ] B.3 Tick the part B boxes, push, and hand back.
+- [x] B.1 `make lint`, `openspec validate core-consolidation --strict`, `make test` and `make docker-test-gui` through the test runner.
+- [x] B.2 Real run: `autocut analyze`, `autocut select` and `autocut export` on the synthetic fixtures, plus `autocut gui` opened on that project with an analysis run started from the window. Describe what you saw.
+- [x] B.3 Tick the part B boxes, push, and hand back.

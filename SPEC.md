@@ -2,7 +2,7 @@
 
 AutoCut selects, trims, orders and normalizes short clips out of a folder of raw vacation footage (drone, action cam, phone, camera) so they can be dropped into CapCut desktop in one go. It also proposes a soundtrack prompt and cuts the clips to the beat once the track exists. It is not an editor.
 
-This document supersedes `specifiche-autocut.it.md`, the original Italian draft. Every decision taken during the 2026-09-03 review is folded in here. Architecture decisions with trade-offs live in `docs/adr/`.
+This document supersedes the original Italian draft, which git history keeps. Every decision taken during the 2026-09-03 review is folded in here. Architecture decisions with trade-offs live in `docs/adr/`.
 
 ## 1. Goal
 
@@ -89,7 +89,7 @@ Failures are bounded twice. A request retries on 429 and 5xx with backoff 1, 2, 
 ### 6.1 Core
 
 - **Python 3.11 or newer.** Development runs on 3.14 on the Linux host, wheels for all core dependencies exist. CI tests 3.11, 3.12 and 3.14.
-- **ffmpeg and ffprobe** as external binaries invoked through `subprocess`. No wrapper library. Frame sampling uses an ffmpeg pipe to raw RGB into NumPy, with `-hwaccel auto` so VAAPI on Linux and videotoolbox on macOS are used when available. PyAV is not used. See ADR 2.
+- **ffmpeg and ffprobe** as external binaries invoked through `subprocess`. No wrapper library. Frame sampling uses an ffmpeg pipe to raw RGB into NumPy, with hardware decoding chosen by AutoCut rather than by ffmpeg's own `-hwaccel auto` (see Hardware decode in §12). PyAV is not used. See ADR 2.
 - **NumPy and OpenCV (headless)** for frame metrics.
 - **PySceneDetect** for intra-file shot splitting.
 - **librosa** for beat tracking and BPM.

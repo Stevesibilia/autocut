@@ -6,7 +6,7 @@ It is not an editor. Transitions, titles and the final render stay in CapCut.
 
 ## Status
 
-Milestones M1 to M4 are complete: the whole pipeline works from the command line, from scanning a card to clips cut on the beat of a real track. Milestone M5 is building the desktop window; its first change ships the project and analysis screens. See [the specification](SPEC.md) for the full design and [the ADRs](docs/adr/) for the reasoning behind the main choices.
+Milestones M1 to M5 are complete: the whole pipeline works from the command line, from scanning a card to clips cut on the beat of a real track, and `autocut gui` opens a desktop window with five screens over the same core (project, analysis, review, soundtrack, export). Milestone M6 packages it as a macOS app. See [the specification](SPEC.md) for the full design and [the ADRs](docs/adr/) for the reasoning behind the main choices.
 
 ## Requirements
 

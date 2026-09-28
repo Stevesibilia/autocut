@@ -23,11 +23,13 @@ def spin_event_loop() -> None:
 
     `QEventLoop.exec` is one of the calls PySide releases the GIL for, and the quit is
     queued behind whatever was posted before it, so everything already waiting runs
-    first and nothing posted afterwards does.
+    first and nothing posted afterwards does. User input is left for the outer loop:
+    this runs inside widget methods such as Play, and a click delivered here would
+    re-enter the widget before the method that called it has returned.
     """
     loop = QEventLoop()
     QMetaObject.invokeMethod(loop, "quit", Qt.ConnectionType.QueuedConnection)
-    loop.exec()
+    loop.exec(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
 
 
 class NativeStop(QObject):

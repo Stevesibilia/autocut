@@ -39,7 +39,7 @@
 
 ## 5. Gates and hand-back
 
-- [ ] 5.1 `make lint` and `openspec validate analysis-performance --strict`.
-- [ ] 5.2 Through the test runner: `make test` and `make docker-test-gui`. Quote the counts.
-- [ ] 5.3 Measurements (a), (b) and (c) on the branch, next to the baseline from 0.1, in a table in the hand-back.
-- [ ] 5.4 Tick these boxes, push the branch and hand back.
+- [x] 5.1 `make lint` and `openspec validate analysis-performance --strict`.
+- [x] 5.2 Through the test runner: `make test` and `make docker-test-gui`. Quote the counts.
+- [x] 5.3 Measurements (a), (b) and (c) on the branch, next to the baseline from 0.1, in a table in the hand-back.
+- [x] 5.4 Tick these boxes, push the branch and hand back.

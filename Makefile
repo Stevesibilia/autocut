@@ -1,11 +1,19 @@
-.PHONY: venv test lint fixtures docker-test docker-test-ai docker-test-gui dmg
+.PHONY: venv test lint fixtures docker-test docker-test-ai docker-test-gui dmg lock
 
 VENV ?= .venv
 PY := $(VENV)/bin/python
 
 venv:
 	python3 -m venv $(VENV)
-	$(PY) -m pip install -e ".[dev,gui,dev-gui]"
+	$(PY) -m pip install -c constraints.txt -e ".[dev,gui,dev-gui]"
+
+# Regenerates constraints.txt with uv. Run after any change to pyproject.toml.
+# Every install (venv, Docker, CI) then goes through the pinned file.
+lock:
+	$(VENV)/bin/uv pip compile pyproject.toml --universal --python-version 3.12 \
+	  --extra dev --extra gui --extra dev-gui --extra build --extra scenedetect \
+	  --exclude-newer "$$($(PY) -c 'import datetime as d; print((d.datetime.now(d.UTC) - d.timedelta(days=5)).strftime("%Y-%m-%dT%H:%M:%SZ"))')" \
+	  --no-emit-package autocut -o constraints.txt
 
 fixtures:
 	$(PY) scripts/make_fixtures.py

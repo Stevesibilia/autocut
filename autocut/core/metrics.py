@@ -79,14 +79,24 @@ def motion_series(frames: np.ndarray) -> np.ndarray:
 
     The array is one value per frame so every metric array lines up. The first
     frame has no predecessor and borrows the second frame's value.
+
+    Walks consecutive frames and keeps only the previous converted frame, rather
+    than stacking every frame as float64 at once: with the sampled frames already
+    held in memory, this is the difference between one such copy and two (design
+    decision 4, issue #82). The formula and dtype are unchanged, so only the
+    floating point reduction order can differ from a fully vectorized version.
     """
     count = int(frames.shape[0])
     if count == 0:
         return np.zeros(0)
     if count == 1:
         return np.zeros(1)
-    grays = np.stack([to_gray(frame) for frame in frames]).astype(np.float64)
-    diffs = np.abs(np.diff(grays, axis=0)).mean(axis=(1, 2)) / MAX_LEVEL
+    diffs = np.empty(count - 1, dtype=np.float64)
+    previous = to_gray(frames[0]).astype(np.float64)
+    for index in range(1, count):
+        current = to_gray(frames[index]).astype(np.float64)
+        diffs[index - 1] = np.abs(current - previous).mean() / MAX_LEVEL
+        previous = current
     return np.concatenate(([diffs[0]], diffs))
 
 

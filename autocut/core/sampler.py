@@ -139,19 +139,62 @@ def _drain_stderr(pipe: IO[bytes], tail: bytearray, lock: threading.Lock) -> Non
                 del tail[: len(tail) - STDERR_TAIL_BYTES]
 
 
-def read_frames(command: list[str], frame_bytes: int) -> tuple[list[bytes], int, str]:
-    """Run ``command`` and read whole frames from its stdout. Returns frames, code, stderr.
+def _readinto_full(stream: IO[bytes], view: memoryview, size: int) -> int:
+    """Read exactly ``size`` bytes into ``view``, looping over short reads.
+
+    A pipe's ``readinto`` can return fewer bytes than asked for even mid-stream.
+    Only an EOF (a read of zero bytes) ends the loop before ``size`` is reached,
+    which is what lets a genuinely partial final frame still be detected as
+    partial (design decision 3, issue #82, and its short-read risk).
+    """
+    filled = 0
+    while filled < size:
+        # subprocess.Popen types stdout as IO[bytes], which has no readinto, but a
+        # pipe's stdout is a BufferedReader at runtime and always has one.
+        read = stream.readinto(view[filled:size])  # type: ignore[attr-defined]
+        if not read:
+            break
+        filled += read
+    return filled
+
+
+def _finish(buffer: np.ndarray, count: int) -> np.ndarray:
+    """The frames actually read: a copy when the buffer overshot by a lot, else a view.
+
+    Copying only below half capacity keeps a well guessed ``expected`` free of a
+    copy, and still frees the wasted tail of a buffer that grew, or was sized,
+    much larger than what came back.
+    """
+    view = buffer[:count]
+    return view.copy() if count < buffer.shape[0] // 2 else view
+
+
+def read_frames(
+    command: list[str], shape: tuple[int, int, int], expected: int
+) -> tuple[np.ndarray, int, str]:
+    """Run ``command`` and decode whole frames straight into one growing array.
+
+    ``shape`` is one frame's ``(height, width, channels)``. The buffer starts at
+    ``expected`` frames and doubles, copy and drop the old one, whenever a frame
+    would not fit; the array returned is at most one copy of the sampled frames,
+    not the two a list-of-bytes-then-stack would cost (design decision 3, issue
+    #82). Returns the frames, the process exit code and stderr.
 
     ffmpeg's stderr is drained on a background thread while stdout is read, so a
     decoder that writes a lot of error output before or between frames cannot fill
     the stderr pipe and deadlock the stdout read (decision 1, issue #78).
     """
+    height, width, channels = shape
+    frame_bytes = height * width * channels
+    capacity = max(expected, 1)
+    buffer = np.empty((capacity, height, width, channels), dtype=np.uint8)
+
     try:
         process = subprocess.Popen(
             command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL
         )
     except FileNotFoundError:
-        return [], 127, "ffmpeg not found on PATH"
+        return buffer[:0], 127, "ffmpeg not found on PATH"
     assert process.stdout is not None
     assert process.stderr is not None
 
@@ -162,13 +205,18 @@ def read_frames(command: list[str], frame_bytes: int) -> tuple[list[bytes], int,
     )
     stderr_thread.start()
 
-    frames: list[bytes] = []
+    count = 0
     try:
         while True:
-            chunk = process.stdout.read(frame_bytes)
-            if not chunk or len(chunk) < frame_bytes:
+            if count >= buffer.shape[0]:
+                grown = np.empty((buffer.shape[0] * 2, height, width, channels), dtype=np.uint8)
+                grown[:count] = buffer[:count]
+                buffer = grown
+            view = memoryview(buffer[count]).cast("B")
+            read = _readinto_full(process.stdout, view, frame_bytes)
+            if read < frame_bytes:
                 break
-            frames.append(chunk)
+            count += 1
         process.stdout.close()
         process.wait(timeout=READ_TIMEOUT_S)
     except subprocess.TimeoutExpired:
@@ -177,11 +225,11 @@ def read_frames(command: list[str], frame_bytes: int) -> tuple[list[bytes], int,
         stderr_thread.join(timeout=5.0)
         with stderr_lock:
             tail = bytes(stderr_tail)
-        return frames, 1, "ffmpeg timed out"
+        return _finish(buffer, count), 1, "ffmpeg timed out"
     stderr_thread.join(timeout=5.0)
     with stderr_lock:
         tail = bytes(stderr_tail)
-    return frames, process.returncode, tail.decode("utf-8", errors="replace")
+    return _finish(buffer, count), process.returncode, tail.decode("utf-8", errors="replace")
 
 
 def sample_frames(
@@ -206,19 +254,22 @@ def sample_frames(
             warnings=["unknown frame size, nothing sampled"],
         )
 
-    frame_bytes = width * height * 3
+    shape = (height, width, 3)
+    # A little over the frame count a whole file at this sample rate would give,
+    # so an ordinary file needs no growth; a short read still grows the buffer.
+    expected = int(probe.duration_s * config.analysis.sample_fps) + 2
     warnings: list[str] = []
     # The run already chose and verified its decoder, so the hardware attempt is
     # expected to work. The software retry stays as a per-file last resort for a
     # single unreadable clip, not as the systematic second spawn it used to be.
     attempts: list[Hwaccel] = [hwaccel] if not hwaccel.enabled else [hwaccel, SOFTWARE]
 
-    raw: list[bytes] = []
+    raw = np.zeros((0, height, width, 3), dtype=np.uint8)
     hwaccel_used = "none"
     for index, attempt in enumerate(attempts):
         command = build_sample_command(target, config.analysis.sample_fps, width, height, attempt)
-        raw, returncode, stderr = read_frames(command, frame_bytes)
-        if returncode == 0 and raw:
+        raw, returncode, stderr = read_frames(command, shape, expected)
+        if returncode == 0 and raw.shape[0] > 0:
             hwaccel_used = attempt.method
             break
         if index + 1 < len(attempts):
@@ -226,13 +277,13 @@ def sample_frames(
                 f"{attempt.label()} decoding failed on this file, "
                 f"retrying in software: {stderr.strip()}"
             )
-            raw = []
+            raw = np.zeros((0, height, width, 3), dtype=np.uint8)
 
-    if not raw:
+    if raw.shape[0] == 0:
         raw, returncode, stderr = read_frames(
-            build_single_frame_command(target, width, height), frame_bytes
+            build_single_frame_command(target, width, height), shape, expected=1
         )
-        if raw:
+        if raw.shape[0] > 0:
             warnings.append("clip too short to sample, took a single frame")
         else:
             warnings.append(f"no frames decoded: {stderr.strip()}")
@@ -244,11 +295,10 @@ def sample_frames(
                 warnings=warnings,
             )
 
-    frames = np.frombuffer(b"".join(raw), dtype=np.uint8).reshape(len(raw), height, width, 3)
-    timestamps = np.arange(len(raw), dtype=np.float64) / config.analysis.sample_fps
+    timestamps = np.arange(raw.shape[0], dtype=np.float64) / config.analysis.sample_fps
     return SampledFrames(
         timestamps=timestamps,
-        frames=frames,
+        frames=raw,
         source=source,
         path=target,
         hwaccel_used=hwaccel_used,

@@ -69,13 +69,14 @@ def test_sample_size_uses_display_orientation() -> None:
 def test_a_single_bad_file_still_retries_in_software(monkeypatch: pytest.MonkeyPatch) -> None:
     """The run level choice is verified, so this is a last resort for one clip."""
     commands: list[list[str]] = []
-    frame = b"\x00" * (320 * 180 * 3)
 
-    def fake_read(command: list[str], frame_bytes: int) -> tuple[list[bytes], int, str]:
+    def fake_read(
+        command: list[str], shape: tuple[int, int, int], expected: int
+    ) -> tuple[np.ndarray, int, str]:
         commands.append(command)
         if "-hwaccel" in command:
-            return [], 1, "vaapi device creation failed"
-        return [frame, frame], 0, ""
+            return np.zeros((0, *shape), dtype=np.uint8), 1, "vaapi device creation failed"
+        return np.zeros((2, *shape), dtype=np.uint8), 0, ""
 
     monkeypatch.setattr("autocut.core.sampler.read_frames", fake_read)
     vaapi = Hwaccel(method="vaapi", device="/dev/dri/renderD128")
@@ -95,9 +96,11 @@ def test_software_decoding_never_spawns_a_second_process(
     """The wasted spawn per file is the whole point of issue 3."""
     commands: list[list[str]] = []
 
-    def fake_read(command: list[str], frame_bytes: int) -> tuple[list[bytes], int, str]:
+    def fake_read(
+        command: list[str], shape: tuple[int, int, int], expected: int
+    ) -> tuple[np.ndarray, int, str]:
         commands.append(command)
-        return [], 1, "broken file"
+        return np.zeros((0, *shape), dtype=np.uint8), 1, "broken file"
 
     monkeypatch.setattr("autocut.core.sampler.read_frames", fake_read)
     sampled = sample_frames(Path("clip.mp4"), probe(), AutocutConfig(), None, SOFTWARE)
@@ -111,8 +114,10 @@ def test_software_decoding_never_spawns_a_second_process(
 
 
 def test_a_working_decoder_is_recorded_on_the_result(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_read(command: list[str], frame_bytes: int) -> tuple[list[bytes], int, str]:
-        return [b"\x00" * frame_bytes], 0, ""
+    def fake_read(
+        command: list[str], shape: tuple[int, int, int], expected: int
+    ) -> tuple[np.ndarray, int, str]:
+        return np.zeros((1, *shape), dtype=np.uint8), 0, ""
 
     monkeypatch.setattr("autocut.core.sampler.read_frames", fake_read)
     sampled = sample_frames(
@@ -124,9 +129,11 @@ def test_a_working_decoder_is_recorded_on_the_result(monkeypatch: pytest.MonkeyP
 def test_proxy_is_sampled_when_attached(monkeypatch: pytest.MonkeyPatch) -> None:
     commands: list[list[str]] = []
 
-    def fake_read(command: list[str], frame_bytes: int) -> tuple[list[bytes], int, str]:
+    def fake_read(
+        command: list[str], shape: tuple[int, int, int], expected: int
+    ) -> tuple[np.ndarray, int, str]:
         commands.append(command)
-        return [b"\x00" * frame_bytes], 0, ""
+        return np.zeros((1, *shape), dtype=np.uint8), 0, ""
 
     monkeypatch.setattr("autocut.core.sampler.read_frames", fake_read)
     sampled = sample_frames(Path("clip.MP4"), probe(), AutocutConfig(), Path("clip.LRF"))
@@ -138,9 +145,11 @@ def test_proxy_is_sampled_when_attached(monkeypatch: pytest.MonkeyPatch) -> None
 def test_proxy_ignored_when_proxies_are_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     commands: list[list[str]] = []
 
-    def fake_read(command: list[str], frame_bytes: int) -> tuple[list[bytes], int, str]:
+    def fake_read(
+        command: list[str], shape: tuple[int, int, int], expected: int
+    ) -> tuple[np.ndarray, int, str]:
         commands.append(command)
-        return [b"\x00" * frame_bytes], 0, ""
+        return np.zeros((1, *shape), dtype=np.uint8), 0, ""
 
     monkeypatch.setattr("autocut.core.sampler.read_frames", fake_read)
     config = AutocutConfig()
@@ -176,11 +185,13 @@ def test_a_clip_too_short_for_the_fps_filter_still_yields_one_frame(
     """The Action 4 leaves single frame recordings behind; they must not vanish."""
     commands: list[list[str]] = []
 
-    def fake_read(command: list[str], frame_bytes: int) -> tuple[list[bytes], int, str]:
+    def fake_read(
+        command: list[str], shape: tuple[int, int, int], expected: int
+    ) -> tuple[np.ndarray, int, str]:
         commands.append(command)
         if "-frames:v" in command:
-            return [b"\x00" * frame_bytes], 0, ""
-        return [], 0, ""
+            return np.zeros((1, *shape), dtype=np.uint8), 0, ""
+        return np.zeros((0, *shape), dtype=np.uint8), 0, ""
 
     monkeypatch.setattr("autocut.core.sampler.read_frames", fake_read)
     sampled = sample_frames(Path("clip.mp4"), probe(), AutocutConfig())
@@ -192,8 +203,10 @@ def test_a_clip_too_short_for_the_fps_filter_still_yields_one_frame(
 
 
 def test_a_file_that_decodes_nothing_at_all_reports_it(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_read(command: list[str], frame_bytes: int) -> tuple[list[bytes], int, str]:
-        return [], 1, "moov atom not found"
+    def fake_read(
+        command: list[str], shape: tuple[int, int, int], expected: int
+    ) -> tuple[np.ndarray, int, str]:
+        return np.zeros((0, *shape), dtype=np.uint8), 1, "moov atom not found"
 
     monkeypatch.setattr("autocut.core.sampler.read_frames", fake_read)
     sampled = sample_frames(Path("broken.mp4"), probe(), AutocutConfig())
@@ -212,10 +225,11 @@ def test_read_frames_drains_stderr_so_a_noisy_decoder_does_not_deadlock() -> Non
         "sys.stdout.buffer.flush()\n"
     )
     started = time.monotonic()
-    frames, code, stderr = read_frames([sys.executable, "-c", script], frame_bytes=10)
+    frames, code, stderr = read_frames([sys.executable, "-c", script], (1, 1, 10), expected=2)
     elapsed = time.monotonic() - started
 
-    assert frames == [b"f" * 10, b"f" * 10]
+    assert frames.shape == (2, 1, 1, 10)
+    assert (frames == ord("f")).all()
     assert code == 0
     assert stderr.count("e") == STDERR_TAIL_BYTES
     assert elapsed < 10.0
@@ -223,9 +237,9 @@ def test_read_frames_drains_stderr_so_a_noisy_decoder_does_not_deadlock() -> Non
 
 def test_read_frames_reports_a_non_zero_exit_and_its_stderr_tail() -> None:
     script = "import sys\nsys.stderr.buffer.write(b'boom')\nsys.exit(3)\n"
-    frames, code, stderr = read_frames([sys.executable, "-c", script], frame_bytes=10)
+    frames, code, stderr = read_frames([sys.executable, "-c", script], (1, 1, 10), expected=1)
 
-    assert frames == []
+    assert frames.shape[0] == 0
     assert code == 3
     assert stderr == "boom"
 
@@ -234,7 +248,91 @@ def test_read_frames_keeps_at_most_the_last_64_kib_of_stderr() -> None:
     script = (
         "import sys\nsys.stderr.buffer.write(b'a' * 70000)\nsys.stderr.buffer.write(b'z' * 100)\n"
     )
-    _, _, stderr = read_frames([sys.executable, "-c", script], frame_bytes=10)
+    _, _, stderr = read_frames([sys.executable, "-c", script], (1, 1, 10), expected=1)
 
     assert len(stderr.encode("utf-8")) <= STDERR_TAIL_BYTES
     assert stderr.endswith("z" * 100)
+
+
+def test_read_frames_grows_the_buffer_past_the_expected_count() -> None:
+    """``expected=1`` with five real frames must not lose or corrupt any of them."""
+    script = (
+        "import sys\n"
+        "for _ in range(5):\n"
+        "    sys.stdout.buffer.write(bytes([1, 2, 3, 4]))\n"
+        "sys.stdout.buffer.flush()\n"
+    )
+    frames, code, _ = read_frames([sys.executable, "-c", script], (1, 1, 4), expected=1)
+
+    assert code == 0
+    assert frames.shape == (5, 1, 1, 4)
+    assert (frames == np.array([1, 2, 3, 4], dtype=np.uint8)).all()
+
+
+def test_read_frames_drops_a_partial_final_frame() -> None:
+    """A stream that ends mid-frame yields only the whole frames before it."""
+    script = (
+        "import sys\n"
+        "sys.stdout.buffer.write(bytes([9, 9, 9, 9]))\n"
+        "sys.stdout.buffer.write(bytes([9, 9, 9, 9]))\n"
+        "sys.stdout.buffer.write(bytes([9, 9]))\n"  # half a frame, then EOF
+        "sys.stdout.buffer.flush()\n"
+    )
+    frames, code, _ = read_frames([sys.executable, "-c", script], (1, 1, 4), expected=4)
+
+    assert code == 0
+    assert frames.shape == (2, 1, 1, 4)
+
+
+class _FakeStdout:
+    """A stdout whose ``readinto`` never returns more than ``chunk`` bytes at once."""
+
+    def __init__(self, data: bytes, chunk: int) -> None:
+        self._data = data
+        self._chunk = chunk
+        self._pos = 0
+
+    def readinto(self, view: memoryview) -> int:
+        size = min(len(view), self._chunk, len(self._data) - self._pos)
+        if size <= 0:
+            return 0
+        view[:size] = self._data[self._pos : self._pos + size]
+        self._pos += size
+        return size
+
+    def close(self) -> None:
+        pass
+
+
+class _FakeStderr:
+    def read(self, size: int) -> bytes:
+        return b""
+
+
+class _FakeProcess:
+    def __init__(self, data: bytes, chunk: int) -> None:
+        self.stdout = _FakeStdout(data, chunk)
+        self.stderr = _FakeStderr()
+        self.returncode = 0
+
+    def wait(self, timeout: float | None = None) -> None:
+        del timeout
+
+    def kill(self) -> None:
+        pass
+
+
+def test_read_frames_loops_over_short_reads_within_one_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pipe's ``readinto`` returning half a frame at a time must not drop a byte."""
+    data = bytes(range(1, 9))  # two four byte frames: [1, 2, 3, 4] and [5, 6, 7, 8]
+    fake = _FakeProcess(data, chunk=2)
+    monkeypatch.setattr("autocut.core.sampler.subprocess.Popen", lambda *a, **k: fake)
+
+    frames, code, _ = read_frames(["ignored"], (1, 1, 4), expected=2)
+
+    assert code == 0
+    assert frames.shape == (2, 1, 1, 4)
+    assert frames[0].flatten().tolist() == [1, 2, 3, 4]
+    assert frames[1].flatten().tolist() == [5, 6, 7, 8]

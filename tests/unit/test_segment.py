@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 
@@ -13,6 +14,7 @@ from autocut.core.probe import probe_file
 from autocut.core.sampler import sample_frames
 from autocut.core.segment import (
     apply_trims,
+    content_series,
     detect_shots,
     detect_shots_pyscenedetect,
     split_on_altitude,
@@ -21,6 +23,36 @@ from autocut.core.segment import (
 
 def frames_from(values: list[int], size: int = 32) -> np.ndarray:
     return np.stack([np.full((size, size, 3), value, dtype=np.uint8) for value in values])
+
+
+def _old_content_series(frames: np.ndarray) -> np.ndarray:
+    """Verbatim copy of the pre-#82 vectorized implementation, kept only to compare."""
+    count = int(frames.shape[0])
+    if count < 2:
+        return np.zeros(max(count, 0))
+    hsv = np.stack([cv2.cvtColor(frame, cv2.COLOR_RGB2HSV) for frame in frames]).astype(np.float64)
+    diffs = np.abs(np.diff(hsv, axis=0)).mean(axis=(1, 2, 3)) / 255.0
+    return np.concatenate(([0.0], diffs))
+
+
+def test_pairwise_content_series_matches_the_old_vectorized_implementation() -> None:
+    rng = np.random.default_rng(7)
+    frames = rng.integers(0, 256, size=(30, 24, 40, 3), dtype=np.uint8)
+    new = content_series(frames)
+    old = _old_content_series(frames)
+    assert np.allclose(new, old, rtol=1e-12, atol=0)
+
+
+@pytest.mark.ffmpeg
+def test_pairwise_content_series_matches_the_old_implementation_on_a_real_fixture(
+    synthetic_dir: Path,
+) -> None:
+    path = synthetic_dir / "multishot.mp4"
+    probe = probe_file(path)
+    sampled = sample_frames(path, probe, AutocutConfig())
+    new = content_series(sampled.frames)
+    old = _old_content_series(sampled.frames)
+    assert np.allclose(new, old, rtol=1e-12, atol=0)
 
 
 def test_continuous_shot_yields_one_segment() -> None:

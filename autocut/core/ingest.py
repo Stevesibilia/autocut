@@ -88,9 +88,8 @@ def physical_cores() -> int:
     return os.cpu_count() or 1
 
 
-def scan(sources: list[Path], config: AutocutConfig | None = None) -> list[ScannedFile]:
+def scan(sources: list[Path]) -> list[ScannedFile]:
     """Collect accepted video files under ``sources``, recursively and deterministically."""
-    del config  # Accepted for symmetry with the rest of the API; nothing to tune yet.
     found: dict[Path, ScannedFile] = {}
     for source in sources:
         root = source.resolve()
@@ -186,7 +185,7 @@ def ingest(
     progress: ProgressCallback = null_progress,
 ) -> list[SourceFile]:
     """Ingest every accepted file under ``sources``, ordered chronologically."""
-    scanned = scan(sources, config)
+    scanned = scan(sources)
     total = len(scanned)
     progress(ProgressEvent(stage="scan", current=total, total=total))
     if not scanned:

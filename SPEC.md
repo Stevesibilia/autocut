@@ -153,6 +153,7 @@ Sampled decoding only: 2 fps, long side 320 px, through the ffmpeg pipe. Full de
 | Motion       | Mean optical flow magnitude, or absolute frame difference | Separate cinematic motion from static shots and shakes |
 | Stability    | Standard deviation of the motion vector over time         | Reject unstable gimbal and jerky corrections           |
 | Colorfulness | Hasler and Süsstrunk metric                               | Reward sunsets and saturated landscapes                |
+| Faces        | YuNet face count per frame, percentile over the segment   | Reward people, keep different people apart (§8 item 6) |
 
 The composite score is a weighted mean of rank normalized metrics, with weights in `autocut.toml`. Weights are found by iterating on real footage, so they are never hardcoded.
 
@@ -410,7 +411,7 @@ Modules in order of value over complexity:
 
 4. **Captions**, cloud vision model only. One lowercase sentence of at most twenty words per segment, stored on `Segment.caption`, shown on the report card and feeding the M4 soundtrack prompt. Asked for in the same request as the tags and the aesthetic, because three fields cost one call. Built in M3.
 5. **Aesthetic scoring.** The cloud model's judgment, an integer 1 to 10 stored on `Metrics.aesthetic` scaled to 0 to 1 so it rank normalizes beside the other metrics. It enters the composite score only when `weights.aesthetic` is above zero, which is not the default; a class where no segment has one leaves the metric out entirely, so the weight changes nothing until descriptions exist. `autocut describe` scores the project again after writing them, because scoring otherwise happens during analysis and would be stale. A local predictor on CLIP embeddings (LAION weights) remains the M4b option. Built in M3, cloud path only.
-6. **Face detection** (MediaPipe or InsightFace). Family scenes have value no sharpness metric sees. Raises the score, handled as a separate rule. Also protects deduplication: similar frames with different people are not duplicates.
+6. **Face detection**, YuNet through `cv2.FaceDetectorYN`, model bundled (ADR 14). Family scenes have value no sharpness metric sees. With `providers.faces` on, analysis counts the faces on every sampled frame (score at least `analysis.face_score_threshold`, height at least `analysis.face_min_height_share` of the frame) and stores the counts as the `faces` cache array with the model id in `face_model`. A segment's `Metrics.faces` is the `analysis.face_count_percentile` percentile of the counts inside it. It is a weighted metric, `weights.faces`, default 0, and shapes the best window. It also protects deduplication: with `similarity.face_guard` on, two segments whose counts are both known and differ have similarity 0, so similar frames with different people are not duplicates. Counts only, never identity. The family profile turns detection on and sets the weight. Built in M4b.
 7. **LLM prompt refinement**, through OpenRouter, output always validated.
 8. **Narrative ordering by LLM**, low priority. Group by place from GPS instead of pure chronology.
 
@@ -418,7 +419,7 @@ Modules in order of value over complexity:
 
 `manifest.json` is the single source of truth and the project file. For each analyzed segment: source path, proxy path if any, class, in and out points, best window center, all raw metrics, composite score, outcome (selected or rejected) with reason, tags, caption, embedding reference, exported path. Opening a manifest in the GUI restores the full review state. The schema is versioned. A manifest from a newer schema is refused rather than loaded and rewritten, and an older one is brought up to date one version at a time by a migration step on load.
 
-**Analysis cache** is global, in the platform cache directory (`~/.cache/autocut/` on Linux, `~/Library/Caches/autocut/` on macOS). The key is size, mtime and a hash of the first and last 1 MB, without the path, so a file read over a share or copied with its mtime preserved keeps its entry; a copy that resets the mtime is analyzed again. Per source file, one `.npz` with metric arrays and embeddings plus a JSON with probe and telemetry. Re-running on the same footage with different weights is instantaneous, in any project. See ADR 6.
+**Analysis cache** is global, in the platform cache directory (`~/.cache/autocut/` on Linux, `~/Library/Caches/autocut/` on macOS). The key is size, mtime and a hash of the first and last 1 MB, without the path, so a file read over a share or copied with its mtime preserved keeps its entry; a copy that resets the mtime is analyzed again. Per source file, one `.npz` with metric arrays and embeddings plus a JSON with probe and telemetry. The arrays include `faces`, the per-frame face count, and the JSON records `face_model`, only when face detection ran. Re-running on the same footage with different weights is instantaneous, in any project. See ADR 6.
 
 ## 10. CLI
 
@@ -526,7 +527,7 @@ Tests run in Docker on Linux (`compose.yaml`, `python:3.12` image with ffmpeg). 
 - **M2, selection and export** (done 2026-09-03, plus per-clip durations and the place cap on 2026-09-03). Best window, rejection rules, deduplication with classic signals, cutting, normalization, naming. The tool is useful from here.
 - **M3, embeddings and diversity** (done 2026-09-04; the live cloud validation run is pending the user's key). CLIP or SigLIP, semantic similarity, greedy selection with penalty, tagging (local and cloud), captions.
 - **M4, soundtrack.** Complete. Template prompt, validation, variants, optional LLM refinement, place names. Beat tracking, beat durations, BPM check, `beatmap.txt`.
-- **M4b, remaining AI.** Aesthetic scoring, face detection.
+- **M4b, remaining AI.** Face detection done 2026-09-28 (ADR 14). Only the local aesthetic predictor remains.
 - **M5, GUI.** Complete. Five screens on the existing core, plus user decisions in the manifest and the mood controls in the prompt.
 - **M6, packaging.** macOS `.dmg` on CI, first run model download.
 

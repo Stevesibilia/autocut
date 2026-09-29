@@ -33,12 +33,12 @@
 
 ## 4. Docs (decision 10), one commit
 
-- [ ] 4.1 ADR 15, the `SPEC.md` sections, `CHANGELOG.md`. Run `sjust format-md` on each Markdown file.
-- [ ] 4.2 Commit: `docs: record the local aesthetic predictor`.
+- [x] 4.1 ADR 15, the `SPEC.md` sections, `CHANGELOG.md`. Run `sjust format-md` on each Markdown file.
+- [x] 4.2 Commit: `docs: record the local aesthetic predictor`.
 
 ## 5. Gates and hand-back
 
-- [ ] 5.1 `make lint` and `openspec validate local-aesthetic-predictor --strict`.
-- [ ] 5.2 Through the test runner, run `make test`, `make docker-test-ai` and `make docker-test-gui`, and quote the counts.
-- [ ] 5.3 The rating spread from 2.5, and the QuickGELU check from 2.2.
-- [ ] 5.4 Tick these boxes, push the branch and hand back.
+- [x] 5.1 `make lint` and `openspec validate local-aesthetic-predictor --strict`.
+- [x] 5.2 Through the test runner, run `make test`, `make docker-test-ai` and `make docker-test-gui`, and quote the counts.
+- [x] 5.3 The rating spread from 2.5, and the QuickGELU check from 2.2.
+- [x] 5.4 Tick these boxes, push the branch and hand back.

@@ -25,7 +25,7 @@ from autocut.core.describe import DescribeResult
 from autocut.core.embeddings import EmbedResult
 from autocut.core.events import ProgressEvent
 from autocut.core.manifest import Manifest
-from autocut.core.pipeline import run_describe, run_embed
+from autocut.core.pipeline import run_aesthetic, run_describe, run_embed
 from autocut.core.providers import cloud_enabled
 from autocut.core.tags import TagResult, tag_project
 
@@ -71,9 +71,11 @@ def embed(
     cfg = load_config(config, no_cloud)
     manifest = open_project(project)
     result = _run_embed(manifest, cfg)
+    scored = run_aesthetic(manifest, cfg)
     manifest.updated_at = datetime.now(UTC)
     manifest.save(project / "manifest.json")
     output.print_embed(result)
+    output.print_aesthetic(scored, cfg.providers.aesthetic)
 
 
 def _run_tag(manifest: Manifest, cfg: AutocutConfig) -> TagResult:

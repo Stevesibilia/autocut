@@ -11,6 +11,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+from autocut.core.aesthetic import AestheticResult
 from autocut.core.beatsync import QuantizeResult, Track
 from autocut.core.describe import DescribeResult
 from autocut.core.embeddings import EmbedResult
@@ -29,6 +30,22 @@ def print_embed(result: EmbedResult) -> None:
         f"Embedded [bold]{result.segments}[/bold] segments with {result.model} "
         f"on {result.device} ({result.files_embedded} files computed, "
         f"{result.files_from_cache} from cache)"
+    )
+    for warning in result.warnings:
+        console.print(f"[yellow]{warning}[/yellow]")
+
+
+def print_aesthetic(result: AestheticResult, enabled: bool) -> None:
+    """One line about the local aesthetic stage, and nothing when the feature is off."""
+    if not enabled:
+        return
+    if result.skipped_reason is not None:
+        console.print(f"Aesthetic scoring skipped: {result.skipped_reason}")
+        return
+    console.print(
+        f"Scored [bold]{result.segments}[/bold] segments for aesthetics with {result.model} "
+        f"on {result.device} ({result.files_computed} files computed, "
+        f"{result.files_from_cache} from cache, {result.kept_cloud} kept from cloud)"
     )
     for warning in result.warnings:
         console.print(f"[yellow]{warning}[/yellow]")

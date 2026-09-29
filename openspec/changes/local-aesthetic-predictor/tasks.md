@@ -23,13 +23,13 @@
 
 ## 3. Pipeline, CLI, GUI, doctor (decision 7), one commit
 
-- [ ] 3.1 `run_aesthetic`, `AnalysisOutcome.aesthetic`, the call in `analyze_project` and in `autocut embed`, `output.print_aesthetic`, the GUI `describe_outcome` line, and the `aesthetic_weights` doctor check.
-- [ ] 3.2 Tests:
+- [x] 3.1 `run_aesthetic`, `AnalysisOutcome.aesthetic`, the call in `analyze_project` and in `autocut embed`, `output.print_aesthetic`, the GUI `describe_outcome` line, and the `aesthetic_weights` doctor check.
+- [x] 3.2 Tests:
   - `test_pipeline` or `test_analyze`: the stage runs after embed and before describe;
   - `test_cli_embed.py`: the printed line when enabled, nothing new when disabled;
   - `test_doctor.py`: the check appears only when enabled;
   - the GUI summary line in the analysis screen tests.
-- [ ] 3.3 Commit: `feat(cli): report local aesthetic scoring`.
+- [x] 3.3 Commit: `feat(cli): report local aesthetic scoring`.
 
 ## 4. Docs (decision 10), one commit
 

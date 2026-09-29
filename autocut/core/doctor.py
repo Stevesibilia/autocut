@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from autocut.core import embeddings
+from autocut.core.aesthetic import AESTHETIC_TOWER
 from autocut.core.cache import cache_stats
 from autocut.core.config import AutocutConfig, TimeoutsConfig
 from autocut.core.hwaccel import select as select_hwaccel
@@ -58,9 +59,12 @@ class DoctorReport:
     model_weights: Check
     cloud_key: Check
     cache: Check
+    aesthetic_weights: Check | None = None
+    """Present only when ``providers.aesthetic`` is on."""
 
     @property
     def checks(self) -> tuple[Check, ...]:
+        optional = () if self.aesthetic_weights is None else (self.aesthetic_weights,)
         return (
             self.ffmpeg,
             self.ffprobe,
@@ -68,6 +72,7 @@ class DoctorReport:
             self.ai_extra,
             self.compute_device,
             self.model_weights,
+            *optional,
             self.cloud_key,
             self.cache,
         )
@@ -97,6 +102,9 @@ def inspect_environment(config: AutocutConfig, sample: Path | None = None) -> Do
         model_weights=_weights_check(config),
         cloud_key=_key_check(config),
         cache=_cache_check(config),
+        aesthetic_weights=_weights_check(config, AESTHETIC_TOWER, "aesthetic_weights")
+        if config.providers.aesthetic
+        else None,
     )
 
 
@@ -147,13 +155,15 @@ def _device_check() -> Check:
     return Check(name="compute_device", ok=True, detail=embeddings.select_device())
 
 
-def _weights_check(config: AutocutConfig) -> Check:
-    name = config.providers.embedding_model
+def _weights_check(
+    config: AutocutConfig, model: str | None = None, check_name: str = "model_weights"
+) -> Check:
+    name = model or config.providers.embedding_model
     directory = embeddings.models_dir(config)
-    if embeddings.weights_present(config):
-        return Check(name="model_weights", ok=True, detail=f"{name} in {directory}")
+    if embeddings.weights_present(config, model):
+        return Check(name=check_name, ok=True, detail=f"{name} in {directory}")
     return Check(
-        name="model_weights",
+        name=check_name,
         ok=False,
         detail=f"{name} not in {directory}, it will be downloaded on first use",
     )

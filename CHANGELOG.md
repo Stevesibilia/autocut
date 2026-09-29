@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-29
+
 ### Added
 
 - Local face detection: with `providers.faces` on, analysis counts faces on every sampled frame with the bundled YuNet model and aggregates them into `Metrics.faces`, a new scored metric weighted by `weights.faces`. Segments whose face counts differ are never deduplicated (`similarity.face_guard`), the report card shows the count, and the family profile turns detection on (issue #95, ADR 14).

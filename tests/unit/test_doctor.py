@@ -49,7 +49,7 @@ def minimal_machine(
     monkeypatch.setattr(doctor_module.embeddings, "available", lambda: extra_reason, raising=False)
     monkeypatch.setattr(doctor_module.embeddings, "select_device", lambda: "cpu", raising=False)
     monkeypatch.setattr(
-        doctor_module.embeddings, "weights_present", lambda config: False, raising=False
+        doctor_module.embeddings, "weights_present", lambda config, name=None: False, raising=False
     )
     monkeypatch.setattr(
         doctor_module,
@@ -92,7 +92,7 @@ def test_the_extra_being_present_reports_a_device_and_the_model(
 ) -> None:
     minimal_machine(monkeypatch, extra_reason=None)
     monkeypatch.setattr(
-        doctor_module.embeddings, "weights_present", lambda config: True, raising=False
+        doctor_module.embeddings, "weights_present", lambda config, name=None: True, raising=False
     )
     report = inspect_environment(config_in(tmp_path))
 
@@ -246,3 +246,32 @@ def test_the_report_lists_its_checks_in_order() -> None:
     check = Check(name="x", ok=True, detail="")
     report = DoctorReport(*(check for _ in range(8)))
     assert [item.name for item in report.checks] == ["x"] * 8
+
+
+def test_the_aesthetic_weights_check_appears_only_when_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    minimal_machine(monkeypatch, extra_reason=None)
+    asked: list[str | None] = []
+
+    def present(config: object, name: str | None = None) -> bool:
+        asked.append(name)
+        return name is None
+
+    monkeypatch.setattr(doctor_module.embeddings, "weights_present", present, raising=False)
+
+    off = inspect_environment(config_in(tmp_path))
+    assert off.aesthetic_weights is None
+    assert "aesthetic_weights" not in {check.name for check in off.checks}
+
+    config = config_in(tmp_path)
+    config.providers.aesthetic = True
+    on = inspect_environment(config)
+
+    assert on.aesthetic_weights is not None
+    assert on.aesthetic_weights.name == "aesthetic_weights"
+    assert not on.aesthetic_weights.ok
+    assert "ViT-B-32-quickgelu/openai" in on.aesthetic_weights.detail
+    assert "downloaded on first use" in on.aesthetic_weights.detail
+    assert [check.name for check in on.checks].index("aesthetic_weights") == 6
+    assert "ViT-B-32-quickgelu/openai" in asked

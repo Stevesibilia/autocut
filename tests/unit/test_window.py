@@ -66,6 +66,16 @@ def test_frame_scores_follow_sharpness_when_it_is_the_only_weight() -> None:
     assert scores[0] < scores[1] < scores[2] < scores[3]
 
 
+def test_a_segment_only_metric_leaves_the_frame_scores_alone() -> None:
+    data = arrays([10.0, 20.0, 900.0, 950.0])
+    norms = build_class_norms({"drone": [data]})
+    base = ScoringWeights(sharpness=1.0, exposure=0.0, motion=0.0, stability=0.0, colorfulness=0.0)
+    weighted = base.model_copy(update={"aesthetic": 1.0})
+    assert np.array_equal(
+        frame_scores(data, norms["drone"], weighted), frame_scores(data, norms["drone"], base)
+    )
+
+
 def test_frame_scores_on_an_empty_entry() -> None:
     assert frame_scores({}, ClassNorms(), ScoringWeights()).size == 0
 

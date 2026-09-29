@@ -493,6 +493,17 @@ def test_validation_rejects_an_answer_with_none_of_the_fields() -> None:
     assert reason is not None
 
 
+def test_a_cloud_aesthetic_is_marked_cloud(tmp_path: Path) -> None:
+    manifest = project_in(tmp_path, count=1)
+    segment = manifest.segments["aaa:0"]
+
+    apply_description(segment, good(aesthetic=8))
+
+    assert segment.metrics is not None
+    assert segment.metrics.aesthetic == pytest.approx(0.8)
+    assert segment.metrics.aesthetic_source == "cloud"
+
+
 def test_applying_a_description_twice_does_not_pile_up_cloud_tags(tmp_path: Path) -> None:
     manifest = project_in(tmp_path, count=1)
     segment = manifest.segments["aaa:0"]

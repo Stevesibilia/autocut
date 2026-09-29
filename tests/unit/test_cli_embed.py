@@ -10,10 +10,11 @@ import pytest
 from typer.testing import CliRunner
 
 from autocut.cli.main import app
+from autocut.core import aesthetic as aesthetic_module
 from autocut.core import embeddings
 from autocut.core.cache import CacheEntry, read_entry, write_entry
 from autocut.core.config import AutocutConfig
-from autocut.core.manifest import Manifest, Segment
+from autocut.core.manifest import Manifest, Metrics, Segment
 
 runner = CliRunner()
 
@@ -35,7 +36,9 @@ class FakeEncoder:
         return np.stack([flat.mean(axis=1), flat.std(axis=1)], axis=1)
 
 
-def project_in(tmp_path: Path, *, local_embeddings: bool = True, shots: int = 3) -> Path:
+def project_in(
+    tmp_path: Path, *, local_embeddings: bool = True, shots: int = 3, aesthetic: bool = False
+) -> Path:
     """A project folder with a manifest, an autocut.toml and one cached file."""
     project = tmp_path / "edit"
     project.mkdir()
@@ -44,7 +47,8 @@ def project_in(tmp_path: Path, *, local_embeddings: bool = True, shots: int = 3)
         "[cache]\n"
         f'dir = "{cache.as_posix()}"\n'
         "\n[providers]\n"
-        f"local_embeddings = {str(local_embeddings).lower()}\n",
+        f"local_embeddings = {str(local_embeddings).lower()}\n"
+        f"aesthetic = {str(aesthetic).lower()}\n",
         encoding="utf-8",
     )
 
@@ -67,7 +71,13 @@ def project_in(tmp_path: Path, *, local_embeddings: bool = True, shots: int = 3)
     for index in range(shots):
         segment_id = f"aaa:{index}"
         manifest.segments[segment_id] = Segment(
-            id=segment_id, file_id="aaa", start_s=float(index), end_s=float(index) + 1.0
+            id=segment_id,
+            file_id="aaa",
+            start_s=float(index),
+            end_s=float(index) + 1.0,
+            metrics=Metrics(
+                sharpness=100.0, exposure_clipped=0.0, motion=0.3, stability=0.9, colorfulness=0.2
+            ),
         )
     manifest.save(project / "manifest.json")
     return project
@@ -77,7 +87,7 @@ def with_extra(monkeypatch: pytest.MonkeyPatch) -> FakeEncoder:
     encoder = FakeEncoder()
     monkeypatch.setattr(embeddings, "_probe", (True, None))
     monkeypatch.setattr(embeddings, "select_device", lambda: "cpu")
-    monkeypatch.setattr(embeddings, "load_model", lambda config, device=None: object())
+    monkeypatch.setattr(embeddings, "load_model", lambda config, device=None, name=None: object())
     monkeypatch.setattr(embeddings, "image_encoder", lambda loaded: encoder)
     return encoder
 
@@ -176,3 +186,49 @@ def test_the_model_identifier_is_stored_beside_the_vectors(
     assert entry.embedding_model == MODEL
     assert entry.embeddings is not None
     assert entry.embeddings.shape == (3, 2)
+
+
+def test_embed_also_scores_aesthetics_when_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = project_in(tmp_path, aesthetic=True)
+    with_extra(monkeypatch)
+    monkeypatch.setattr(
+        aesthetic_module, "load_head", lambda: (np.array([1.0, 0.0], dtype=np.float32), 5.0)
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["embed", str(project)])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Scored 3 segments for aesthetics with ViT-B-32-quickgelu/openai on cpu" in result.stdout
+    assert "(1 files computed, 0 from cache, 0 kept from cloud)" in result.stdout
+    manifest = Manifest.load(project / "manifest.json")
+    metrics = manifest.segments["aaa:0"].metrics
+    assert metrics is not None and metrics.aesthetic_source == "local"
+
+
+def test_embed_prints_nothing_new_when_aesthetics_are_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = project_in(tmp_path)
+    with_extra(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["embed", str(project)])
+
+    assert result.exit_code == 0, result.stdout
+    assert "esthetic" not in result.stdout
+
+
+def test_embed_says_why_aesthetics_were_skipped_when_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = project_in(tmp_path, aesthetic=True)
+    monkeypatch.setattr(embeddings, "_probe", (False, "the ai extra is not importable: no torch"))
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["embed", str(project)])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Aesthetic scoring skipped: the ai extra is not importable: no torch" in result.stdout

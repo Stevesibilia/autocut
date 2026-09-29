@@ -185,6 +185,40 @@ def test_the_summary_says_why_a_stage_was_skipped(
     assert "Descriptions skipped: no API key." in text
 
 
+def test_the_summary_reports_local_aesthetics_only_when_enabled(
+    state_and_screen: tuple[ProjectState, AnalysisScreen], tmp_path: Path
+) -> None:
+    from autocut.core.aesthetic import AestheticResult
+
+    state, screen = state_and_screen
+    out = tmp_path / "edit"
+    out.mkdir()
+    a_manifest(out).save(out / "manifest.json")
+    state.open_project(out)
+    outcome = AnalysisOutcome(
+        files=1,
+        segments=4,
+        aesthetic=AestheticResult(
+            model="ViT-B-32-quickgelu/openai",
+            device="cpu",
+            segments=3,
+            kept_cloud=1,
+            files_computed=1,
+        ),
+    )
+
+    state.config.providers.aesthetic = False
+    assert "esthetic" not in screen.describe_outcome(outcome)
+
+    state.config.providers.aesthetic = True
+    text = screen.describe_outcome(outcome)
+    assert "Scored 3 segments for aesthetics with ViT-B-32-quickgelu/openai on cpu" in text
+    assert "1 kept from cloud" in text
+
+    outcome.aesthetic = AestheticResult(skipped_reason="no ai extra")
+    assert "Aesthetic scoring skipped: no ai extra." in screen.describe_outcome(outcome)
+
+
 def test_clearing_the_cache_reports_what_it_removed(
     state_and_screen: tuple[ProjectState, AnalysisScreen], tmp_path: Path
 ) -> None:

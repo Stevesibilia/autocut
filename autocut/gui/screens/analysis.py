@@ -293,6 +293,15 @@ class AnalysisScreen(QWidget):
                 if embed.skipped_reason
                 else f"Embedded {embed.segments} segments with {embed.model} on {embed.device}."
             )
+        scored = result.aesthetic
+        if scored is not None and self._state.config.providers.aesthetic:
+            lines.append(
+                f"Aesthetic scoring skipped: {scored.skipped_reason}."
+                if scored.skipped_reason
+                else f"Scored {scored.segments} segments for aesthetics with {scored.model} "
+                f"on {scored.device} ({scored.files_computed} files computed, "
+                f"{scored.files_from_cache} from cache, {scored.kept_cloud} kept from cloud)."
+            )
         tag = result.tag
         if tag is not None:
             lines.append(

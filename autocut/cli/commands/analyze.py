@@ -103,9 +103,11 @@ def analyze(
         output.console.print(f"  {reason}: {count}")
     if outcome is not None:
         assert outcome.embed is not None
+        assert outcome.aesthetic is not None
         assert outcome.tag is not None
         assert outcome.describe is not None
         output.print_embed(outcome.embed)
+        output.print_aesthetic(outcome.aesthetic, cfg.providers.aesthetic)
         output.print_tag(outcome.tag)
         output.print_describe(outcome.describe)
     output.console.print(f"Report written to {report_path}")

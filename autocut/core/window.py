@@ -76,7 +76,12 @@ def frame_scores(
         weight = float(getattr(weights, weight_name))
         if weight <= 0:
             continue
-        values = arrays.get(METRIC_ARRAYS[metric])
+        array_name = METRIC_ARRAYS.get(metric)
+        if array_name is None:
+            # Judged per segment (aesthetic), so it moves the segment score and not the
+            # choice of window inside a segment.
+            continue
+        values = arrays.get(array_name)
         if values is None or values.size != timestamps.size:
             continue
         normalized = class_norms.normalize(metric, values)

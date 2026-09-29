@@ -62,6 +62,10 @@ class CacheEntry:
     embedding_model: str | None = None
     face_model: str | None = None
     """Id of the model that produced the ``faces`` array, or ``None`` when there is none."""
+    aesthetic: np.ndarray | None = None
+    """One rating per cached thumbnail, on the 1 to 10 scale. Per shot, not per frame,
+    so it is not in ``ARRAY_NAMES``."""
+    aesthetic_model: str | None = None
     warnings: list[str] = field(default_factory=list)
     derived: dict[str, Any] = field(default_factory=dict)
     """Values computed from this entry, such as a segment's visual hashes. Memory only,
@@ -147,6 +151,7 @@ def read_entry(file_key: str, config: AutocutConfig, sprites: bool = True) -> Ca
             arrays = {name: payload[name] for name in ARRAY_NAMES if name in payload}
             thumbs = payload.get("thumb_frames")
             embeddings = payload.get("embeddings")
+            aesthetic = payload.get("aesthetic")
             npz_token_array = payload.get("write_token")
             npz_token = str(npz_token_array.item()) if npz_token_array is not None else None
             strips = (
@@ -186,6 +191,8 @@ def read_entry(file_key: str, config: AutocutConfig, sprites: bool = True) -> Ca
         embeddings=embeddings,
         embedding_model=embedding_model,
         face_model=meta.get("face_model"),
+        aesthetic=aesthetic,
+        aesthetic_model=meta.get("aesthetic_model") if aesthetic is not None else None,
         warnings=list(meta.get("warnings", [])),
     )
 
@@ -223,6 +230,8 @@ def _freeze(entry: CacheEntry) -> CacheEntry:
         entry.thumb_frames.flags.writeable = False
     if entry.embeddings is not None:
         entry.embeddings.flags.writeable = False
+    if entry.aesthetic is not None:
+        entry.aesthetic.flags.writeable = False
     return entry
 
 
@@ -286,6 +295,8 @@ def write_entry(entry: CacheEntry, config: AutocutConfig) -> Path:
         payload["thumb_frames"] = entry.thumb_frames
     if entry.embeddings is not None:
         payload["embeddings"] = entry.embeddings
+    if entry.aesthetic is not None:
+        payload["aesthetic"] = entry.aesthetic
     for index, sprite in enumerate(entry.sprites):
         payload[f"sprite_{index}"] = sprite
 
@@ -307,6 +318,7 @@ def write_entry(entry: CacheEntry, config: AutocutConfig) -> Path:
                 "shot_bounds": [[a, b] for a, b in entry.shot_bounds],
                 "embedding_model": entry.embedding_model,
                 "face_model": entry.face_model,
+                "aesthetic_model": entry.aesthetic_model,
                 "telemetry": entry.telemetry,
                 "probe": entry.probe,
                 "warnings": entry.warnings,

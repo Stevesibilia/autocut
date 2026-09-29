@@ -268,6 +268,7 @@ max_retries = 4       # per request, on 429 and 5xx, with backoff 1, 2, 4, 8 s
 max_failures = 8      # consecutive failures that stop the describe step
 prompt_version = 1    # bump when the prompt wording changes; invalidates the cache
 local_embeddings = true   # needs the ai extra; run "autocut doctor" to check
+aesthetic = false         # local aesthetic score per segment; needs the ai extra, cloud wins
 # Vision model as architecture/pretrained. Changing it recomputes the embeddings from
 # the cached frames and leaves the metric arrays alone.
 embedding_model = "ViT-B-32/laion2b_s34b_b79k"

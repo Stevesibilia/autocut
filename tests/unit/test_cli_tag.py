@@ -94,7 +94,7 @@ def project_in(tmp_path: Path, *, embedded: bool = True, extra_config: str = "")
 def with_text_encoder(monkeypatch: pytest.MonkeyPatch, count: int = PROMPT_ROWS) -> FakeTextEncoder:
     encoder = FakeTextEncoder(count)
     monkeypatch.setattr(embeddings, "_probe", (True, None))
-    monkeypatch.setattr(tags, "load_model", lambda config, device=None: object())
+    monkeypatch.setattr(tags, "load_model", lambda config, device=None, name=None: object())
     monkeypatch.setattr(tags, "text_encoder", lambda loaded: encoder)
     return encoder
 

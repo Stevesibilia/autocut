@@ -155,8 +155,10 @@ def models_dir(config: AutocutConfig) -> Path:
     return base / MODELS_DIRNAME
 
 
-def weights_present(config: AutocutConfig) -> bool:
-    """Whether the configured checkpoint looks like it is already on disk.
+def weights_present(config: AutocutConfig, name: str | None = None) -> bool:
+    """Whether a checkpoint looks like it is already on disk.
+
+    ``name`` is ``architecture/pretrained``; ``None`` means the configured embedding model.
 
     open_clip names its downloads after the upstream URL or the Hugging Face repo, and
     the shape of both changes between releases, so this matches the pretrained tag or
@@ -166,7 +168,7 @@ def weights_present(config: AutocutConfig) -> bool:
     directory = models_dir(config)
     if not directory.exists():
         return False
-    architecture, pretrained = parse_model_name(config.providers.embedding_model)
+    architecture, pretrained = parse_model_name(name or config.providers.embedding_model)
     wanted = {_squash(architecture), _squash(pretrained)}
     for path in directory.rglob("*"):
         if not path.is_file():
@@ -181,8 +183,12 @@ def _squash(text: str) -> str:
     return "".join(character for character in text.lower() if character.isalnum())
 
 
-def load_model(config: AutocutConfig, device: str | None = None) -> LoadedModel:
-    """Load the configured model onto the best device, downloading weights once.
+def load_model(
+    config: AutocutConfig, device: str | None = None, name: str | None = None
+) -> LoadedModel:
+    """Load a model onto the best device, downloading weights once.
+
+    ``name`` is ``architecture/pretrained``; ``None`` means the configured embedding model.
 
     Weights land in the platform cache directory under ``models/``, which is what makes
     every later run work offline and lets the macOS bundle pre-seed them (ADR 7).
@@ -191,7 +197,8 @@ def load_model(config: AutocutConfig, device: str | None = None) -> LoadedModel:
     if reason is not None:
         raise EmbeddingsUnavailableError(reason)
     open_clip = _open_clip()
-    architecture, pretrained = parse_model_name(config.providers.embedding_model)
+    model_name = name or config.providers.embedding_model
+    architecture, pretrained = parse_model_name(model_name)
     directory = models_dir(config)
     directory.mkdir(parents=True, exist_ok=True)
     resolved = device or select_device()
@@ -207,11 +214,9 @@ def load_model(config: AutocutConfig, device: str | None = None) -> LoadedModel:
             model = model.half()
         model.eval()
     except Exception as exc:  # noqa: BLE001 - any failure here is the same to the caller
-        raise EmbeddingsUnavailableError(
-            f"could not load {config.providers.embedding_model}: {exc}"
-        ) from exc
+        raise EmbeddingsUnavailableError(f"could not load {model_name}: {exc}") from exc
     return LoadedModel(
-        name=config.providers.embedding_model,
+        name=model_name,
         architecture=architecture,
         pretrained=pretrained,
         device=resolved,

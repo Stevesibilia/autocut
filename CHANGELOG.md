@@ -7,6 +7,11 @@ All notable changes to this project are documented in this file. The format foll
 ### Added
 
 - Local face detection: with `providers.faces` on, analysis counts faces on every sampled frame with the bundled YuNet model and aggregates them into `Metrics.faces`, a new scored metric weighted by `weights.faces`. Segments whose face counts differ are never deduplicated (`similarity.face_guard`), the report card shows the count, and the family profile turns detection on (issue #95, ADR 14).
+- Local aesthetic scoring. With `providers.aesthetic` on and the `ai` extra installed, every segment's aesthetic is rated from its cached thumbnail by LAION's aesthetic-predictor head (bundled, 3 KB) on a second CLIP tower, OpenAI ViT-B/32. A cloud judgment replaces the local one, `Metrics.aesthetic_source` records which is which, and `autocut embed`, `autocut analyze`, the analysis screen and `doctor` report the stage (issue #96, ADR 15).
+
+### Fixed
+
+- Setting `weights.aesthetic` above 0 raised `KeyError: 'aesthetic'` in every selection. The window search now ignores scored metrics that have no per-frame array, so the aesthetic moves a segment's score and not the window inside it.
 
 ## [0.6.0] - 2026-09-28
 

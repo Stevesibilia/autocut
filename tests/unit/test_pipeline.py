@@ -92,3 +92,33 @@ def test_a_cancelled_analysis_stops_before_embed(
 
     with pytest.raises(AnalysisCancelled):
         pipeline.analyze_project(manifest, config)
+
+
+def test_aesthetics_run_after_embed_and_before_describe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autocut.core import pipeline
+    from autocut.core.aesthetic import AestheticResult
+    from autocut.core.describe import DescribeResult
+    from autocut.core.embeddings import EmbedResult
+
+    order: list[str] = []
+    aesthetic = AestheticResult(skipped_reason="off")
+
+    def step(name: str, result: object) -> object:
+        def run(*args: object, **kwargs: object) -> object:
+            order.append(name)
+            return result
+
+        return run
+
+    monkeypatch.setattr(pipeline, "analyze_files", step("analyze", None))
+    monkeypatch.setattr(pipeline, "run_embed", step("embed", EmbedResult()))
+    monkeypatch.setattr(pipeline, "run_aesthetic", step("aesthetic", aesthetic))
+    monkeypatch.setattr(pipeline, "tag_project", step("tag", None))
+    monkeypatch.setattr(pipeline, "run_describe", step("describe", DescribeResult()))
+
+    outcome = pipeline.analyze_project(_manifest_with_one_segment(tmp_path), AutocutConfig())
+
+    assert order == ["analyze", "embed", "aesthetic", "tag", "describe"]
+    assert outcome.aesthetic is aesthetic

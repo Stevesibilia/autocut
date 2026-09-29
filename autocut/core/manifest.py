@@ -186,6 +186,7 @@ class Metrics(BaseModel):
     stability: float
     colorfulness: float
     aesthetic: float | None = None
+    aesthetic_source: Literal["local", "cloud"] | None = None
     faces: int | None = None
     min_height_m: float | None = None
     mean_speed_ms: float | None = None

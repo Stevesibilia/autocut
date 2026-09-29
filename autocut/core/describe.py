@@ -25,18 +25,18 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from autocut.core.aesthetic import AESTHETIC_RANGE
 from autocut.core.cache import cache_dir, read_entry, thumb_index
 from autocut.core.config import AutocutConfig, DescribeScope
 from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
 from autocut.core.manifest import Manifest, Metrics, Segment, Tag
 from autocut.core.providers import Description, ProviderError, VisionProvider
 from autocut.core.providers.openrouter import bounded_int
-from autocut.core.score import score_metrics
+from autocut.core.score import rescore
 
 DESCRIPTIONS_DIRNAME = "descriptions"
 MAX_TAGS = 5
 MAX_CAPTION_WORDS = 20
-AESTHETIC_RANGE = (1, 10)
 #: An aesthetic is clamped into range, but a stored one has to be finite first. A cache
 #: file is written by this module and read back later, and a hand-edited one is a file
 #: like any other.
@@ -200,6 +200,7 @@ def apply_description(segment: Segment, description: Description) -> None:
         # Scaled to 0 to 1 so it normalizes beside the other metrics rather than
         # swamping them with a number ten times their size.
         metrics.aesthetic = description.aesthetic / AESTHETIC_RANGE[1]
+        metrics.aesthetic_source = "cloud"
 
 
 def segments_in_scope(manifest: Manifest, scope: DescribeScope) -> list[Segment]:
@@ -401,19 +402,4 @@ def _rescore(manifest: Manifest, config: AutocutConfig) -> None:
     """
     if config.weights.aesthetic <= 0:
         return
-    scored: list[tuple[Segment, str, Metrics]] = [
-        (
-            segment,
-            manifest.files[segment.file_id].source_class
-            if segment.file_id in manifest.files
-            else "generic",
-            segment.metrics,
-        )
-        for segment in manifest.segments.values()
-        if segment.metrics is not None
-    ]
-    if not scored:
-        return
-    scores = score_metrics([(name, metrics) for _, name, metrics in scored], config.weights)
-    for (segment, _, _), score in zip(scored, scores, strict=True):
-        segment.score = score
+    rescore(manifest, config.weights)

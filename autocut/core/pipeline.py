@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from autocut.core.aesthetic import AestheticResult, score_aesthetics
 from autocut.core.analyze import AnalysisCancelled, analyze_files
 from autocut.core.config import AutocutConfig
 from autocut.core.describe import DescribeResult, describe_project
@@ -32,6 +33,7 @@ class AnalysisOutcome:
     segments: int = 0
     cached_files: int = 0
     embed: EmbedResult | None = None
+    aesthetic: AestheticResult | None = None
     tag: TagResult | None = None
     describe: DescribeResult | None = None
 
@@ -53,6 +55,13 @@ def run_embed(
     manifest.analysis.embedding_model = result.model
     manifest.analysis.embedding_device = result.device
     return result
+
+
+def run_aesthetic(
+    manifest: Manifest, config: AutocutConfig, progress: ProgressCallback = null_progress
+) -> AestheticResult:
+    """Score the aesthetics locally, or say why not. A cloud judgment is never replaced."""
+    return score_aesthetics(manifest, config, progress)
 
 
 def run_describe(
@@ -84,7 +93,7 @@ def analyze_project(
     *,
     no_cloud: bool = False,
 ) -> AnalysisOutcome:
-    """Analyze the ingested files, then embed, tag and describe.
+    """Analyze the ingested files, then embed, score aesthetics, tag and describe.
 
     ``manifest.files`` must already be filled, normally by :func:`ingest_into`. On
     :class:`AnalysisCancelled` from ``analyze_files`` the exception propagates before
@@ -114,6 +123,7 @@ def analyze_project(
     outcome.cached_files = cached
     outcome.segments = len(manifest.segments)
     outcome.embed = run_embed(manifest, config, progress)
+    outcome.aesthetic = run_aesthetic(manifest, config, progress)
     outcome.tag = tag_project(manifest, config)
     outcome.describe = run_describe(manifest, config, progress, no_cloud=no_cloud)
     return outcome

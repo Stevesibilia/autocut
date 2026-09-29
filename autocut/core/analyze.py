@@ -20,8 +20,9 @@ from pathlib import Path
 import numpy as np
 
 from autocut.core.cache import CacheEntry, read_entry, shot_index, write_entry
-from autocut.core.config import AutocutConfig
+from autocut.core.config import AnalysisConfig, AutocutConfig
 from autocut.core.events import ProgressCallback, ProgressEvent, null_progress
+from autocut.core.faces import FACE_MODEL_ID, FaceDetectionError, count_faces
 from autocut.core.hwaccel import SOFTWARE, Hwaccel
 from autocut.core.hwaccel import select as select_hwaccel
 from autocut.core.hwaccel import verify as verify_hwaccel
@@ -67,7 +68,7 @@ def analyze_file(
 ) -> FileAnalysis:
     """Decode, detect shots and measure one file. Runs inside a pool worker."""
     cached = read_entry(source.id, config)
-    if cached is not None:
+    if cached is not None and _faces_current(cached, config):
         return FileAnalysis(file_id=source.id, entry=cached, cached=True)
 
     probe = probe_from_source(source)
@@ -88,19 +89,29 @@ def analyze_file(
         center_crop_fraction=config.analysis.sharpness_center_crop,
         stability_window=config.analysis.stability_window,
     )
+    arrays = {
+        "timestamps": sampled.timestamps,
+        "sharpness": metrics.sharpness,
+        "clipping": metrics.clipping,
+        "motion": metrics.motion,
+        "stability": metrics.stability,
+        "colorfulness": metrics.colorfulness,
+    }
+    warnings = list(sampled.warnings)
+    face_model: str | None = None
+    if config.providers.faces:
+        try:
+            arrays["faces"] = count_faces(sampled.frames, config.analysis)
+            face_model = FACE_MODEL_ID
+        except FaceDetectionError as error:
+            warnings.append(f"no face counts: {error}")
     bounds = _shot_bounds(sampled.frames, sampled.timestamps, probe, source, config)
 
     entry = CacheEntry(
         file_key=source.id,
         source=sampled.source,
-        arrays={
-            "timestamps": sampled.timestamps,
-            "sharpness": metrics.sharpness,
-            "clipping": metrics.clipping,
-            "motion": metrics.motion,
-            "stability": metrics.stability,
-            "colorfulness": metrics.colorfulness,
-        },
+        arrays=arrays,
+        face_model=face_model,
         shot_bounds=bounds,
         telemetry=_telemetry_payload(probe, source),
         # Only what ingest recorded: a field it never probed (has_audio, the tags) is left
@@ -108,10 +119,21 @@ def analyze_file(
         probe=probe.model_dump(mode="json", exclude_unset=True),
         thumb_frames=_thumb_frames(sampled.frames, sampled.timestamps, bounds),
         sprites=_sprites(sampled.frames, sampled.timestamps, bounds, config),
-        warnings=sampled.warnings,
+        warnings=warnings,
     )
     write_entry(entry, config)
-    return FileAnalysis(file_id=source.id, entry=entry, warnings=sampled.warnings)
+    return FileAnalysis(file_id=source.id, entry=entry, warnings=warnings)
+
+
+def _faces_current(entry: CacheEntry, config: AutocutConfig) -> bool:
+    """Whether a cached entry can stand in for a fresh analysis under this config.
+
+    Only face detection can make an entry stale: turning it on needs counts from the
+    current model. Other readers take a stale entry as it is until analysis refreshes it.
+    """
+    if not config.providers.faces:
+        return True
+    return entry.face_model == FACE_MODEL_ID and "faces" in entry.arrays
 
 
 def _shot_bounds(
@@ -363,7 +385,14 @@ def _build_segments(
                 frame_count=int(indices.size),
                 analyzed_from="proxy" if entry.source == "proxy" else "original",
                 split_reason=span.split_reason,
-                metrics=_aggregate(entry, indices, telemetry_by_file[file_id], window),
+                metrics=_aggregate(
+                    entry,
+                    indices,
+                    telemetry_by_file[file_id],
+                    window,
+                    config.analysis,
+                    config.providers.faces,
+                ),
             )
             segments.append(segment)
             shot = shot_index(entry.shot_bounds, span.start_s)
@@ -409,8 +438,14 @@ def _aggregate(
     indices: np.ndarray,
     telemetry: list[TelemetrySample],
     span: tuple[float, float],
+    config: AnalysisConfig,
+    faces_on: bool,
 ) -> Metrics:
-    """Mean of every per-frame metric over the frames inside the segment."""
+    """Mean of every per-frame metric over the frames inside the segment.
+
+    The face count is the exception: a percentile of the per-frame counts, so a face
+    turned away for a moment does not lower it and one false detection does not raise it.
+    """
 
     def mean(name: str) -> float:
         values = entry.arrays.get(name)
@@ -431,6 +466,14 @@ def _aggregate(
         for sample in telemetry
         if sample.speed_h_ms is not None and span[0] <= sample.time_s < span[1]
     ]
+    face_counts = entry.arrays.get("faces")
+    faces: int | None = None
+    if faces_on and face_counts is not None:
+        faces = (
+            int(np.percentile(face_counts[indices], config.face_count_percentile, method="lower"))
+            if indices.size
+            else 0
+        )
     return Metrics(
         sharpness=mean("sharpness"),
         exposure_clipped=mean("clipping"),
@@ -439,4 +482,5 @@ def _aggregate(
         colorfulness=mean("colorfulness"),
         min_height_m=min(heights) if heights else None,
         mean_speed_ms=sum(speeds) / len(speeds) if speeds else None,
+        faces=faces,
     )

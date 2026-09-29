@@ -345,6 +345,12 @@ class SimilarityConfig(_Strict):
     spatial: bool = True
     temporal: bool = True
     motion: bool = True
+    face_guard: bool = Field(
+        default=True,
+        description="Two segments whose face counts are both known and differ are never "
+        "similar, whatever the other signals say: the same beach with and without the "
+        "family on it are two moments, not duplicates.",
+    )
     weights: SimilarityWeights = SimilarityWeights()
     spatial_radius_m: float = Field(
         default=200.0, description="GPS distance at which the spatial signal reaches 0."

@@ -181,6 +181,7 @@
     "target_total_seconds": null
   },
   "similarity": {
+    "face_guard": true,
     "hash_share": 0.5,
     "histogram_bins": 8,
     "motion": true,

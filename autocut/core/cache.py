@@ -35,7 +35,15 @@ from platformdirs import user_cache_dir
 from autocut.core.config import AutocutConfig
 from autocut.core.manifest import ANALYSIS_SCHEMA_VERSION
 
-ARRAY_NAMES = ("timestamps", "sharpness", "clipping", "motion", "stability", "colorfulness")
+ARRAY_NAMES = (
+    "timestamps",
+    "sharpness",
+    "clipping",
+    "motion",
+    "stability",
+    "colorfulness",
+    "faces",
+)
 
 
 @dataclass(slots=True)
@@ -52,6 +60,8 @@ class CacheEntry:
     sprites: list[np.ndarray] = field(default_factory=list)
     embeddings: np.ndarray | None = None
     embedding_model: str | None = None
+    face_model: str | None = None
+    """Id of the model that produced the ``faces`` array, or ``None`` when there is none."""
     warnings: list[str] = field(default_factory=list)
     derived: dict[str, Any] = field(default_factory=dict)
     """Values computed from this entry, such as a segment's visual hashes. Memory only,
@@ -175,6 +185,7 @@ def read_entry(file_key: str, config: AutocutConfig, sprites: bool = True) -> Ca
         sprites=strips,
         embeddings=embeddings,
         embedding_model=embedding_model,
+        face_model=meta.get("face_model"),
         warnings=list(meta.get("warnings", [])),
     )
 
@@ -295,6 +306,7 @@ def write_entry(entry: CacheEntry, config: AutocutConfig) -> Path:
                 "sample_long_side": config.analysis.sample_long_side,
                 "shot_bounds": [[a, b] for a, b in entry.shot_bounds],
                 "embedding_model": entry.embedding_model,
+                "face_model": entry.face_model,
                 "telemetry": entry.telemetry,
                 "probe": entry.probe,
                 "warnings": entry.warnings,

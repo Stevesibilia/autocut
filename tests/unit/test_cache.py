@@ -448,3 +448,28 @@ def test_a_cached_array_cannot_be_written(tmp_path: Path) -> None:
         loaded.arrays["sharpness"][0] = 999.0
     with pytest.raises(ValueError, match="read-only"):
         loaded.thumb_frames[0, 0, 0, 0] = 1
+
+
+def test_faces_and_the_model_id_round_trip(tmp_path: Path) -> None:
+    config = config_in(tmp_path)
+    entry = sample_entry()
+    entry.arrays["faces"] = np.array([0.0, 2.0, 2.0, 1.0])
+    entry.face_model = "yunet-2026may"
+    write_entry(entry, config)
+
+    loaded = read_entry(entry.file_key, config)
+
+    assert loaded is not None
+    assert loaded.arrays["faces"].tolist() == [0.0, 2.0, 2.0, 1.0]
+    assert loaded.face_model == "yunet-2026may"
+
+
+def test_an_entry_without_faces_reads_back_without_a_model(tmp_path: Path) -> None:
+    config = config_in(tmp_path)
+    write_entry(sample_entry(), config)
+
+    loaded = read_entry("abc123", config)
+
+    assert loaded is not None
+    assert "faces" not in loaded.arrays
+    assert loaded.face_model is None

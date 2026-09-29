@@ -28,6 +28,7 @@ METRIC_ARRAYS = {
     "motion": "motion",
     "stability": "stability",
     "colorfulness": "colorfulness",
+    "faces": "faces",
 }
 
 

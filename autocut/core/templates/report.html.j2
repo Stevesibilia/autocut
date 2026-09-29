@@ -451,7 +451,8 @@
     font-style: italic;
     color: var(--muted);
   }
-  .aesthetic {
+  .aesthetic,
+  .faces {
     font-variant-numeric: tabular-nums;
   }
   .tag.reason { border-color: var(--reject); color: var(--reject); background: var(--reject-wash); }
@@ -861,6 +862,10 @@
         {% if card.aesthetic_label %}
         <span class="tag aesthetic" title="What the vision model thought of the shot, 1 to 10">
           aesthetic {{ card.aesthetic_label }}</span>
+        {% endif %}
+        {% if card.faces_label %}
+        <span class="tag faces" title="Faces the detector counted in the shot">
+          {{ card.faces_label }}</span>
         {% endif %}
         {% if card.cluster_id is not none %}
         <span class="tag cluster">cluster {{ card.cluster_id }}</span>

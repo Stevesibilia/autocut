@@ -1047,3 +1047,28 @@ def test_an_export_without_a_frame_says_nothing_about_one(project: Manifest) -> 
     html = render_report(project, Path(project.output_dir)).read_text(encoding="utf-8")
 
     assert "frame." not in html
+
+
+@pytest.mark.parametrize(
+    ("faces", "label"), [(1, "1 face"), (3, "3 faces"), (0, None), (None, None)]
+)
+def test_the_card_chip_counts_faces(
+    project: Manifest, faces: int | None, label: str | None
+) -> None:
+    for segment in project.segments.values():
+        assert segment.metrics is not None
+        segment.metrics.faces = faces
+
+    cards = build_cards(project, Path(project.output_dir))
+
+    assert {card.faces_label for card in cards} == {label}
+
+
+def test_the_page_shows_the_face_chip(project: Manifest) -> None:
+    for segment in project.segments.values():
+        assert segment.metrics is not None
+        segment.metrics.faces = 3
+
+    html = render_report(project, Path(project.output_dir)).read_text(encoding="utf-8")
+
+    assert "3 faces" in html

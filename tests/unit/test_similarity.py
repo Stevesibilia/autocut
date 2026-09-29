@@ -340,3 +340,45 @@ def test_hash_and_histogram_of_an_empty_frame() -> None:
     empty = np.zeros((0, 0, 3), dtype=np.uint8)
     assert perceptual_hash(empty) == 0
     assert color_histogram(empty).sum() == 0
+
+
+def test_different_face_counts_are_never_similar() -> None:
+    """The same beach a minute apart, empty and with two people on it."""
+    config = AutocutConfig()
+    now = datetime(2025, 7, 14, 13, 37, tzinfo=UTC)
+    a = features("a", beach(), lat=39.9, lon=9.6, when=now)
+    b = features("b", beach(), lat=39.9, lon=9.6, when=now + timedelta(minutes=1))
+    assert combined_similarity(a, b, config) > 0.9
+
+    a.faces, b.faces = 0, 2
+    assert combined_similarity(a, b, config) == 0.0
+
+
+def test_equal_face_counts_leave_the_signals_alone() -> None:
+    config = AutocutConfig()
+    a = features("a", beach())
+    b = features("b", beach())
+    before = combined_similarity(a, b, config)
+    a.faces = b.faces = 2
+    assert combined_similarity(a, b, config) == before
+
+
+def test_the_guard_does_not_apply_when_a_count_is_missing() -> None:
+    config = AutocutConfig()
+    a = features("a", beach())
+    b = features("b", beach())
+    before = combined_similarity(a, b, config)
+    a.faces, b.faces = 0, None
+    assert combined_similarity(a, b, config) == before
+    a.faces, b.faces = None, 3
+    assert combined_similarity(a, b, config) == before
+
+
+def test_a_disabled_guard_ignores_the_counts() -> None:
+    config = AutocutConfig()
+    config.similarity.face_guard = False
+    a = features("a", beach())
+    b = features("b", beach())
+    before = combined_similarity(a, b, config)
+    a.faces, b.faces = 0, 2
+    assert combined_similarity(a, b, config) == before

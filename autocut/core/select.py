@@ -334,6 +334,7 @@ def _build_features(
             lon=source.gps.lon if source is not None and source.gps is not None else None,
             timestamp=absolute_time(source, segment),
             motion=_window_motion(segment, entry),
+            faces=segment.metrics.faces if segment.metrics is not None else None,
         )
     return features
 

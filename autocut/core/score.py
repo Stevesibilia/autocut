@@ -41,6 +41,8 @@ SCORED_METRICS: tuple[tuple[str, str, bool], ...] = (
     # class has is skipped for that class, so a weight above zero changes nothing until
     # the descriptions exist.
     ("aesthetic", "aesthetic", False),
+    # Filled only when providers.faces is on; a class without counts skips it.
+    ("faces", "faces", False),
 )
 
 

@@ -269,3 +269,16 @@ def test_snapping_needs_series_of_matching_length() -> None:
     start, snapped = snap_start(2.3, 2.0, scores, timestamps, np.zeros(3), (0.0, 6.0), 0.5, 0.05)
     assert not snapped
     assert start == pytest.approx(2.3)
+
+
+def test_frames_with_faces_win_the_window_when_faces_are_weighted() -> None:
+    data = arrays([100.0] * 8)
+    data["faces"] = np.array([0, 0, 0, 0, 2, 2, 2, 2], dtype=np.float64)
+    norms = build_class_norms({"drone": [data]})
+    weights = ScoringWeights(faces=2.0)
+
+    scores = frame_scores(data, norms["drone"], weights)
+    start, duration = best_window(scores, data["timestamps"], (0.0, 4.0), 2.0)
+
+    assert scores[7] > scores[0]
+    assert start - duration / 2 >= 2.0 - 1e-9

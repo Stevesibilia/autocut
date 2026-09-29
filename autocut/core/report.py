@@ -116,6 +116,7 @@ class Card:
     height_label: str | None = None
     caption: str | None = None
     aesthetic_label: str | None = None
+    faces_label: str | None = None
     description_error: str | None = None
 
 
@@ -309,6 +310,7 @@ def _card(segment: Segment, source: SourceFile | None, index: int, out_dir: Path
             if (bounds := segment.user_bounds) is not None
             else None
         ),
+        faces_label=_faces_label(segment),
         snapped=segment.snapped,
         place_id=segment.place_id,
         place_label=f"place {segment.place_id}" if segment.place_id is not None else None,
@@ -342,6 +344,14 @@ def _card(segment: Segment, source: SourceFile | None, index: int, out_dir: Path
         tag_keys=_tag_keys(segment),
         height_label=height,
     )
+
+
+def _faces_label(segment: Segment) -> str | None:
+    """ "1 face" or "3 faces"; nothing for zero or a count that was never measured."""
+    faces = segment.metrics.faces if segment.metrics is not None else None
+    if not faces:
+        return None
+    return f"{faces} face" if faces == 1 else f"{faces} faces"
 
 
 def _card_tags(segment: Segment) -> list[CardTag]:

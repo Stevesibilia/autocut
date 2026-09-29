@@ -1054,3 +1054,47 @@ def test_ten_selections_read_each_cache_entry_from_disk_once(
 
     assert sorted(calls) == ["a", "b"]
     assert all(result.selected == results[0].selected for result in results)
+
+
+def face_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, guard: bool
+) -> tuple[Manifest, AutocutConfig]:
+    """Two near-identical candidates a minute apart, with counts 0 and 2."""
+    from autocut.core import select as select_module
+    from autocut.core.similarity import color_histogram, perceptual_hash
+
+    frame = np.full((60, 80, 3), 120, dtype=np.uint8)
+    frame[10:40, 20:60] = 200
+    shared = (perceptual_hash(frame), color_histogram(frame, 8))
+    monkeypatch.setattr(select_module, "_visual_features", lambda *args: shared)
+
+    manifest = project(tmp_path)
+    add_file(manifest, "a")
+    add_file(manifest, "b", minutes=1)
+    add_segment(manifest, "a:0", "a", 0.90).metrics.faces = 0  # type: ignore[union-attr]
+    add_segment(manifest, "b:0", "b", 0.85).metrics.faces = 2  # type: ignore[union-attr]
+
+    config = open_config()
+    config.similarity.face_guard = guard
+    config.selection.diversity_lambda = 0.6
+    config.selection.max_clips = 2
+    config.selection.cluster_threshold = 0.75
+    return manifest, config
+
+
+def test_clips_with_different_face_counts_are_both_selected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, config = face_pair(tmp_path, monkeypatch, guard=True)
+    select_clips(manifest, config)
+    assert selected_ids(manifest) == ["a:0", "b:0"]
+
+
+def test_without_the_guard_the_same_pair_are_duplicates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, config = face_pair(tmp_path, monkeypatch, guard=False)
+    config.selection.max_clips = 1
+    select_clips(manifest, config)
+    assert selected_ids(manifest) == ["a:0"]
+    assert manifest.segments["b:0"].lost_to == "a:0"

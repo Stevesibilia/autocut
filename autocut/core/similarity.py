@@ -47,6 +47,7 @@ class CandidateFeatures:
     timestamp: datetime | None = None
     motion: np.ndarray = field(default_factory=lambda: np.zeros(0))
     embedding: np.ndarray | None = None
+    faces: int | None = None
 
 
 def perceptual_hash(frame: np.ndarray) -> int:
@@ -278,7 +279,13 @@ def combined_similarity(
     config: AutocutConfig,
     signals: tuple[SimilaritySignal, ...] = SIGNALS,
 ) -> float:
-    """Weighted mean of the signals that are both enabled and computable for this pair."""
+    """Weighted mean of the signals that are both enabled and computable for this pair.
+
+    Two segments with known and different face counts are never similar: the same beach
+    with and without the family on it is two moments, whatever the picture says.
+    """
+    if _faces_differ(a, b, config):
+        return 0.0
     total_weight = 0.0
     accumulated = 0.0
     excluded = _excluded_for_pair(a, b, config, signals)
@@ -295,6 +302,16 @@ def combined_similarity(
     if total_weight <= 0:
         return 0.0
     return accumulated / total_weight
+
+
+def _faces_differ(a: CandidateFeatures, b: CandidateFeatures, config: AutocutConfig) -> bool:
+    """The face-count guard: both counts known and unequal, with the guard switched on."""
+    return (
+        config.similarity.face_guard
+        and a.faces is not None
+        and b.faces is not None
+        and a.faces != b.faces
+    )
 
 
 def _excluded_for_pair(

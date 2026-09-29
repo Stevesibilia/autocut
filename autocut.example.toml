@@ -19,6 +19,11 @@ hwaccel = "auto"
 sprites = false       # thumbnail strips for GUI scrubbing
 high_fps_threshold = 100.0   # at or above this fps, an unclassified file is called actioncam
 fallback_fps = 25.0          # assumed frame rate for min scene length when ffprobe has none
+face_score_threshold = 0.8    # lowest YuNet score that counts as a face
+face_min_height_share = 0.06 # smallest face height, as a share of the frame, that counts
+face_nms_threshold = 0.3     # YuNet non-maximum suppression threshold
+face_top_k = 50              # most candidate boxes YuNet keeps before suppression
+face_count_percentile = 75.0 # percentile of per-frame counts that becomes a segment's count
 
 [analysis.head_trim_seconds]
 drone = 1.0
@@ -267,6 +272,7 @@ local_embeddings = true   # needs the ai extra; run "autocut doctor" to check
 # the cached frames and leaves the metric arrays alone.
 embedding_model = "ViT-B-32/laion2b_s34b_b79k"
 embedding_batch_size = 16
+faces = false             # count faces per sampled frame with the bundled YuNet model
 
 [soundtrack]
 variants = 3                 # 1 to 5

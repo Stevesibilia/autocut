@@ -2,6 +2,11 @@
   "analysis": {
     "class_overrides": [],
     "detector": "inmemory",
+    "face_count_percentile": 75.0,
+    "face_min_height_share": 0.06,
+    "face_nms_threshold": 0.3,
+    "face_score_threshold": 0.8,
+    "face_top_k": 50,
     "fallback_fps": 25.0,
     "head_trim_seconds": {
       "actioncam": 1.0,
@@ -176,6 +181,7 @@
     "target_total_seconds": null
   },
   "similarity": {
+    "face_guard": true,
     "hash_share": 0.5,
     "histogram_bins": 8,
     "motion": true,

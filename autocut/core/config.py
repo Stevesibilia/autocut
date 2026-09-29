@@ -100,6 +100,34 @@ class AnalysisConfig(_Strict):
         description="Frame rate assumed for the pyscenedetect minimum scene length when "
         "ffprobe reports none.",
     )
+    face_score_threshold: float = Field(
+        default=0.8,
+        ge=0,
+        le=1,
+        description="Lowest YuNet score that counts as a face. YuNet's own default is 0.9; "
+        "at 320 px faces are small and score lower.",
+    )
+    face_min_height_share: float = Field(
+        default=0.06,
+        ge=0,
+        le=1,
+        description="Smallest face box height, as a share of the frame height, that counts. "
+        "Smaller faces are strangers in the background, not the subject.",
+    )
+    face_nms_threshold: float = Field(
+        default=0.3, ge=0, le=1, description="YuNet non-maximum suppression threshold."
+    )
+    face_top_k: int = Field(
+        default=50, ge=1, description="Most candidate boxes YuNet keeps before suppression."
+    )
+    face_count_percentile: float = Field(
+        default=75.0,
+        ge=0,
+        le=100,
+        description="Percentile of the per-frame face counts inside a segment that becomes "
+        "its face count. The upper quartile keeps a face turned away for a moment and "
+        "ignores a single false detection.",
+    )
 
 
 class ScoringWeights(_Strict):
@@ -317,6 +345,12 @@ class SimilarityConfig(_Strict):
     spatial: bool = True
     temporal: bool = True
     motion: bool = True
+    face_guard: bool = Field(
+        default=True,
+        description="Two segments whose face counts are both known and differ are never "
+        "similar, whatever the other signals say: the same beach with and without the "
+        "family on it are two moments, not duplicates.",
+    )
     weights: SimilarityWeights = SimilarityWeights()
     spatial_radius_m: float = Field(
         default=200.0, description="GPS distance at which the spatial signal reaches 0."
@@ -603,7 +637,12 @@ class ProvidersConfig(_Strict):
         default=16, description="Frames per forward pass. They are already in memory."
     )
     aesthetic: bool = False
-    faces: bool = False
+    faces: bool = Field(
+        default=False,
+        description="Count faces on every sampled frame with the bundled YuNet model during "
+        "analysis. Adds about a millisecond per frame, and a file cached without face "
+        "counts is analysed again the first time this is turned on.",
+    )
 
 
 class GuiConfig(_Strict):

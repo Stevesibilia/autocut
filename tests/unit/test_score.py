@@ -195,3 +195,23 @@ def test_a_partly_described_class_leaves_the_aesthetic_out() -> None:
     weights = ScoringWeights(aesthetic=1.0)
 
     assert score_metrics(partial, weights) == score_metrics(partial, ScoringWeights(aesthetic=0.0))
+
+
+def test_faces_rank_when_weighted_and_a_class_without_counts_leaves_them_out() -> None:
+    def counted(sharpness: float, faces: int | None) -> Metrics:
+        return Metrics(
+            sharpness=sharpness,
+            exposure_clipped=0.0,
+            motion=0.3,
+            stability=0.9,
+            colorfulness=0.2,
+            faces=faces,
+        )
+
+    weights = ScoringWeights(faces=3.0)
+    counted_pair = [("drone", counted(10.0, 4)), ("drone", counted(20.0, 0))]
+    on = score_metrics(counted_pair, weights)
+    assert on[0] > on[1]
+
+    unknown = [("drone", counted(10.0, None)), ("drone", counted(20.0, None))]
+    assert score_metrics(unknown, weights) == score_metrics(unknown, ScoringWeights(faces=0.0))

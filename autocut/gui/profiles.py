@@ -31,8 +31,9 @@ class Profile:
 
 #: Dotted paths into ``AutocutConfig``. A test walks every one of them, so a renamed
 #: field fails here rather than silently doing nothing. Only fields the scoring and
-#: selection code actually reads are listed: ``weights.faces`` exists in the config but
-#: no face metric is computed yet, and a profile that set it would promise nothing.
+#: selection code actually reads are listed. The family profile is the one that turns
+#: face detection on, and it weighs the count, because a holiday with people in it is
+#: what that profile is for.
 PROFILES: tuple[Profile, ...] = (
     Profile(
         key="mixed",
@@ -67,6 +68,8 @@ PROFILES: tuple[Profile, ...] = (
         overrides={
             "weights.sharpness": 1.2,
             "weights.motion": 0.6,
+            "weights.faces": 1.0,
+            "providers.faces": True,
             "selection.target_duration_seconds": 2.5,
             "selection.max_clips": 60,
             "selection.min_temporal_gap_seconds": 20.0,

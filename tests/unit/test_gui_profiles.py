@@ -101,10 +101,9 @@ def test_a_path_that_does_not_exist_is_an_error() -> None:
 
 
 def test_no_profile_sets_a_weight_no_metric_feeds() -> None:
-    """``weights.faces`` exists in the config, but nothing computes a face metric yet.
-
-    A profile that set it would promise the user something the scoring cannot deliver,
-    so this is asserted rather than left to a reader of the table.
+    """A profile that set a weight no scored metric reads would promise the user
+    something the scoring cannot deliver, so this is asserted rather than left to a
+    reader of the table.
     """
     from autocut.core.score import SCORED_METRICS
 

@@ -527,7 +527,7 @@ Tests run in Docker on Linux (`compose.yaml`, `python:3.12` image with ffmpeg). 
 - **M2, selection and export** (done 2026-09-03, plus per-clip durations and the place cap on 2026-09-03). Best window, rejection rules, deduplication with classic signals, cutting, normalization, naming. The tool is useful from here.
 - **M3, embeddings and diversity** (done 2026-09-04; the live cloud validation run is pending the user's key). CLIP or SigLIP, semantic similarity, greedy selection with penalty, tagging (local and cloud), captions.
 - **M4, soundtrack.** Complete. Template prompt, validation, variants, optional LLM refinement, place names. Beat tracking, beat durations, BPM check, `beatmap.txt`.
-- **M4b, remaining AI.** Face detection done 2026-09-28 (ADR 14). Only the local aesthetic predictor remains.
+- **M4b, remaining AI.** Face detection done 2026-09-29 (ADR 14). Only the local aesthetic predictor remains.
 - **M5, GUI.** Complete. Five screens on the existing core, plus user decisions in the manifest and the mood controls in the prompt.
 - **M6, packaging.** macOS `.dmg` on CI, first run model download.
 

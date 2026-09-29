@@ -83,6 +83,7 @@ packages = ["autocut"]
 # directory.
 artifacts = [
   "autocut/core/templates/*.j2",
+  "autocut/core/models/*",
   "autocut/gui/theme/assets/**",
 ]
 

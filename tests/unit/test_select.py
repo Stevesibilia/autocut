@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from autocut.core.cache import CacheEntry, write_entry
 from autocut.core.config import AutocutConfig
 from autocut.core.manifest import Manifest, Metrics, Segment, SourceFile, Tag
 from autocut.core.select import SelectionOverrides, absolute_time, select_clips
@@ -414,6 +415,44 @@ def test_best_window_is_stored_on_every_candidate(
     assert segment.best_center_s is not None
     assert segment.best_center_s - 1.5 >= 1.0
     assert segment.best_center_s + 1.5 <= 19.0
+
+
+def test_an_aesthetic_weight_does_not_move_the_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``weights.aesthetic`` used to raise KeyError in the window search (issue #96)."""
+    no_similarity(monkeypatch)
+    count = 20
+    sharpness = np.concatenate([np.full(10, 10.0), np.full(10, 900.0)])
+    entry = CacheEntry(
+        file_key="a",
+        source="original",
+        arrays={
+            "timestamps": np.arange(count, dtype=np.float64),
+            "sharpness": sharpness,
+            "clipping": np.zeros(count),
+            "motion": np.full(count, 0.3),
+            "stability": np.full(count, 0.9),
+            "colorfulness": np.full(count, 0.2),
+        },
+        shot_bounds=[(0.0, 20.0)],
+    )
+
+    def windows(aesthetic: float) -> tuple[float | None, float | None]:
+        manifest = project(tmp_path)
+        add_file(manifest, "a")
+        add_segment(manifest, "a:0", "a", 0.9, 0.0, 20.0)
+        config = open_config()
+        config.cache.dir = tmp_path / "cache"
+        config.weights.aesthetic = aesthetic
+        write_entry(entry, config)
+        select_clips(manifest, config, SelectionOverrides(target_duration_s=4.0))
+        segment = manifest.segments["a:0"]
+        return segment.best_center_s, segment.target_duration_s
+
+    without = windows(0.0)
+    assert without[0] is not None and without[0] > 10.0
+    assert windows(1.0) == without
 
 
 def test_an_empty_manifest_selects_nothing(tmp_path: Path) -> None:

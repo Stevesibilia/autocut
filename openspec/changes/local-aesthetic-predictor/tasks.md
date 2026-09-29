@@ -1,8 +1,8 @@
 ## 1. Window fix (design decision 8), one commit
 
-- [ ] 1.1 `METRIC_ARRAYS.get` in `window.frame_scores`, with its comment.
-- [ ] 1.2 Tests: `test_window.py` (an aesthetic weight gives the same frame scores as weight 0) and `test_select.py` (`select_clips` with `weights.aesthetic = 1.0` completes, and gives the same windows).
-- [ ] 1.3 Commit: `fix(core): keep segment-only metrics out of the window search`.
+- [x] 1.1 `METRIC_ARRAYS.get` in `window.frame_scores`, with its comment.
+- [x] 1.2 Tests: `test_window.py` (an aesthetic weight gives the same frame scores as weight 0) and `test_select.py` (`select_clips` with `weights.aesthetic = 1.0` completes, and gives the same windows).
+- [x] 1.3 Commit: `fix(core): keep segment-only metrics out of the window search`.
 
 ## 2. Head, tower, cache and stage (decisions 1 to 6, 9), one commit
 

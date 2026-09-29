@@ -636,7 +636,12 @@ class ProvidersConfig(_Strict):
     embedding_batch_size: int = Field(
         default=16, description="Frames per forward pass. They are already in memory."
     )
-    aesthetic: bool = False
+    aesthetic: bool = Field(
+        default=False,
+        description="Score every segment locally with LAION's aesthetic predictor, on a "
+        "second CLIP tower (OpenAI ViT-B/32, about 350 MB, downloaded once). Needs the ai "
+        "extra. A cloud judgment replaces the local one.",
+    )
     faces: bool = Field(
         default=False,
         description="Count faces on every sampled frame with the bundled YuNet model during "

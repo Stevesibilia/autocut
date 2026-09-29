@@ -77,7 +77,7 @@ def with_extra(monkeypatch: pytest.MonkeyPatch) -> FakeEncoder:
     encoder = FakeEncoder()
     monkeypatch.setattr(embeddings, "_probe", (True, None))
     monkeypatch.setattr(embeddings, "select_device", lambda: "cpu")
-    monkeypatch.setattr(embeddings, "load_model", lambda config, device=None: object())
+    monkeypatch.setattr(embeddings, "load_model", lambda config, device=None, name=None: object())
     monkeypatch.setattr(embeddings, "image_encoder", lambda loaded: encoder)
     return encoder
 

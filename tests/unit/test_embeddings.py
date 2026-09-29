@@ -111,7 +111,7 @@ def available_extra(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def encoder_returning(monkeypatch: pytest.MonkeyPatch, encoder: FakeEncoder) -> None:
     """Replace the model load and the real encoder with the fake one."""
-    monkeypatch.setattr(embeddings, "load_model", lambda config, device=None: object())
+    monkeypatch.setattr(embeddings, "load_model", lambda config, device=None, name=None: object())
     monkeypatch.setattr(embeddings, "image_encoder", lambda loaded: encoder)
 
 
@@ -395,3 +395,57 @@ def test_weights_are_found_by_the_architecture_for_openai_checkpoints(tmp_path: 
 def test_an_empty_result_reports_no_model() -> None:
     assert EmbedResult().model == "none"
     assert not EmbedResult().skipped
+
+
+def test_weights_present_takes_another_model_name(tmp_path: Path) -> None:
+    config = config_in(tmp_path)
+    directory = embeddings.models_dir(config)
+    directory.mkdir(parents=True)
+    repo = directory / "models--laion--CLIP-ViT-B-32-laion2B-s34B-b79K" / "snapshots" / "a1"
+    repo.mkdir(parents=True)
+    (repo / "open_clip_pytorch_model.bin").write_bytes(b"weights")
+    assert weights_present(config)
+    assert not weights_present(config, "ViT-B-32-quickgelu/openai")
+    (directory / "ViT-B-32-quickgelu-openai.bin").write_bytes(b"weights")
+    assert weights_present(config, "ViT-B-32-quickgelu/openai")
+
+
+class FakeOpenClip:
+    def __init__(self) -> None:
+        self.created: list[tuple[str, str]] = []
+
+    def create_model_and_transforms(
+        self, architecture: str, pretrained: str, cache_dir: str
+    ) -> tuple[Any, None, str]:
+        self.created.append((architecture, pretrained))
+        return FakeModel(), None, "preprocess"
+
+    def get_tokenizer(self, architecture: str) -> str:
+        return "tokenizer"
+
+
+class FakeModel:
+    def to(self, device: str) -> FakeModel:
+        return self
+
+    def eval(self) -> None:
+        return None
+
+
+def test_load_model_defaults_to_the_configured_model_and_takes_a_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = config_in(tmp_path)
+    fake = FakeOpenClip()
+    monkeypatch.setattr(embeddings, "_probe", (True, None))
+    monkeypatch.setattr(embeddings, "_open_clip", lambda: fake)
+
+    default = embeddings.load_model(config, "cpu")
+    other = embeddings.load_model(config, "cpu", "ViT-B-32-quickgelu/openai")
+
+    assert default.name == MODEL
+    assert other.name == "ViT-B-32-quickgelu/openai"
+    assert fake.created == [
+        ("ViT-B-32", "laion2b_s34b_b79k"),
+        ("ViT-B-32-quickgelu", "openai"),
+    ]

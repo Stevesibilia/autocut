@@ -539,3 +539,4 @@ Stopping after M2 to use the tool on real footage before continuing is expected.
 - **Genre defaults** in `soundtrack.genres` are placeholders until the user tunes them.
 - **Action 4 gyro** in `djmd` is unparsed. Shake detection relies on image metrics. Revisit only if results are poor.
 - **Insta360 `.insv`** is accepted by extension but untested. Requiring an MP4 export from Insta360 Studio is acceptable.
+- **Distant faces** are not counted. At the default `analysis.sample_long_side` of 320 px, a child a few metres from an action camera has a face of 5 to 8 px, below YuNet's floor of about 10 px (real-footage check of issue #95). Close faces count correctly. Revisit with a larger sample size for detection only if family footage needs it.
